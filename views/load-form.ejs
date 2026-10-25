@@ -80,20 +80,11 @@
         <% }) %>
       </ul>
     <% } %>
-    <div class="ticket-actions">
-      <label class="ticket-btn">
-        Upload a File
-        <input id="ticket-file" type="file" name="tickets" accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,image/*,application/pdf" multiple>
-      </label>
-      <label class="ticket-btn">
-        Upload a Photo
-        <input id="ticket-photo" type="file" name="tickets" accept="image/*" multiple>
-      </label>
-      <label class="ticket-btn">
-        Take a Photo
-        <input id="ticket-camera" type="file" name="tickets" accept="image/*" capture="environment">
-      </label>
-    </div>
+    <p class="muted">Upload a file, choose a photo, or take a photo.</p>
+    <label class="ticket-btn">
+      Upload
+      <input id="ticket-upload" type="file" name="tickets" accept="image/*,application/pdf,.pdf,.doc,.docx,.xls,.xlsx" multiple>
+    </label>
     <ul id="ticket-names" class="ticket-names"></ul>
   </div>
   <div class="load-actions">
