@@ -45,11 +45,8 @@
       </table>
     </div>
   <% } %>
-<% } %>
-
-<h2>Quick Access</h2>
-<div class="cards">
-  <% if (user.role === 'admin') { %>
+  <h2>Quick Access</h2>
+  <div class="cards">
     <a class="quick" href="/customers"><strong>Customers &amp; Projects</strong><span>Billing contacts, project rates, fuel surcharge, and drive time.</span></a>
     <a class="quick" href="/loads"><strong>Loads</strong><span>Enter tickets, quantities, and project charges.</span></a>
     <a class="quick" href="/drivers"><strong>Drivers</strong><span>Driver profiles, CDL, and medical cards.</span></a>
@@ -58,12 +55,6 @@
     <a class="quick" href="/fuel-rate"><strong>Fuel Rate</strong><span>Weekly EIA Central Atlantic surcharge.</span></a>
     <a class="quick" href="/compliance"><strong>Compliance</strong><span>FMCSA, HVUT, UCR, IFTA, and insurance dates.</span></a>
     <a class="quick" href="/settlements"><strong>Settlements &amp; Invoices</strong><span>Driver pay and weekly customer invoices.</span></a>
-  <% } else { %>
-    <a class="quick" href="/loads"><strong>Loads</strong><span>Your tickets and submitted loads.</span></a>
-    <a class="quick" href="/loads/new"><strong>New Load</strong><span>Submit a load ticket.</span></a>
-    <a class="quick" href="/receipts"><strong>Receipts</strong><span>Upload expense receipts.</span></a>
-    <a class="quick" href="/fuel"><strong>Fuel Log</strong><span>Current weekly fuel rate.</span></a>
-    <a class="quick" href="/profile"><strong>Profile</strong><span>Your contact details and documents.</span></a>
-  <% } %>
-</div>
+  </div>
+<% } %>
 <%- include('partials/close') %>
