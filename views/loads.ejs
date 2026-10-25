@@ -7,13 +7,14 @@
   <style>
     body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
     .header { background: #1B365D; color: white; padding: 16px 20px; }
-    .content { padding: 16px; }
+    .content { padding: 16px; max-width: 800px; margin: 0 auto; }
     .load-card { background: white; border-radius: 10px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
     .status { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
     .status.submitted { background: #fff3cd; color: #856404; }
     .status.approved { background: #d4edda; color: #155724; }
     .status.draft { background: #e2e3e5; color: #383d41; }
     .btn { display: inline-block; background: #1B365D; color: white; padding: 10px 16px; border-radius: 8px; text-decoration: none; margin-top: 12px; }
+    .muted { color: #555; }
     .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
     .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
   </style>
@@ -26,11 +27,25 @@
       <p>No loads yet.</p>
     <% } else { %>
       <% loads.forEach(load => { %>
+        <% const qty = Number(load.weight_quantity) || 0; %>
+        <% const rate = Number(load.rate) || 0; %>
+        <% const baseHauling = qty * rate; %>
         <div class="load-card">
           <div><strong><%= load.ticket_number || 'No Ticket' %></strong> <span class="status <%= load.status %>"><%= load.status %></span></div>
           <div>Date: <%= load.load_date || '—' %></div>
+          <div>Project: <%= load.project_display || '—' %></div>
           <div>Description: <%= load.description || '—' %></div>
-          <% if (user.role === 'admin') { %><div>Driver: <%= load.driver_name || 'Unassigned' %></div><% } %>
+          <div>Qty: <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
+          <div>Rate: $<%= money(rate) %></div>
+          <div>Base Hauling: $<%= money(baseHauling) %></div>
+          <div>Fuel Surcharge: <%= Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No' %></div>
+          <% if (Number(load.drive_time_amount) > 0) { %>
+            <div>Drive Time: $<%= money(load.drive_time_amount) %></div>
+          <% } %>
+          <% if (Number(load.self_load_amount) > 0) { %>
+            <div>Self Load: $<%= money(load.self_load_amount) %></div>
+          <% } %>
+          <% if (user.role === 'admin') { %><div class="muted">Driver: <%= load.driver_name || 'Unassigned' %></div><% } %>
           <% if (user.role === 'admin' && load.status === 'submitted') { %>
             <form method="POST" action="/loads/<%= load.id %>/approve" style="margin-top:8px;">
               <button type="submit" style="background:#155724;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;">Approve</button>

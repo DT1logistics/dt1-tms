@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= customer && customer.id ? 'Edit Customer' : 'Add Customer' %> - DT1 Logistics</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
+    .header { background: #1B365D; color: white; padding: 16px 20px; }
+    .content { padding: 16px; max-width: 600px; margin: 0 auto; }
+    label { display: block; margin-top: 12px; font-weight: bold; color: #333; }
+    input, select { width: 100%; padding: 12px; margin-top: 4px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+    button { width: 100%; padding: 14px; background: #1B365D; color: white; border: none; border-radius: 8px; font-size: 16px; margin-top: 20px; cursor: pointer; }
+    .error { color: #c0392b; margin-bottom: 12px; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
+    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header"><strong><%= customer && customer.id ? 'Edit Customer' : 'Add Customer' %></strong></div>
+  <div class="content">
+    <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
+    <form method="POST" action="<%= customer && customer.id ? '/customers/' + customer.id : '/customers' %>">
+      <label>Customer Name</label>
+      <input type="text" name="name" value="<%= customer.name || '' %>" placeholder="e.g. Synagro" required>
+      <label>Billing Address (Street)</label>
+      <input type="text" name="address_line1" value="<%= customer.address_line1 || '' %>" placeholder="e.g. 1681 Tappahannock BLVD">
+      <label>Billing Address (City, State, Zip)</label>
+      <input type="text" name="address_line2" value="<%= customer.address_line2 || '' %>" placeholder="e.g. Tappahannock, VA 22560">
+      <label>Point of Contact Name</label>
+      <input type="text" name="poc_name" value="<%= customer.poc_name || '' %>">
+      <label>Point of Contact Phone Number</label>
+      <input type="tel" name="poc_phone" value="<%= customer.poc_phone || '' %>" placeholder="(804) 761-2054">
+      <label>Point of Contact Email Address</label>
+      <input type="email" name="poc_email" value="<%= customer.poc_email || '' %>" placeholder="cahayes@synagro.com">
+      <label>Terms</label>
+      <input type="text" name="terms" value="<%= customer.terms || 'Net 30' %>">
+      <% if (customer && customer.id) { %>
+        <label>Status</label>
+        <select name="status">
+          <option value="active" <%= customer.status !== 'inactive' ? 'selected' : '' %>>Active</option>
+          <option value="inactive" <%= customer.status === 'inactive' ? 'selected' : '' %>>Inactive</option>
+        </select>
+      <% } %>
+      <button type="submit">Save Customer</button>
+    </form>
+    <p><a href="<%= customer && customer.id ? '/customers/' + customer.id : '/customers' %>">Back</a></p>
+  </div>
+  <div class="bottom-nav">
+    <a href="/">Home</a>
+    <a href="/loads">Loads</a>
+    <a href="/receipts">Receipts</a>
+    <a href="/fuel">Fuel</a>
+    <a href="/profile">Profile</a>
+  </div>
+</body>
+</html>
