@@ -1,28 +1,6 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Loads - DT1 Logistics</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
-    .header { background: #1B365D; color: white; padding: 16px 20px; }
-    .content { padding: 16px; max-width: 800px; margin: 0 auto; }
-    .load-card { background: white; border-radius: 10px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
-    .status { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
-    .status.submitted { background: #fff3cd; color: #856404; }
-    .status.approved { background: #d4edda; color: #155724; }
-    .status.draft { background: #e2e3e5; color: #383d41; }
-    .btn { display: inline-block; background: #1B365D; color: white; padding: 10px 16px; border-radius: 8px; text-decoration: none; margin-top: 12px; }
-    .muted { color: #555; }
-    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
-    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="header"><strong>Loads</strong></div>
-  <div class="content">
-    <a href="/loads/new" class="btn">+ New Load</a>
+<%- include('partials/open', { title: `Loads`, user: user, active: 'loads' }) %>
+<h1>Loads</h1>
+<a href="/loads/new" class="btn">+ New Load</a>
     <% if (loads.length === 0) { %>
       <p>No loads yet.</p>
     <% } else { %>
@@ -54,13 +32,4 @@
         </div>
       <% }) %>
     <% } %>
-  </div>
-  <div class="bottom-nav">
-    <a href="/">Home</a>
-    <a href="/loads">Loads</a>
-    <a href="/receipts">Receipts</a>
-    <a href="/fuel">Fuel</a>
-    <a href="/profile">Profile</a>
-  </div>
-</body>
-</html>
+<%- include('partials/close') %>

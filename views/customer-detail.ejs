@@ -1,31 +1,6 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title><%= customer.name %> - DT1 Logistics</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
-    .header { background: #1B365D; color: white; padding: 16px 20px; }
-    .content { padding: 16px; max-width: 800px; margin: 0 auto; }
-    .card { background: white; border-radius: 10px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
-    label { display: block; margin-top: 12px; font-weight: bold; color: #333; }
-    input { width: 100%; padding: 12px; margin-top: 4px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
-    input[type="checkbox"] { width: auto; padding: 0; margin: 0; }
-    .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
-    .check label { margin: 0; }
-    button, .btn { display: inline-block; background: #1B365D; color: white; padding: 10px 16px; border: none; border-radius: 8px; text-decoration: none; cursor: pointer; }
-    button { margin-top: 16px; }
-    .error { color: #c0392b; }
-    .muted { color: #555; font-size: 14px; }
-    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
-    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="header"><strong><%= customer.name %></strong></div>
-  <div class="content">
-    <p><a href="/customers">All Customers</a> · <a href="/customers/<%= customer.id %>/edit">Edit Customer</a></p>
+<%- include('partials/open', { title: customer.name, user: user, active: 'customers' }) %>
+<h1><%= customer.name %></h1>
+<p><a href="/customers">All Customers</a> · <a href="/customers/<%= customer.id %>/edit">Edit Customer</a></p>
     <div class="card">
       <div><strong>Point of Contact:</strong> <%= customer.poc_name || '—' %></div>
       <div><strong>Phone:</strong> <%= customer.poc_phone || '—' %></div>
@@ -76,15 +51,7 @@
         <button type="submit">Save Project</button>
       </form>
     </div>
-  </div>
-  <div class="bottom-nav">
-    <a href="/">Home</a>
-    <a href="/loads">Loads</a>
-    <a href="/receipts">Receipts</a>
-    <a href="/fuel">Fuel</a>
-    <a href="/profile">Profile</a>
-  </div>
-  <script>
+<script>
     const driveBox = document.getElementById('has_drive_time');
     const driveWrap = document.getElementById('drive_time_wrap');
     const driveAmount = document.getElementById('default_drive_time_amount');
@@ -96,5 +63,4 @@
     driveBox.addEventListener('change', () => syncDrive(true));
     syncDrive(false);
   </script>
-</body>
-</html>
+<%- include('partials/close') %>

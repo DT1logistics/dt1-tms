@@ -1,0 +1,30 @@
+<aside class="sidebar">
+  <a class="brand" href="/">
+    <img src="<%= logoSrc %>" alt="DT1 Logistics" onerror="this.onerror=null;this.src='/logo.svg'">
+  </a>
+  <nav class="nav-links">
+    <a class="<%= active === 'home' ? 'active' : '' %>" href="/">Home</a>
+    <a class="<%= active === 'loads' ? 'active' : '' %>" href="/loads">Loads</a>
+    <a class="<%= active === 'new-load' ? 'active' : '' %>" href="/loads/new">New Load</a>
+    <a class="<%= active === 'receipts' ? 'active' : '' %>" href="/receipts">Receipts</a>
+    <a class="<%= active === 'fuel' ? 'active' : '' %>" href="/fuel">Fuel Log</a>
+    <% if (user.role === 'admin') { %>
+      <div class="nav-label">Admin</div>
+      <a class="<%= active === 'customers' ? 'active' : '' %>" href="/customers">Customers &amp; Projects</a>
+      <a class="<%= active === 'projects' ? 'active' : '' %>" href="/projects">Projects</a>
+      <a class="<%= active === 'settlements' ? 'active' : '' %>" href="/settlements">Settlements &amp; Invoices</a>
+      <a class="<%= active === 'drivers' ? 'active' : '' %>" href="/drivers">Drivers</a>
+      <a class="<%= active === 'equipment' ? 'active' : '' %>" href="/equipment">Equipment</a>
+      <a class="<%= active === 'fuel-rate' ? 'active' : '' %>" href="/fuel-rate">Fuel Rate</a>
+      <a class="<%= active === 'compliance' ? 'active' : '' %>" href="/compliance">Compliance</a>
+    <% } %>
+    <a class="<%= active === 'profile' ? 'active' : '' %>" href="/profile">Profile</a>
+  </nav>
+  <div class="sidebar-foot">
+    <div class="who">
+      <strong><%= user.name || user.email %></strong>
+      <span><%= user.role %></span>
+    </div>
+    <a class="signout" href="/logout">Sign Out</a>
+  </div>
+</aside>

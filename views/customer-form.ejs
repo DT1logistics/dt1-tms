@@ -1,25 +1,6 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title><%= customer && customer.id ? 'Edit Customer' : 'Add Customer' %> - DT1 Logistics</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
-    .header { background: #1B365D; color: white; padding: 16px 20px; }
-    .content { padding: 16px; max-width: 600px; margin: 0 auto; }
-    label { display: block; margin-top: 12px; font-weight: bold; color: #333; }
-    input, select { width: 100%; padding: 12px; margin-top: 4px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
-    button { width: 100%; padding: 14px; background: #1B365D; color: white; border: none; border-radius: 8px; font-size: 16px; margin-top: 20px; cursor: pointer; }
-    .error { color: #c0392b; margin-bottom: 12px; }
-    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
-    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="header"><strong><%= customer && customer.id ? 'Edit Customer' : 'Add Customer' %></strong></div>
-  <div class="content">
-    <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
+<%- include('partials/open', { title: (customer && customer.id ? 'Edit Customer' : 'Add Customer'), user: user, active: 'customers' }) %>
+<h1><%= customer && customer.id ? 'Edit Customer' : 'Add Customer' %></h1>
+<% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
     <form method="POST" action="<%= customer && customer.id ? '/customers/' + customer.id : '/customers' %>">
       <label>Customer Name</label>
       <input type="text" name="name" value="<%= customer.name || '' %>" placeholder="e.g. Synagro" required>
@@ -45,13 +26,4 @@
       <button type="submit">Save Customer</button>
     </form>
     <p><a href="<%= customer && customer.id ? '/customers/' + customer.id : '/customers' %>">Back</a></p>
-  </div>
-  <div class="bottom-nav">
-    <a href="/">Home</a>
-    <a href="/loads">Loads</a>
-    <a href="/receipts">Receipts</a>
-    <a href="/fuel">Fuel</a>
-    <a href="/profile">Profile</a>
-  </div>
-</body>
-</html>
+<%- include('partials/close') %>

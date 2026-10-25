@@ -1,21 +1,6 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Receipts - DT1 Logistics</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
-    .header { background: #1B365D; color: white; padding: 16px 20px; }
-    .content { padding: 16px; }
-    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
-    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="header"><strong>Receipts</strong></div>
-  <div class="content">
-    <a href="/receipts/new" style="display:inline-block;background:#1B365D;color:white;padding:10px 16px;border-radius:8px;text-decoration:none;margin-bottom:16px;">+ New Receipt</a>
+<%- include('partials/open', { title: `Receipts`, user: user, active: 'receipts' }) %>
+<h1>Receipts</h1>
+<a href="/receipts/new" style="display:inline-block;background:#1B365D;color:white;padding:10px 16px;border-radius:8px;text-decoration:none;margin-bottom:16px;">+ New Receipt</a>
     <% if (receipts && receipts.length) { %>
       <% receipts.forEach(r => { %>
         <div style="background:white;padding:16px;border-radius:10px;margin-bottom:12px;">
@@ -33,13 +18,4 @@
       <p>No receipts yet.</p>
     <% } %>
     <p>Approved receipts are copied to SharePoint and made available to Ava for QuickBooks matching.</p>
-  </div>
-  <div class="bottom-nav">
-    <a href="/">Home</a>
-    <a href="/loads">Loads</a>
-    <a href="/receipts">Receipts</a>
-    <a href="/fuel">Fuel</a>
-    <a href="/profile">Profile</a>
-  </div>
-</body>
-</html>
+<%- include('partials/close') %>

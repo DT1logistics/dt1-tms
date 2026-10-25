@@ -1,22 +1,8 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Welcome Sent - DT1 Logistics</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding: 20px; }
-    .box { background: white; border-radius: 12px; padding: 24px; max-width: 480px; margin: 40px auto; box-shadow: 0 4px 20px rgba(0,0,0,0.1); text-align: center; }
-    h1 { color: #1B365D; }
-    a { color: #1B365D; }
-  </style>
-</head>
-<body>
-  <div class="box">
-    <h1>Welcome Email Queued</h1>
-    <p>A Driver Portal welcome message has been prepared for <strong><%= driver.name %></strong> (<%= driver.email %>).</p>
-    <p>It will be sent from Logan, DT1 Operations Manager, and includes the username and temporary password.</p>
-    <p><a href="/drivers">← Back to Drivers</a></p>
-  </div>
-</body>
-</html>
+<%- include('partials/open', { title: 'Welcome Sent', user: user, active: 'drivers' }) %>
+<h1>Welcome Email Queued</h1>
+<div class="card">
+  <p>A Driver Portal welcome message has been prepared for <strong><%= driver.name %></strong> (<%= driver.email %>).</p>
+  <p>It will be sent from Logan, DT1 Operations Manager, and includes the username and temporary password.</p>
+  <p><a href="/drivers">Back to Drivers</a></p>
+</div>
+<%- include('partials/close') %>

@@ -1,26 +1,6 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>New Receipt - DT1 Logistics</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
-    .header { background: #1B365D; color: white; padding: 16px 20px; }
-    .content { padding: 16px; max-width: 700px; margin: 0 auto; }
-    label { display: block; margin-top: 12px; font-weight: bold; }
-    input, select { width: 100%; padding: 10px; margin-top: 4px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
-    .line { background: white; padding: 12px; border-radius: 8px; margin-bottom: 12px; border: 1px solid #eee; }
-    button { padding: 12px 20px; background: #1B365D; color: white; border: none; border-radius: 8px; cursor: pointer; }
-    .add-btn { background: #2E5984; margin-top: 8px; }
-    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
-    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="header"><strong>New Receipt</strong></div>
-  <div class="content">
-    <form method="POST" action="/receipts" enctype="multipart/form-data" id="receiptForm">
+<%- include('partials/open', { title: `New Receipt`, user: user, active: 'receipts' }) %>
+<h1>New Receipt</h1>
+<form method="POST" action="/receipts" enctype="multipart/form-data" id="receiptForm">
       <label>Expense Date</label>
       <input type="date" name="expense_date" required>
       <label>Receipt Image / File</label>
@@ -39,15 +19,7 @@
       <button type="button" class="add-btn" onclick="addLine()">+ Add Another Line</button>
       <button type="submit" style="width:100%;margin-top:16px;">Save Receipt</button>
     </form>
-  </div>
-  <div class="bottom-nav">
-    <a href="/">Home</a>
-    <a href="/loads">Loads</a>
-    <a href="/receipts">Receipts</a>
-    <a href="/fuel">Fuel</a>
-    <a href="/profile">Profile</a>
-  </div>
-  <script>
+<script>
     let lineCount = 1;
     function addLine() {
       const div = document.createElement('div');
@@ -64,5 +36,4 @@
       lineCount++;
     }
   </script>
-</body>
-</html>
+<%- include('partials/close') %>

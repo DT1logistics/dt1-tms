@@ -22,23 +22,31 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.locals.money = (n) => (Number(n) || 0).toFixed(2);
 
-// Helper functions available in all EJS templates (e.g. driver-profile.ejs)
-app.locals.getStatusClass = function(exp) {
+function getStatusClass(exp) {
   if (!exp) return 'red';
   const days = Math.ceil((new Date(exp) - new Date()) / (1000 * 60 * 60 * 24));
   if (days < 0 || days <= 14) return 'red';
   if (days <= 60) return 'yellow';
   return 'green';
-};
+}
 
-app.locals.getStatusText = function(exp) {
+function getStatusText(exp) {
   if (!exp) return 'Missing';
   const days = Math.ceil((new Date(exp) - new Date()) / (1000 * 60 * 60 * 24));
   if (days < 0) return 'Expired';
   if (days <= 14) return 'Expiring ≤14 days';
   if (days <= 60) return 'Expiring ≤60 days';
   return 'Active';
-};
+}
+
+app.locals.getStatusClass = getStatusClass;
+app.locals.getStatusText = getStatusText;
+
+app.use((req, res, next) => {
+  const png = path.join(__dirname, 'public', 'logo.png');
+  res.locals.logoSrc = fs.existsSync(png) ? '/logo.png' : '/logo.svg';
+  next();
+});
 
 // File upload setup
 const uploadDir = path.join(__dirname, 'uploads');
@@ -177,6 +185,18 @@ function initDB() {
       description TEXT,
       status TEXT DEFAULT 'active',
       ownership TEXT,
+      registration_expiration DATE,
+      inspection_expiration DATE,
+      maintenance_status TEXT DEFAULT 'active',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS compliance_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      expiration_date DATE,
+      notes TEXT,
+      status TEXT DEFAULT 'active',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -216,6 +236,15 @@ function initDB() {
   ensureColumn('loads', 'drive_time_amount', 'REAL DEFAULT 0');
   ensureColumn('loads', 'has_self_load', 'INTEGER DEFAULT 0');
   ensureColumn('loads', 'self_load_amount', 'REAL DEFAULT 0');
+  ensureColumn('equipment', 'registration_expiration', 'DATE');
+  ensureColumn('equipment', 'inspection_expiration', 'DATE');
+  ensureColumn('equipment', 'maintenance_status', "TEXT DEFAULT 'active'");
+
+  const complianceCount = db.prepare('SELECT COUNT(*) AS n FROM compliance_items').get().n;
+  if (!complianceCount) {
+    const insertCompliance = db.prepare('INSERT INTO compliance_items (name) VALUES (?)');
+    ['FMCSA', 'HVUT', 'UCR', 'IFTA', 'Insurance'].forEach((name) => insertCompliance.run(name));
+  }
 
   // Seed admin if not exists
   const admin = db.prepare('SELECT id FROM users WHERE email = ?').get('admin@dt1logistics.com');
@@ -319,12 +348,125 @@ const loadQuery = `
 `;
 
 // Routes
+function blankToNull(value) {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+function pushAlert(alerts, level, category, name, detail, href) {
+  if (level === 'red' || level === 'yellow') {
+    alerts.push({ level, category, name, detail, href });
+  }
+}
+
+function collectAlerts(user) {
+  const alerts = [];
+  const drivers = user.role === 'admin'
+    ? db.prepare("SELECT id, name, email FROM users WHERE role = 'driver' AND (status IS NULL OR status = 'active') ORDER BY name").all()
+    : db.prepare('SELECT id, name, email FROM users WHERE id = ?').all(user.id);
+  const docsFor = db.prepare('SELECT * FROM driver_documents WHERE driver_id = ?');
+  drivers.forEach((driver) => {
+    const docs = docsFor.all(driver.id);
+    [['cdl', 'CDL License'], ['medical_card', 'Medical Card']].forEach(([kind, label]) => {
+      const doc = docs.find((item) => item.doc_type === kind);
+      const exp = doc ? doc.expiration_date : null;
+      const href = user.role === 'admin' ? `/drivers/${driver.id}` : '/profile';
+      pushAlert(
+        alerts,
+        getStatusClass(exp),
+        'Driver Document',
+        `${driver.name || driver.email} — ${label}`,
+        `${getStatusText(exp)}${exp ? ' · ' + exp : ''}`,
+        href
+      );
+    });
+  });
+
+  if (user.role === 'admin') {
+    db.prepare('SELECT * FROM compliance_items ORDER BY name').all().forEach((item) => {
+      pushAlert(
+        alerts,
+        getStatusClass(item.expiration_date),
+        'Compliance',
+        item.name,
+        `${getStatusText(item.expiration_date)}${item.expiration_date ? ' · ' + item.expiration_date : ''}`,
+        '/compliance'
+      );
+    });
+    db.prepare('SELECT * FROM equipment ORDER BY type, number').all().forEach((item) => {
+      const label = `${item.type === 'trailer' ? 'Trailer' : 'Truck'} ${item.number || ''}`.trim();
+      if (item.maintenance_status === 'out_of_service') {
+        pushAlert(alerts, 'red', 'Equipment', label, 'Out of service', '/equipment');
+      } else if (item.maintenance_status === 'maintenance') {
+        pushAlert(alerts, 'yellow', 'Equipment', label, 'In maintenance', '/equipment');
+      }
+      if (item.registration_expiration) {
+        pushAlert(
+          alerts,
+          getStatusClass(item.registration_expiration),
+          'Equipment',
+          `${label} registration`,
+          `${getStatusText(item.registration_expiration)} · ${item.registration_expiration}`,
+          '/equipment'
+        );
+      }
+      if (item.inspection_expiration) {
+        pushAlert(
+          alerts,
+          getStatusClass(item.inspection_expiration),
+          'Equipment',
+          `${label} inspection`,
+          `${getStatusText(item.inspection_expiration)} · ${item.inspection_expiration}`,
+          '/equipment'
+        );
+      }
+    });
+  }
+
+  const loads = user.role === 'admin'
+    ? db.prepare(loadQuery + ' ORDER BY l.created_at DESC').all()
+    : db.prepare(loadQuery + ' WHERE l.driver_id = ? ORDER BY l.created_at DESC').all(user.id);
+  const docMap = {};
+  db.prepare('SELECT load_id, COUNT(*) AS n FROM documents GROUP BY load_id').all().forEach((row) => {
+    docMap[row.load_id] = row.n;
+  });
+  loads.forEach((load) => {
+    const title = load.ticket_number || `Load #${load.id}`;
+    if (load.status === 'submitted') {
+      pushAlert(alerts, 'yellow', 'Load', title, 'Pending review', '/loads');
+    }
+    const hasFile = (docMap[load.id] || 0) > 0;
+    if (!hasFile && !load.ticket_number) {
+      pushAlert(alerts, 'red', 'Load', title, 'Missing ticket number and ticket file', '/loads');
+    } else if (!hasFile) {
+      pushAlert(alerts, 'yellow', 'Load', title, 'Missing ticket file', '/loads');
+    } else if (!load.ticket_number) {
+      pushAlert(alerts, 'yellow', 'Load', title, 'Missing ticket number', '/loads');
+    }
+    const rateMissing = load.rate == null || Number(load.rate) === 0;
+    if (rateMissing && load.status !== 'draft') {
+      pushAlert(alerts, load.status === 'approved' ? 'red' : 'yellow', 'Load', title, 'Rate not set', '/loads');
+    }
+  });
+
+  alerts.sort((a, b) => {
+    if (a.level !== b.level) return a.level === 'red' ? -1 : 1;
+    return a.category.localeCompare(b.category) || a.name.localeCompare(b.name);
+  });
+  return {
+    alerts,
+    redCount: alerts.filter((item) => item.level === 'red').length,
+    yellowCount: alerts.filter((item) => item.level === 'yellow').length
+  };
+}
+
 app.get('/', (req, res) => {
   if (req.session.user) {
     if (req.session.user.must_change_password) {
       return res.redirect('/change-password');
     }
-    res.render('dashboard', { user: req.session.user });
+    const attention = collectAlerts(req.session.user);
+    res.render('dashboard', { user: req.session.user, ...attention });
   } else {
     res.render('login');
   }
@@ -766,8 +908,50 @@ app.post('/receipts/:id/approve', requireAuth, (req, res) => {
 // Compliance
 app.get('/compliance', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  res.render('compliance', { user: req.session.user });
+  const items = db.prepare('SELECT * FROM compliance_items ORDER BY name').all();
+  res.render('compliance', { user: req.session.user, items });
 });
+
+app.post('/compliance', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/');
+  const name = String(req.body.name || '').trim();
+  if (!name) return res.redirect('/compliance');
+  db.prepare(`
+    INSERT INTO compliance_items (name, expiration_date, notes)
+    VALUES (?, ?, ?)
+  `).run(name, blankToNull(req.body.expiration_date), blankToNull(req.body.notes));
+  res.redirect('/compliance');
+});
+
+app.post('/compliance/:id', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/');
+  db.prepare(`
+    UPDATE compliance_items
+    SET name = ?, expiration_date = ?, notes = ?
+    WHERE id = ?
+  `).run(
+    String(req.body.name || '').trim(),
+    blankToNull(req.body.expiration_date),
+    blankToNull(req.body.notes),
+    req.params.id
+  );
+  res.redirect('/compliance');
+});
+
+function readEquipment(body) {
+  const maintenance = ['active', 'maintenance', 'out_of_service'].includes(body.maintenance_status)
+    ? body.maintenance_status
+    : 'active';
+  return {
+    type: body.type === 'trailer' ? 'trailer' : 'truck',
+    number: String(body.number || '').trim(),
+    description: String(body.description || '').trim(),
+    ownership: String(body.ownership || '').trim(),
+    registration_expiration: blankToNull(body.registration_expiration),
+    inspection_expiration: blankToNull(body.inspection_expiration),
+    maintenance_status: maintenance
+  };
+}
 
 // Equipment
 app.get('/equipment', requireAuth, (req, res) => {
@@ -779,16 +963,35 @@ app.get('/equipment', requireAuth, (req, res) => {
 
 app.get('/equipment/new', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  res.render('equipment-form', { user: req.session.user });
+  res.render('equipment-form', { user: req.session.user, equipment: {} });
+});
+
+app.get('/equipment/:id/edit', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/');
+  const equipment = db.prepare('SELECT * FROM equipment WHERE id = ?').get(req.params.id);
+  if (!equipment) return res.redirect('/equipment');
+  res.render('equipment-form', { user: req.session.user, equipment });
 });
 
 app.post('/equipment', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  const { type, number, description, ownership } = req.body;
+  const item = readEquipment(req.body);
   db.prepare(`
-    INSERT INTO equipment (type, number, description, ownership)
-    VALUES (?, ?, ?, ?)
-  `).run(type, number, description, ownership);
+    INSERT INTO equipment (
+      type, number, description, ownership, registration_expiration, inspection_expiration, maintenance_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(item.type, item.number, item.description, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status);
+  res.redirect('/equipment');
+});
+
+app.post('/equipment/:id', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/');
+  const item = readEquipment(req.body);
+  db.prepare(`
+    UPDATE equipment
+    SET type = ?, number = ?, description = ?, ownership = ?, registration_expiration = ?, inspection_expiration = ?, maintenance_status = ?
+    WHERE id = ?
+  `).run(item.type, item.number, item.description, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status, req.params.id);
   res.redirect('/equipment');
 });
 

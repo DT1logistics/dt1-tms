@@ -1,92 +1,52 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Driver Profile - DT1 Logistics</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
-    .header { background: #1B365D; color: white; padding: 16px 20px; display: flex; align-items: center; gap: 12px; }
-    .profile-pic { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; background: #ccc; }
-    .content { padding: 16px; }
-    .card { background: white; border-radius: 10px; padding: 16px; margin-bottom: 12px; }
-    .status-badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
-    .green { background: #d4edda; color: #155724; }
-    .yellow { background: #fff3cd; color: #856404; }
-    .red { background: #f8d7da; color: #721c24; }
-    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
-    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <img class="profile-pic" src="<%= driver.profile_pic || '/default-avatar.png' %>" alt="Profile">
-    <strong><%= driver.name %></strong>
+<%- include('partials/open', { title: driver.name || 'Driver', user: user, active: 'drivers' }) %>
+<h1><%= driver.name %></h1>
+<div class="card" style="display:flex;gap:16px;align-items:center;">
+  <img class="profile-pic" src="<%= driver.profile_pic || '/default-avatar.png' %>" alt="">
+  <div>
+    <div><strong>Hire Date:</strong> <%= driver.hire_date || '—' %></div>
+    <div><strong>DOB:</strong> <%= driver.dob || '—' %></div>
+    <div><strong>Phone:</strong> <%= driver.phone || '—' %></div>
+    <div><strong>Email:</strong> <%= driver.email %></div>
+    <div><strong>Pay %:</strong> <%= driver.pay_percentage || 'Not set' %></div>
   </div>
-  <div class="content">
-    <div class="card">
-      <p><strong>Hire Date:</strong> <%= driver.hire_date || '—' %></p>
-      <p><strong>DOB:</strong> <%= driver.dob || '—' %></p>
-      <p><strong>Phone:</strong> <%= driver.phone || '—' %></p>
-      <p><strong>Email:</strong> <%= driver.email %></p>
-      <p><strong>Pay %:</strong> <%= driver.pay_percentage || 'Not set' %></p>
-    </div>
-    <div class="card">
-      <h3>CDL License</h3>
-      <% const cdl = docs.find(d => d.doc_type === 'cdl'); %>
-      <% if (cdl) { %>
-        <span class="status-badge <%= getStatusClass(cdl.expiration_date) %>"><%= getStatusText(cdl.expiration_date) %></span>
-        <p>Expires: <%= cdl.expiration_date %></p>
-      <% } else { %>
-        <p>No CDL uploaded</p>
-      <% } %>
-      <form method="POST" action="/drivers/<%= driver.id %>/upload" enctype="multipart/form-data">
-        <input type="hidden" name="doc_type" value="cdl">
-        <input type="file" name="file" accept="image/*,.pdf">
-        <input type="date" name="expiration_date" required>
-        <button type="submit">Upload CDL</button>
-      </form>
-    </div>
-    <div class="card">
-      <h3>Medical Card</h3>
-      <% const med = docs.find(d => d.doc_type === 'medical_card'); %>
-      <% if (med) { %>
-        <span class="status-badge <%= getStatusClass(med.expiration_date) %>"><%= getStatusText(med.expiration_date) %></span>
-        <p>Expires: <%= med.expiration_date %></p>
-      <% } else { %>
-        <p>No Medical Card uploaded</p>
-      <% } %>
-      <form method="POST" action="/drivers/<%= driver.id %>/upload" enctype="multipart/form-data">
-        <input type="hidden" name="doc_type" value="medical_card">
-        <input type="file" name="file" accept="image/*,.pdf">
-        <input type="date" name="expiration_date" required>
-        <button type="submit">Upload Medical Card</button>
-      </form>
-    </div>
-  </div>
-  <div class="bottom-nav">
-    <a href="/">Home</a>
-    <a href="/loads">Loads</a>
-    <a href="/receipts">Receipts</a>
-    <a href="/fuel">Fuel</a>
-    <a href="/profile">Profile</a>
-  </div>
-  <script>
-    function getStatusClass(exp) {
-      if (!exp) return 'red';
-      const days = Math.ceil((new Date(exp) - new Date()) / (1000*60*60*24));
-      if (days < 0 || days <= 14) return 'red';
-      if (days <= 45) return 'yellow';
-      return 'green';
-    }
-    function getStatusText(exp) {
-      if (!exp) return 'Missing';
-      const days = Math.ceil((new Date(exp) - new Date()) / (1000*60*60*24));
-      if (days < 0) return 'Expired';
-      if (days <= 14) return 'Expiring ≤14 days';
-      if (days <= 45) return 'Expiring ≤45 days';
-      return 'Active';
-    }
-  </script>
-</body>
-</html>
+</div>
+
+<div class="card">
+  <h2>CDL License</h2>
+  <% const cdl = docs.find(d => d.doc_type === 'cdl'); %>
+  <% if (cdl) { %>
+    <span class="badge <%= getStatusClass(cdl.expiration_date) %>"><%= getStatusText(cdl.expiration_date) %></span>
+    <p>Expires: <%= cdl.expiration_date %></p>
+  <% } else { %>
+    <p><span class="badge red">Missing</span> No CDL uploaded</p>
+  <% } %>
+  <form method="POST" action="/drivers/<%= driver.id %>/upload" enctype="multipart/form-data">
+    <input type="hidden" name="doc_type" value="cdl">
+    <label>File</label>
+    <input type="file" name="file" accept="image/*,.pdf" required>
+    <label>Expiration Date</label>
+    <input type="date" name="expiration_date" required>
+    <button type="submit">Upload CDL</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Medical Card</h2>
+  <% const med = docs.find(d => d.doc_type === 'medical_card'); %>
+  <% if (med) { %>
+    <span class="badge <%= getStatusClass(med.expiration_date) %>"><%= getStatusText(med.expiration_date) %></span>
+    <p>Expires: <%= med.expiration_date %></p>
+  <% } else { %>
+    <p><span class="badge red">Missing</span> No Medical Card uploaded</p>
+  <% } %>
+  <form method="POST" action="/drivers/<%= driver.id %>/upload" enctype="multipart/form-data">
+    <input type="hidden" name="doc_type" value="medical_card">
+    <label>File</label>
+    <input type="file" name="file" accept="image/*,.pdf" required>
+    <label>Expiration Date</label>
+    <input type="date" name="expiration_date" required>
+    <button type="submit">Upload Medical Card</button>
+  </form>
+</div>
+<p><a href="/drivers">Back to Drivers</a></p>
+<%- include('partials/close') %>
