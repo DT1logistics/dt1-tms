@@ -1,7 +1,7 @@
 <%- include('partials/open', { title: 'Compliance', user: user, active: 'compliance' }) %>
 <h1>Compliance</h1>
-<p class="muted">Set an expiration date for each item. Missing dates, expired dates, and dates within 14 days show red on Home. Dates within 60 days show yellow.</p>
-<p class="muted">Color coding: <span class="badge green">Green (Active)</span> · <span class="badge yellow">Yellow (≤60 days)</span> · <span class="badge red">Red (missing, ≤14 days, or expired)</span></p>
+<p class="muted">Set an expiration date for each item. Missing dates, expired dates, and dates within 14 days show red on Home. Dates from 15 to 45 days show yellow.</p>
+<p class="muted">Color coding: <span class="badge green">Green (Active)</span> · <span class="badge yellow">Yellow (≤45 days)</span> · <span class="badge red">Red (missing, ≤14 days, or expired)</span></p>
 
 <% if (!items.length) { %>
   <p>No compliance items yet.</p>

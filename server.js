@@ -22,20 +22,24 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.locals.money = (n) => (Number(n) || 0).toFixed(2);
 
+function daysUntil(exp) {
+  return Math.ceil((new Date(exp) - new Date()) / (1000 * 60 * 60 * 24));
+}
+
 function getStatusClass(exp) {
   if (!exp) return 'red';
-  const days = Math.ceil((new Date(exp) - new Date()) / (1000 * 60 * 60 * 24));
-  if (days < 0 || days <= 14) return 'red';
-  if (days <= 60) return 'yellow';
+  const days = daysUntil(exp);
+  if (days < 15) return 'red';
+  if (days <= 45) return 'yellow';
   return 'green';
 }
 
 function getStatusText(exp) {
   if (!exp) return 'Missing';
-  const days = Math.ceil((new Date(exp) - new Date()) / (1000 * 60 * 60 * 24));
+  const days = daysUntil(exp);
   if (days < 0) return 'Expired';
-  if (days <= 14) return 'Expiring ≤14 days';
-  if (days <= 60) return 'Expiring ≤60 days';
+  if (days < 15) return 'Expiring ≤14 days';
+  if (days <= 45) return 'Expiring ≤45 days';
   return 'Active';
 }
 
@@ -423,6 +427,11 @@ function collectDriverLevels(driverId, hrefs) {
     });
   });
 
+  if (links.documentsOnly) {
+    levels.sort((a, b) => rankLevel(a.level) - rankLevel(b.level) || a.name.localeCompare(b.name));
+    return levels;
+  }
+
   const equipment = db.prepare(`
     SELECT DISTINCT e.*
     FROM loads l
@@ -567,7 +576,7 @@ app.get('/', (req, res) => {
       return res.redirect('/change-password');
     }
     if (req.session.user.role === 'driver') {
-      const levels = collectDriverLevels(req.session.user.id, { docHref: '/profile', loadHref: '/loads' });
+      const levels = collectDriverLevels(req.session.user.id, { docHref: '/profile', documentsOnly: true });
       return res.render('dashboard', {
         user: req.session.user,
         levels,
