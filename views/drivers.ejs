@@ -1,17 +1,17 @@
-<%- include('partials/open', { title: `Drivers`, user: user, active: 'drivers' }) %>
+<%- include('partials/open', { title: 'Drivers', user: user, active: 'drivers' }) %>
 <h1>Drivers</h1>
+<p class="muted">Every driver is listed with green, yellow, and red status levels.</p>
 <a href="/drivers/new" class="btn">+ Add New Driver</a>
-    <% if (drivers.length === 0) { %>
-      <p>No drivers yet.</p>
-    <% } else { %>
-      <% drivers.forEach(d => { %>
-        <div class="card">
-          <a href="/drivers/<%= d.id %>" style="text-decoration:none;color:inherit;">
-            <strong><%= d.name || 'Unnamed' %></strong><br>
-            <%= d.email %><br>
-            Pay: <%= d.pay_percentage ? d.pay_percentage + '%' : 'Not set' %> · <%= d.status %>
-          </a>
-        </div>
-      <% }) %>
-    <% } %>
+<% if (drivers.length === 0) { %>
+  <p>No drivers yet.</p>
+<% } else { %>
+  <% drivers.forEach(function (d) { %>
+    <a class="card driver-link" href="/drivers/<%= d.id %>">
+      <strong><%= d.name || 'Unnamed' %></strong>
+      <div class="muted"><%= d.email %></div>
+      <div class="muted">Pay: <%= d.pay_percentage ? d.pay_percentage + '%' : 'Not set' %> · <%= d.status || 'active' %></div>
+      <%- include('partials/levels', { levels: d.levels, linked: false }) %>
+    </a>
+  <% }) %>
+<% } %>
 <%- include('partials/close') %>

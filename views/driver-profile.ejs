@@ -1,5 +1,9 @@
-<%- include('partials/open', { title: driver.name || 'Driver', user: user, active: 'drivers' }) %>
+<%- include('partials/open', { title: driver.name || 'Driver', user: user, active: 'drivers', headerTitle: driver.name || 'Driver', backHref: '/drivers' }) %>
 <h1><%= driver.name %></h1>
+<h2>Status</h2>
+<p class="muted">Green, yellow, and red levels for this driver.</p>
+<%- include('partials/levels', { levels: levels, linked: false }) %>
+
 <div class="card" style="display:flex;gap:16px;align-items:center;">
   <img class="profile-pic" src="<%= driver.profile_pic || '/default-avatar.png' %>" alt="">
   <div>

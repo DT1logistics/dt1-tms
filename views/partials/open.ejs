@@ -7,13 +7,23 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <input type="checkbox" id="nav-toggle" class="nav-toggle" aria-hidden="true">
+  <% var mobileHeading = (typeof headerTitle !== 'undefined' && headerTitle) ? headerTitle : ''; %>
+  <% var mobileBack = (typeof backHref !== 'undefined' && backHref) ? backHref : '/'; %>
   <div class="app-shell">
-    <header class="mobile-bar">
-      <label for="nav-toggle" class="burger" aria-label="Open menu">&#9776;</label>
-      <img class="brand-logo" src="<%= logoSrc %>" alt="DT1 Logistics" onerror="this.onerror=null;this.src='/logo.svg'">
+    <header class="mobile-bar<%= mobileHeading ? ' titled' : '' %>">
+      <% if (mobileHeading) { %>
+        <a class="mobile-back" href="<%= mobileBack %>" aria-label="Back">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>
+        </a>
+        <div class="mobile-heading"><%= mobileHeading %></div>
+        <span class="mobile-balance"></span>
+      <% } else { %>
+        <a href="/" aria-label="DT1 Logistics home">
+          <img class="brand-logo" src="<%= logoSrc %>" alt="DT1 Logistics" onerror="this.onerror=null;this.src='/logo.svg'">
+        </a>
+      <% } %>
     </header>
     <%- include('./sidebar', { user: user, active: active }) %>
-    <label for="nav-toggle" class="nav-backdrop" aria-label="Close menu"></label>
+    <%- include('./tabbar', { active: active }) %>
     <div class="main">
       <div class="content">

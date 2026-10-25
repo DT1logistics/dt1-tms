@@ -1,0 +1,20 @@
+<% var useLink = typeof linked === 'undefined' ? true : !!linked; %>
+<div class="level-list">
+  <% levels.forEach(function (item) { %>
+    <% if (useLink && item.href) { %>
+      <a class="level-row" href="<%= item.href %>">
+    <% } else { %>
+      <div class="level-row">
+    <% } %>
+        <span class="badge <%= item.level %>"><%= item.level === 'red' ? 'Red' : item.level === 'yellow' ? 'Yellow' : 'Green' %></span>
+        <span class="level-copy">
+          <strong><%= item.name %></strong>
+          <span><%= item.detail %></span>
+        </span>
+    <% if (useLink && item.href) { %>
+      </a>
+    <% } else { %>
+      </div>
+    <% } %>
+  <% }) %>
+</div>

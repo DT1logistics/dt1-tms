@@ -228,6 +228,7 @@ function initDB() {
   ensureColumn('users', 'hire_date', 'DATE');
   ensureColumn('users', 'dob', 'DATE');
   ensureColumn('users', 'profile_pic', 'TEXT');
+  ensureColumn('users', 'app_language', "TEXT DEFAULT 'English'");
 
   ensureColumn('loads', 'project_id', 'INTEGER');
   ensureColumn('loads', 'rate', 'REAL DEFAULT 0');
@@ -333,7 +334,8 @@ function loadFormData(user) {
   const drivers = user.role === 'admin'
     ? db.prepare("SELECT id, name FROM users WHERE role = 'driver' AND status = 'active' ORDER BY name").all()
     : [];
-  return { drivers, projects: activeProjects() };
+  const trucks = db.prepare("SELECT id, number, description FROM equipment WHERE type = 'truck' ORDER BY number").all();
+  return { drivers, projects: activeProjects(), trucks };
 }
 
 const loadQuery = `
@@ -357,6 +359,105 @@ function pushAlert(alerts, level, category, name, detail, href) {
   if (level === 'red' || level === 'yellow') {
     alerts.push({ level, category, name, detail, href });
   }
+}
+
+function rankLevel(level) {
+  if (level === 'red') return 0;
+  if (level === 'yellow') return 1;
+  return 2;
+}
+
+function assessLoad(load, hasFile) {
+  let level = 'green';
+  const notes = [];
+  const bump = (next, note) => {
+    if (rankLevel(next) < rankLevel(level)) level = next;
+    notes.push(note);
+  };
+  if (load.status === 'submitted') bump('yellow', 'Pending review');
+  if (!hasFile && !load.ticket_number) bump('red', 'Missing ticket number and ticket file');
+  else if (!hasFile) bump('yellow', 'Missing ticket file');
+  else if (!load.ticket_number) bump('yellow', 'Missing ticket number');
+  const rateMissing = load.rate == null || Number(load.rate) === 0;
+  if (rateMissing && load.status !== 'draft') {
+    bump(load.status === 'approved' ? 'red' : 'yellow', 'Rate not set');
+  }
+  return { level, detail: notes.length ? notes.join(' · ') : 'Active' };
+}
+
+function assessEquipment(item) {
+  let level = 'green';
+  const notes = [];
+  const bump = (next, note) => {
+    if (rankLevel(next) < rankLevel(level)) level = next;
+    notes.push(note);
+  };
+  if (item.maintenance_status === 'out_of_service') bump('red', 'Out of service');
+  else if (item.maintenance_status === 'maintenance') bump('yellow', 'In maintenance');
+  if (item.registration_expiration) {
+    const registrationLevel = getStatusClass(item.registration_expiration);
+    if (registrationLevel === 'green') notes.push(`Registration active · ${item.registration_expiration}`);
+    else bump(registrationLevel, `Registration ${getStatusText(item.registration_expiration).toLowerCase()} · ${item.registration_expiration}`);
+  }
+  if (item.inspection_expiration) {
+    const inspectionLevel = getStatusClass(item.inspection_expiration);
+    if (inspectionLevel === 'green') notes.push(`Inspection active · ${item.inspection_expiration}`);
+    else bump(inspectionLevel, `Inspection ${getStatusText(item.inspection_expiration).toLowerCase()} · ${item.inspection_expiration}`);
+  }
+  if (!notes.length) notes.push('Active');
+  return { level, detail: notes.join(' · ') };
+}
+
+function collectDriverLevels(driverId, hrefs) {
+  const links = hrefs || {};
+  const levels = [];
+  const docs = db.prepare('SELECT * FROM driver_documents WHERE driver_id = ?').all(driverId);
+  [['cdl', 'CDL License'], ['medical_card', 'Medical Card']].forEach(([kind, label]) => {
+    const doc = docs.find((item) => item.doc_type === kind);
+    const exp = doc ? doc.expiration_date : null;
+    levels.push({
+      level: getStatusClass(exp),
+      name: label,
+      detail: `${getStatusText(exp)}${exp ? ' · ' + exp : ''}`,
+      href: links.docHref || ''
+    });
+  });
+
+  const equipment = db.prepare(`
+    SELECT DISTINCT e.*
+    FROM loads l
+    JOIN equipment e ON e.id = l.truck_id
+    WHERE l.driver_id = ?
+    ORDER BY e.number
+  `).all(driverId);
+  equipment.forEach((item) => {
+    const assessed = assessEquipment(item);
+    const label = `${item.type === 'trailer' ? 'Trailer' : 'Truck'} ${item.number || ''}`.trim();
+    levels.push({
+      level: assessed.level,
+      name: label,
+      detail: `Equipment · ${assessed.detail}`,
+      href: links.equipHref || ''
+    });
+  });
+
+  const loads = db.prepare(loadQuery + ' WHERE l.driver_id = ? ORDER BY l.load_date DESC, l.id DESC').all(driverId);
+  const docMap = {};
+  db.prepare('SELECT load_id, COUNT(*) AS n FROM documents GROUP BY load_id').all().forEach((row) => {
+    docMap[row.load_id] = row.n;
+  });
+  loads.forEach((load) => {
+    const assessed = assessLoad(load, (docMap[load.id] || 0) > 0);
+    levels.push({
+      level: assessed.level,
+      name: load.ticket_number || `Load #${load.id}`,
+      detail: `Load · ${assessed.detail}`,
+      href: links.loadHref || ''
+    });
+  });
+
+  levels.sort((a, b) => rankLevel(a.level) - rankLevel(b.level) || a.name.localeCompare(b.name));
+  return levels;
 }
 
 function collectAlerts(user) {
@@ -464,6 +565,16 @@ app.get('/', (req, res) => {
   if (req.session.user) {
     if (req.session.user.must_change_password) {
       return res.redirect('/change-password');
+    }
+    if (req.session.user.role === 'driver') {
+      const levels = collectDriverLevels(req.session.user.id, { docHref: '/profile', loadHref: '/loads' });
+      return res.render('dashboard', {
+        user: req.session.user,
+        levels,
+        redCount: levels.filter((item) => item.level === 'red').length,
+        yellowCount: levels.filter((item) => item.level === 'yellow').length,
+        greenCount: levels.filter((item) => item.level === 'green').length
+      });
     }
     const attention = collectAlerts(req.session.user);
     res.render('dashboard', { user: req.session.user, ...attention });
@@ -696,14 +807,24 @@ app.post('/projects/:id', requireAdmin, (req, res) => {
 });
 
 // Loads routes
+function attachTickets(loads) {
+  const files = db.prepare('SELECT load_id, original_name FROM documents ORDER BY id').all();
+  const byLoad = {};
+  files.forEach((file) => {
+    if (!byLoad[file.load_id]) byLoad[file.load_id] = [];
+    byLoad[file.load_id].push(file.original_name);
+  });
+  loads.forEach((load) => {
+    load.tickets = byLoad[load.id] || [];
+  });
+  return loads;
+}
+
 app.get('/loads', requireAuth, (req, res) => {
-  let loads;
-  if (req.session.user.role === 'admin') {
-    loads = db.prepare(loadQuery + ' ORDER BY l.created_at DESC').all();
-  } else {
-    loads = db.prepare(loadQuery + ' WHERE l.driver_id = ? ORDER BY l.created_at DESC').all(req.session.user.id);
-  }
-  res.render('loads', { user: req.session.user, loads });
+  const loads = req.session.user.role === 'admin'
+    ? db.prepare(loadQuery + ' ORDER BY l.created_at DESC').all()
+    : db.prepare(loadQuery + ' WHERE l.driver_id = ? ORDER BY l.created_at DESC').all(req.session.user.id);
+  res.render('loads', { user: req.session.user, loads: attachTickets(loads) });
 });
 
 app.post('/loads/:id/approve', requireAuth, (req, res) => {
@@ -715,31 +836,18 @@ app.post('/loads/:id/approve', requireAuth, (req, res) => {
   res.redirect('/loads');
 });
 
-app.get('/loads/new', requireAuth, (req, res) => {
-  const form = loadFormData(req.session.user);
-  res.render('load-form', { user: req.session.user, load: {}, ...form });
-});
+function findActiveProject(projectId) {
+  const id = parseInt(projectId, 10);
+  if (!Number.isInteger(id)) return null;
+  return db.prepare(`
+    SELECT p.*
+    FROM projects p
+    JOIN customers c ON c.id = p.customer_id
+    WHERE p.id = ? AND p.status = 'active' AND c.status = 'active'
+  `).get(id) || null;
+}
 
-app.post('/loads', requireAuth, upload.array('documents', 10), (req, res) => {
-  const projectId = parseInt(req.body.project_id, 10);
-  const project = Number.isInteger(projectId)
-    ? db.prepare(`
-        SELECT p.*
-        FROM projects p
-        JOIN customers c ON c.id = p.customer_id
-        WHERE p.id = ? AND p.status = 'active' AND c.status = 'active'
-      `).get(projectId)
-    : null;
-  if (!project) {
-    const form = loadFormData(req.session.user);
-    return res.status(400).render('load-form', {
-      user: req.session.user,
-      load: req.body,
-      error: 'Select an active project',
-      ...form
-    });
-  }
-
+function buildLoadValues(req, project) {
   const rateMissing = req.body.rate === undefined || req.body.rate === null || String(req.body.rate).trim() === '';
   let rate = parseFloat(req.body.rate);
   let hasFuel = flagValue(req.body.has_fuel_surcharge) ? 1 : 0;
@@ -748,7 +856,11 @@ app.post('/loads', requireAuth, upload.array('documents', 10), (req, res) => {
   let driveAmount = parseFloat(req.body.drive_time_amount);
   let selfAmount = parseFloat(req.body.self_load_amount);
 
-  if (rateMissing || !Number.isFinite(rate)) {
+  if (!project) {
+    if (!Number.isFinite(rate)) rate = 0;
+    hasFuel = 0;
+    if (!hasDrive || !Number.isFinite(driveAmount)) driveAmount = 0;
+  } else if (rateMissing || !Number.isFinite(rate)) {
     rate = Number(project.default_rate) || 0;
     hasFuel = project.has_fuel_surcharge ? 1 : 0;
     hasDrive = project.has_drive_time ? 1 : 0;
@@ -759,6 +871,10 @@ app.post('/loads', requireAuth, upload.array('documents', 10), (req, res) => {
     driveAmount = Number(project.default_drive_time_amount) || 0;
   }
 
+  if (req.session.user.role === 'driver') {
+    hasFuel = project && project.has_fuel_surcharge ? 1 : 0;
+  }
+
   if (!hasSelf) {
     selfAmount = 0;
   } else if (!Number.isFinite(selfAmount) || selfAmount === 0) {
@@ -767,37 +883,141 @@ app.post('/loads', requireAuth, upload.array('documents', 10), (req, res) => {
 
   const weight = parseFloat(req.body.weight_quantity);
   const assignedDriver = req.session.user.role === 'driver' ? req.session.user.id : (req.body.driver_id || null);
-  const result = db.prepare(`
-    INSERT INTO loads (
-      ticket_number, load_date, driver_id, project_id, description, weight_quantity,
-      rate, has_fuel_surcharge, has_drive_time, drive_time_amount, has_self_load, self_load_amount,
-      status, submitted_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?)
-  `).run(
-    req.body.ticket_number || null,
-    req.body.load_date || null,
-    assignedDriver,
-    project.id,
-    req.body.description || null,
-    Number.isFinite(weight) ? weight : null,
+  const truckId = parseInt(req.body.truck_id, 10);
+  const truck = Number.isInteger(truckId)
+    ? db.prepare("SELECT id FROM equipment WHERE id = ? AND type = 'truck'").get(truckId)
+    : null;
+
+  return {
+    ticket_number: blankToNull(req.body.ticket_number),
+    load_date: blankToNull(req.body.load_date),
+    driver_id: assignedDriver || null,
+    truck_id: truck ? truck.id : null,
+    project_id: project ? project.id : null,
+    description: blankToNull(req.body.description),
+    weight: Number.isFinite(weight) ? weight : null,
     rate,
     hasFuel,
     hasDrive,
     driveAmount,
     hasSelf,
     selfAmount,
+    status: req.body.action === 'draft' ? 'draft' : 'submitted'
+  };
+}
+
+function saveTicketFiles(loadId, files, userId) {
+  const list = Array.isArray(files) ? files : [];
+  if (!list.length) return;
+  const insertDoc = db.prepare(`
+    INSERT INTO documents (load_id, filename, original_name, category, uploaded_by)
+    VALUES (?, ?, ?, 'load_document', ?)
+  `);
+  list.forEach((file) => {
+    if (file && file.filename) insertDoc.run(loadId, file.filename, file.originalname, userId);
+  });
+}
+
+function editableDraft(req, id) {
+  const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(id);
+  if (!load || load.status !== 'draft') return null;
+  if (req.session.user.role !== 'admin' && String(load.driver_id) !== String(req.session.user.id)) return null;
+  return load;
+}
+
+function renderLoadForm(req, res, status, load, error) {
+  const form = loadFormData(req.session.user);
+  const tickets = load && load.id
+    ? db.prepare('SELECT original_name FROM documents WHERE load_id = ? ORDER BY id').all(load.id)
+    : [];
+  return res.status(status).render('load-form', {
+    user: req.session.user,
+    load,
+    tickets,
+    error,
+    ...form
+  });
+}
+
+app.get('/loads/new', requireAuth, (req, res) => {
+  const form = loadFormData(req.session.user);
+  res.render('load-form', { user: req.session.user, load: {}, tickets: [], ...form });
+});
+
+app.get('/loads/:id/edit', requireAuth, (req, res) => {
+  const existing = editableDraft(req, req.params.id);
+  if (!existing) return res.redirect('/loads');
+  const load = db.prepare(loadQuery + ' WHERE l.id = ?').get(existing.id);
+  const tickets = db.prepare('SELECT original_name FROM documents WHERE load_id = ? ORDER BY id').all(existing.id);
+  const form = loadFormData(req.session.user);
+  res.render('load-form', { user: req.session.user, load, tickets, ...form });
+});
+
+app.post('/loads', requireAuth, upload.array('tickets', 10), (req, res) => {
+  const project = findActiveProject(req.body.project_id);
+  if (!project && req.body.action !== 'draft') {
+    return renderLoadForm(req, res, 400, req.body, 'Select an active project');
+  }
+  const values = buildLoadValues(req, project);
+  const result = db.prepare(`
+    INSERT INTO loads (
+      ticket_number, load_date, driver_id, truck_id, project_id, description, weight_quantity,
+      rate, has_fuel_surcharge, has_drive_time, drive_time_amount, has_self_load, self_load_amount,
+      status, submitted_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    values.ticket_number,
+    values.load_date,
+    values.driver_id,
+    values.truck_id,
+    values.project_id,
+    values.description,
+    values.weight,
+    values.rate,
+    values.hasFuel,
+    values.hasDrive,
+    values.driveAmount,
+    values.hasSelf,
+    values.selfAmount,
+    values.status,
     req.session.user.id
   );
-  const loadId = result.lastInsertRowid;
-  if (req.files) {
-    const insertDoc = db.prepare(`
-      INSERT INTO documents (load_id, filename, original_name, category, uploaded_by)
-      VALUES (?, ?, ?, 'load_document', ?)
-    `);
-    req.files.forEach(file => {
-      insertDoc.run(loadId, file.filename, file.originalname, req.session.user.id);
-    });
+  saveTicketFiles(result.lastInsertRowid, req.files, req.session.user.id);
+  res.redirect('/loads');
+});
+
+app.post('/loads/:id', requireAuth, upload.array('tickets', 10), (req, res) => {
+  const existing = editableDraft(req, req.params.id);
+  if (!existing) return res.redirect('/loads');
+  const project = findActiveProject(req.body.project_id);
+  if (!project && req.body.action !== 'draft') {
+    return renderLoadForm(req, res, 400, { ...existing, ...req.body, id: existing.id }, 'Select an active project');
   }
+  const values = buildLoadValues(req, project);
+  db.prepare(`
+    UPDATE loads
+    SET ticket_number = ?, load_date = ?, driver_id = ?, truck_id = ?, project_id = ?, description = ?,
+        weight_quantity = ?, rate = ?, has_fuel_surcharge = ?, has_drive_time = ?, drive_time_amount = ?,
+        has_self_load = ?, self_load_amount = ?, status = ?
+    WHERE id = ? AND status = 'draft'
+  `).run(
+    values.ticket_number,
+    values.load_date,
+    values.driver_id,
+    values.truck_id,
+    values.project_id,
+    values.description,
+    values.weight,
+    values.rate,
+    values.hasFuel,
+    values.hasDrive,
+    values.driveAmount,
+    values.hasSelf,
+    values.selfAmount,
+    values.status,
+    existing.id
+  );
+  saveTicketFiles(existing.id, req.files, req.session.user.id);
   res.redirect('/loads');
 });
 
@@ -805,6 +1025,9 @@ app.post('/loads', requireAuth, upload.array('documents', 10), (req, res) => {
 app.get('/drivers', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
   const drivers = db.prepare("SELECT id, name, email, phone, pay_percentage, status, created_at FROM users WHERE role = 'driver' ORDER BY name").all();
+  drivers.forEach((driver) => {
+    driver.levels = collectDriverLevels(driver.id, { docHref: `/drivers/${driver.id}`, loadHref: '/loads', equipHref: '/equipment' });
+  });
   res.render('drivers', { user: req.session.user, drivers });
 });
 
@@ -859,7 +1082,8 @@ app.get('/drivers/:id', requireAuth, (req, res) => {
   const driver = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(req.params.id, 'driver');
   if (!driver) return res.redirect('/drivers');
   const docs = db.prepare('SELECT * FROM driver_documents WHERE driver_id = ?').all(req.params.id);
-  res.render('driver-profile', { user: req.session.user, driver, docs });
+  const levels = collectDriverLevels(driver.id, { docHref: '', loadHref: '/loads', equipHref: '/equipment' });
+  res.render('driver-profile', { user: req.session.user, driver, docs, levels });
 });
 
 // Receipts
@@ -1028,9 +1252,46 @@ app.get('/fuel', requireAuth, (req, res) => {
 });
 
 // Profile
+function profileLevels(profile) {
+  if (!profile || profile.role !== 'driver') return [];
+  return collectDriverLevels(profile.id, { docHref: '', loadHref: '/loads' });
+}
+
 app.get('/profile', requireAuth, (req, res) => {
   const profile = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.user.id);
-  res.render('profile', { user: req.session.user, profile });
+  res.render('profile', {
+    user: req.session.user,
+    profile,
+    levels: profileLevels(profile),
+    saved: req.query.saved === '1'
+  });
+});
+
+app.post('/profile', requireAuth, (req, res) => {
+  const current = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.user.id);
+  const name = String(req.body.name || '').trim();
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const phone = String(req.body.phone || '').trim();
+  const languages = ['English', 'Spanish'];
+  const appLanguage = languages.includes(req.body.language) ? req.body.language : 'English';
+  const draft = Object.assign({}, current, { name, email, phone, app_language: appLanguage });
+  const renderForm = (status, error) => res.status(status).render('profile', {
+    user: req.session.user,
+    profile: draft,
+    levels: profileLevels(current),
+    saved: false,
+    error
+  });
+  if (!name || !email.includes('@')) {
+    return renderForm(400, 'Enter your name and a valid email.');
+  }
+  const duplicate = db.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ?').get(email, current.id);
+  if (duplicate) return renderForm(400, 'That email is already in use.');
+  db.prepare('UPDATE users SET name = ?, email = ?, phone = ?, app_language = ? WHERE id = ?')
+    .run(name, email, phone, appLanguage, current.id);
+  req.session.user.name = name;
+  req.session.user.email = email;
+  res.redirect('/profile?saved=1');
 });
 
 // Settlements and customer invoices (admin)

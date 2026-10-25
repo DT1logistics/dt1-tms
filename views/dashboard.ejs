@@ -1,39 +1,50 @@
 <%- include('partials/open', { title: 'Home', user: user, active: 'home' }) %>
-<h1>Home</h1>
-<p class="muted">Items that are yellow or red and need attention.</p>
-
-<% if (!alerts.length) { %>
-  <div class="all-clear">All Clear — No Yellow or Red Items</div>
-<% } else { %>
-  <h2>Action Required — Red &amp; Yellow Alerts</h2>
+<% if (user.role === 'driver') { %>
+  <h1>Home</h1>
+  <h2>Your Status</h2>
+  <p class="muted">CDL, medical card, assigned equipment, and loads. Green, yellow, and red all stay on this screen.</p>
   <div class="counts">
     <span class="badge red"><%= redCount %> Red</span>
     <span class="badge yellow"><%= yellowCount %> Yellow</span>
+    <span class="badge green"><%= greenCount %> Green</span>
   </div>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>Level</th>
-          <th>Category</th>
-          <th>Item</th>
-          <th>Status</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <% alerts.forEach(function (alert) { %>
+  <%- include('partials/levels', { levels: levels }) %>
+<% } else { %>
+  <h1>Home</h1>
+  <p class="muted">Items that are yellow or red and need attention.</p>
+  <% if (!alerts.length) { %>
+    <div class="all-clear">All Clear — No Yellow or Red Items</div>
+  <% } else { %>
+    <h2>Action Required — Red &amp; Yellow Alerts</h2>
+    <div class="counts">
+      <span class="badge red"><%= redCount %> Red</span>
+      <span class="badge yellow"><%= yellowCount %> Yellow</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
           <tr>
-            <td><span class="badge <%= alert.level %>"><%= alert.level === 'red' ? 'Red' : 'Yellow' %></span></td>
-            <td><%= alert.category %></td>
-            <td><%= alert.name %></td>
-            <td><%= alert.detail %></td>
-            <td><a href="<%= alert.href %>">Open</a></td>
+            <th>Level</th>
+            <th>Category</th>
+            <th>Item</th>
+            <th>Status</th>
+            <th></th>
           </tr>
-        <% }) %>
-      </tbody>
-    </table>
-  </div>
+        </thead>
+        <tbody>
+          <% alerts.forEach(function (alert) { %>
+            <tr>
+              <td><span class="badge <%= alert.level %>"><%= alert.level === 'red' ? 'Red' : 'Yellow' %></span></td>
+              <td><%= alert.category %></td>
+              <td><%= alert.name %></td>
+              <td><%= alert.detail %></td>
+              <td><a href="<%= alert.href %>">Open</a></td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
 <% } %>
 
 <h2>Quick Access</h2>

@@ -16,7 +16,13 @@
           <div>Qty: <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
           <div>Rate: $<%= money(rate) %></div>
           <div>Base Hauling: $<%= money(baseHauling) %></div>
-          <div>Fuel Surcharge: <%= Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No' %></div>
+          <% if (user.role === 'admin') { %>
+            <div>Fuel Surcharge: <%= Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No' %></div>
+          <% } %>
+          <div>Load Ticket/BOL: <%= load.tickets && load.tickets.length ? load.tickets.join(', ') : 'None' %></div>
+          <% if (load.status === 'draft') { %>
+            <p><a href="/loads/<%= load.id %>/edit">Continue draft</a></p>
+          <% } %>
           <% if (Number(load.drive_time_amount) > 0) { %>
             <div>Drive Time: $<%= money(load.drive_time_amount) %></div>
           <% } %>
