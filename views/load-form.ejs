@@ -1,29 +1,6 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>New Load - DT1 Logistics</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
-    .header { background: #1B365D; color: white; padding: 16px 20px; }
-    .content { padding: 16px; max-width: 640px; margin: 0 auto; }
-    label { display: block; margin-top: 12px; font-weight: bold; color: #333; }
-    input, textarea, select { width: 100%; padding: 12px; margin-top: 4px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font: inherit; }
-    input[type="checkbox"] { width: auto; padding: 0; margin: 0; }
-    .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
-    .check label { margin: 0; }
-    button { width: 100%; padding: 14px; background: #1B365D; color: white; border: none; border-radius: 8px; font-size: 16px; margin-top: 20px; cursor: pointer; }
-    .error { color: #c0392b; margin-bottom: 12px; }
-    .muted { color: #555; font-size: 13px; }
-    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
-    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="header"><strong>New Load</strong></div>
-  <div class="content">
-    <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
+<%- include('partials/open', { title: `New Load`, user: user, active: 'new-load' }) %>
+<h1>New Load</h1>
+<% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
     <% if (!projects || !projects.length) { %>
       <p>No active projects yet. An admin needs to add a customer and project before a load can be entered.</p>
     <% } %>
@@ -84,17 +61,12 @@
       <% } %>
       <label>Supporting Documents (optional)</label>
       <input type="file" name="documents" multiple accept="image/*,.pdf">
-      <button type="submit">Submit Load</button>
+      <div class="form-actions">
+        <button type="submit">Submit Load</button>
+        <a class="btn btn-secondary" href="/loads">Cancel</a>
+      </div>
     </form>
-  </div>
-  <div class="bottom-nav">
-    <a href="/">Home</a>
-    <a href="/loads">Loads</a>
-    <a href="/receipts">Receipts</a>
-    <a href="/fuel">Fuel</a>
-    <a href="/profile">Profile</a>
-  </div>
-  <script>
+<script>
     const projectSelect = document.getElementById('project_select');
     const rateInput = document.querySelector('input[name="rate"]');
     const fscInput = document.querySelector('input[name="has_fuel_surcharge"]');
@@ -151,5 +123,4 @@
     syncDriveWrap();
     syncSelfWrap();
   </script>
-</body>
-</html>
+<%- include('partials/close') %>

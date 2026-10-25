@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= title %> - DT1 Logistics</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <input type="checkbox" id="nav-toggle" class="nav-toggle" aria-hidden="true">
+  <div class="app-shell">
+    <header class="mobile-bar">
+      <label for="nav-toggle" class="burger" aria-label="Open menu">&#9776;</label>
+      <img class="brand-logo" src="<%= logoSrc %>" alt="DT1 Logistics" onerror="this.onerror=null;this.src='/logo.svg'">
+    </header>
+    <%- include('./sidebar', { user: user, active: active }) %>
+    <label for="nav-toggle" class="nav-backdrop" aria-label="Close menu"></label>
+    <div class="main">
+      <div class="content">

@@ -1,23 +1,6 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Drivers - DT1 Logistics</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
-    .header { background: #1B365D; color: white; padding: 16px 20px; }
-    .content { padding: 16px; }
-    .card { background: white; border-radius: 10px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
-    .btn { display: inline-block; background: #1B365D; color: white; padding: 10px 16px; border-radius: 8px; text-decoration: none; margin-bottom: 16px; }
-    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
-    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="header"><strong>Drivers</strong></div>
-  <div class="content">
-    <a href="/drivers/new" class="btn">+ Add New Driver</a>
+<%- include('partials/open', { title: `Drivers`, user: user, active: 'drivers' }) %>
+<h1>Drivers</h1>
+<a href="/drivers/new" class="btn">+ Add New Driver</a>
     <% if (drivers.length === 0) { %>
       <p>No drivers yet.</p>
     <% } else { %>
@@ -31,13 +14,4 @@
         </div>
       <% }) %>
     <% } %>
-  </div>
-  <div class="bottom-nav">
-    <a href="/">Home</a>
-    <a href="/loads">Loads</a>
-    <a href="/receipts">Receipts</a>
-    <a href="/fuel">Fuel</a>
-    <a href="/profile">Profile</a>
-  </div>
-</body>
-</html>
+<%- include('partials/close') %>

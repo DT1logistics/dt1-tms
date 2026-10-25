@@ -1,44 +1,37 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Compliance - DT1 Logistics</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
-    .header { background: #1B365D; color: white; padding: 16px 20px; }
-    .content { padding: 16px; }
-    .card { background: white; padding: 16px; border-radius: 10px; margin-bottom: 12px; }
-    .green { color: #155724; }
-    .yellow { color: #856404; }
-    .red { color: #721c24; }
-    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
-    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="header"><strong>Compliance</strong></div>
-  <div class="content">
-    <div class="card">
-      <h3>FMCSA</h3>
-      <p>Credentials and recurring obligations tracked here.</p>
+<%- include('partials/open', { title: 'Compliance', user: user, active: 'compliance' }) %>
+<h1>Compliance</h1>
+<p class="muted">Set an expiration date for each item. Missing dates, expired dates, and dates within 14 days show red on Home. Dates within 60 days show yellow.</p>
+<p class="muted">Color coding: <span class="badge green">Green (Active)</span> · <span class="badge yellow">Yellow (≤60 days)</span> · <span class="badge red">Red (missing, ≤14 days, or expired)</span></p>
+
+<% if (!items.length) { %>
+  <p>No compliance items yet.</p>
+<% } %>
+<% items.forEach(function (item) { %>
+  <div class="card">
+    <div class="counts">
+      <strong><%= item.name %></strong>
+      <span class="badge <%= getStatusClass(item.expiration_date) %>"><%= getStatusText(item.expiration_date) %></span>
     </div>
-    <div class="card">
-      <h3>HUVT</h3>
-      <p>Status and deadlines.</p>
-    </div>
-    <div class="card">
-      <h3>UCR</h3>
-      <p>Status and deadlines.</p>
-    </div>
-    <p>Color coding: <span class="green">Green (Active)</span> · <span class="yellow">Yellow (Expiring ≤45 days)</span> · <span class="red">Red (≤14 days or Expired)</span></p>
+    <form class="stack-form" method="POST" action="/compliance/<%= item.id %>">
+      <label>Name</label>
+      <input type="text" name="name" value="<%= item.name %>" required>
+      <label>Expiration Date</label>
+      <input type="date" name="expiration_date" value="<%= item.expiration_date || '' %>">
+      <label>Notes</label>
+      <textarea name="notes" rows="2"><%= item.notes || '' %></textarea>
+      <button type="submit">Save</button>
+    </form>
   </div>
-  <div class="bottom-nav">
-    <a href="/">Home</a>
-    <a href="/loads">Loads</a>
-    <a href="/receipts">Receipts</a>
-    <a href="/fuel">Fuel</a>
-    <a href="/profile">Profile</a>
-  </div>
-</body>
-</html>
+<% }) %>
+
+<h2>Add Compliance Item</h2>
+<form class="stack-form form-narrow" method="POST" action="/compliance">
+  <label>Name</label>
+  <input type="text" name="name" placeholder="e.g. Insurance" required>
+  <label>Expiration Date</label>
+  <input type="date" name="expiration_date">
+  <label>Notes</label>
+  <textarea name="notes" rows="2"></textarea>
+  <button type="submit">Add Item</button>
+</form>
+<%- include('partials/close') %>
