@@ -2,7 +2,7 @@
 <% if (user.role === 'driver') { %>
   <h1>Home</h1>
   <h2>Your Status</h2>
-  <p class="muted">CDL, medical card, assigned equipment, and loads. Green, yellow, and red all stay on this screen.</p>
+  <p class="muted">Your CDL license and medical card. Yellow is 15 to 45 days from expiration. Red is missing, expired, or within 14 days.</p>
   <div class="counts">
     <span class="badge red"><%= redCount %> Red</span>
     <span class="badge yellow"><%= yellowCount %> Yellow</span>
