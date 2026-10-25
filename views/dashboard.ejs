@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DT1 Logistics - Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
+    .header { background: #1B365D; color: white; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; }
+    .nav { background: white; border-bottom: 1px solid #ddd; padding: 12px 20px; }
+    .nav a { color: #1B365D; }
+    .content { padding: 20px; max-width: 980px; margin: 0 auto; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; margin-top: 16px; }
+    .quick { display: block; background: white; border-radius: 10px; padding: 16px; text-decoration: none; color: #1B365D; box-shadow: 0 2px 6px rgba(0,0,0,0.08); border-top: 4px solid #1B365D; }
+    .quick strong { display: block; font-size: 16px; margin-bottom: 6px; }
+    .quick span { display: block; color: #555; font-size: 13px; line-height: 1.4; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
+    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <strong>DT1 LOGISTICS</strong>
+    <span><%= user.name || user.email %> (<%= user.role %>)</span>
+  </div>
+  <div class="nav">
+    <a href="/">Home</a> | <a href="/loads">Loads</a>
+    <% if (user.role === 'admin') { %> | <a href="/customers">Customers</a> | <a href="/settlements">Settlements</a><% } %>
+    | <a href="/logout">Sign Out</a>
+  </div>
+  <div class="content">
+    <h2>Dashboard</h2>
+    <p>Welcome to the DT1 Logistics Transportation Operations Management App.</p>
+    <p>Role: <strong><%= user.role %></strong></p>
+    <% if (user.role === 'admin') { %>
+      <div class="cards">
+        <a class="quick" href="/customers"><strong>Customers &amp; Projects</strong><span>Billing contacts, project rates, fuel surcharge, and drive time.</span></a>
+        <a class="quick" href="/loads"><strong>Loads</strong><span>Enter tickets, quantities, and project charges.</span></a>
+        <a class="quick" href="/drivers"><strong>Drivers</strong><span>Driver profiles and pay percentage.</span></a>
+        <a class="quick" href="/equipment"><strong>Equipment</strong><span>Trucks and trailers.</span></a>
+        <a class="quick" href="/receipts"><strong>Receipts</strong><span>Expense receipts for approval.</span></a>
+        <a class="quick" href="/fuel-rate"><strong>Fuel Rate</strong><span>Weekly EIA Central Atlantic surcharge.</span></a>
+        <a class="quick" href="/compliance"><strong>Compliance</strong><span>FMCSA, HUVT, and UCR status.</span></a>
+        <a class="quick" href="/settlements"><strong>Settlements &amp; Invoices</strong><span>Driver pay and weekly customer invoices.</span></a>
+      </div>
+    <% } %>
+  </div>
+  <div class="bottom-nav">
+    <a href="/">Home</a>
+    <a href="/loads">Loads</a>
+    <a href="/receipts">Receipts</a>
+    <a href="/fuel">Fuel</a>
+    <a href="/profile">Profile</a>
+  </div>
+</body>
+</html>

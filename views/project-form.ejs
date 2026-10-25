@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= project && project.id ? 'Edit Project' : 'Add Project' %> - DT1 Logistics</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
+    .header { background: #1B365D; color: white; padding: 16px 20px; }
+    .content { padding: 16px; max-width: 600px; margin: 0 auto; }
+    label { display: block; margin-top: 12px; font-weight: bold; color: #333; }
+    input, select { width: 100%; padding: 12px; margin-top: 4px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+    input[type="checkbox"] { width: auto; padding: 0; margin: 0; }
+    .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+    .check label { margin: 0; }
+    button { width: 100%; padding: 14px; background: #1B365D; color: white; border: none; border-radius: 8px; font-size: 16px; margin-top: 20px; cursor: pointer; }
+    .error { color: #c0392b; margin-bottom: 12px; }
+    .muted { color: #555; font-size: 13px; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
+    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header"><strong><%= project && project.id ? 'Edit Project' : 'Add Project' %></strong></div>
+  <div class="content">
+    <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
+    <form method="POST" action="<%= project && project.id ? '/projects/' + project.id : '/projects' %>">
+      <label>Customer</label>
+      <select name="customer_id" required>
+        <option value="">-- Select Customer --</option>
+        <% customers.forEach(customer => { %>
+          <option value="<%= customer.id %>" <%= String(project.customer_id) === String(customer.id) ? 'selected' : '' %>><%= customer.name %></option>
+        <% }) %>
+      </select>
+      <label>Project Name</label>
+      <input type="text" name="project_name" required placeholder="e.g. Hunters Pad" value="<%= project.project_name || '' %>">
+      <p class="muted">Display name is Customer - Project. A typed prefix such as "Synagro - Hunters Pad" is kept once.</p>
+      <label>Default Rate ($)</label>
+      <input type="number" step="0.01" name="default_rate" required value="<%= project.default_rate != null ? project.default_rate : '' %>">
+      <div class="check">
+        <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" <%= project.has_fuel_surcharge ? 'checked' : '' %>>
+        <label for="has_fuel_surcharge">Includes Fuel Surcharge</label>
+      </div>
+      <div class="check">
+        <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= project.has_drive_time ? 'checked' : '' %>>
+        <label for="has_drive_time">Includes Drive Time Fee</label>
+      </div>
+      <div id="drive_time_wrap" style="<%= project.has_drive_time ? '' : 'display:none;' %>">
+        <label>Default Drive Time Amount ($)</label>
+        <input type="number" step="0.01" name="default_drive_time_amount" id="default_drive_time_amount" value="<%= project.default_drive_time_amount != null ? project.default_drive_time_amount : '0.00' %>">
+      </div>
+      <% if (project && project.id) { %>
+        <label>Status</label>
+        <select name="status">
+          <option value="active" <%= project.status !== 'inactive' ? 'selected' : '' %>>Active</option>
+          <option value="inactive" <%= project.status === 'inactive' ? 'selected' : '' %>>Inactive</option>
+        </select>
+      <% } %>
+      <button type="submit">Save Project</button>
+    </form>
+    <p><a href="/projects">Back to Projects</a></p>
+  </div>
+  <div class="bottom-nav">
+    <a href="/">Home</a>
+    <a href="/loads">Loads</a>
+    <a href="/receipts">Receipts</a>
+    <a href="/fuel">Fuel</a>
+    <a href="/profile">Profile</a>
+  </div>
+  <script>
+    const driveBox = document.getElementById('has_drive_time');
+    const driveWrap = document.getElementById('drive_time_wrap');
+    const driveAmount = document.getElementById('default_drive_time_amount');
+    function syncDrive(zeroIfOff) {
+      const on = driveBox.checked;
+      driveWrap.style.display = on ? 'block' : 'none';
+      if (!on && zeroIfOff) driveAmount.value = '0.00';
+    }
+    driveBox.addEventListener('change', () => syncDrive(true));
+    syncDrive(false);
+  </script>
+</body>
+</html>

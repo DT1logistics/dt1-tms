@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Load - DT1 Logistics</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
+    .header { background: #1B365D; color: white; padding: 16px 20px; }
+    .content { padding: 16px; max-width: 640px; margin: 0 auto; }
+    label { display: block; margin-top: 12px; font-weight: bold; color: #333; }
+    input, textarea, select { width: 100%; padding: 12px; margin-top: 4px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font: inherit; }
+    input[type="checkbox"] { width: auto; padding: 0; margin: 0; }
+    .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+    .check label { margin: 0; }
+    button { width: 100%; padding: 14px; background: #1B365D; color: white; border: none; border-radius: 8px; font-size: 16px; margin-top: 20px; cursor: pointer; }
+    .error { color: #c0392b; margin-bottom: 12px; }
+    .muted { color: #555; font-size: 13px; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
+    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header"><strong>New Load</strong></div>
+  <div class="content">
+    <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
+    <% if (!projects || !projects.length) { %>
+      <p>No active projects yet. An admin needs to add a customer and project before a load can be entered.</p>
+    <% } %>
+    <form method="POST" action="/loads" enctype="multipart/form-data" id="loadForm">
+      <label>Load Date</label>
+      <input type="date" name="load_date" required value="<%= load.load_date || '' %>">
+      <label>Ticket Number</label>
+      <input type="text" name="ticket_number" value="<%= load.ticket_number || '' %>">
+      <label>Project</label>
+      <select name="project_id" id="project_select" required>
+        <option value="">-- Select Project --</option>
+        <% (projects || []).forEach(project => { %>
+          <option value="<%= project.id %>"
+            data-rate="<%= project.default_rate %>"
+            data-fsc="<%= project.has_fuel_surcharge ? 1 : 0 %>"
+            data-drivetime="<%= project.has_drive_time ? 1 : 0 %>"
+            data-drivetime-amount="<%= project.default_drive_time_amount %>"
+            <%= String(load.project_id) === String(project.id) ? 'selected' : '' %>>
+            <%= project.display_name %>
+          </option>
+        <% }) %>
+      </select>
+      <label>Description</label>
+      <textarea name="description" rows="3"><%= load.description || '' %></textarea>
+      <label>Qty</label>
+      <input type="number" step="0.01" name="weight_quantity" value="<%= load.weight_quantity || '' %>">
+      <label>Rate ($)</label>
+      <input type="number" step="0.01" name="rate" value="<%= load.rate != null && load.rate !== '' ? load.rate : '' %>" <%= user.role === 'admin' ? '' : 'readonly' %>>
+      <% if (user.role !== 'admin') { %><p class="muted">Rate comes from the project. An admin can change it.</p><% } %>
+      <div class="check">
+        <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
+        <label for="has_fuel_surcharge">Includes Fuel Surcharge</label>
+      </div>
+      <div class="check">
+        <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
+        <label for="has_drive_time">Includes Drive Time</label>
+      </div>
+      <div id="drive_time_wrap" style="<%= load.has_drive_time ? '' : 'display:none;' %>">
+        <label>Drive Time Amount ($)</label>
+        <input type="number" step="0.01" name="drive_time_amount" id="drive_time_amount" value="<%= load.drive_time_amount != null && load.drive_time_amount !== '' ? load.drive_time_amount : '0.00' %>">
+      </div>
+      <div class="check">
+        <input type="checkbox" name="has_self_load" id="has_self_load" value="1" <%= load.has_self_load ? 'checked' : '' %>>
+        <label for="has_self_load">Self Load</label>
+      </div>
+      <div id="self_load_wrap" style="<%= load.has_self_load ? '' : 'display:none;' %>">
+        <label>Self Load Amount ($)</label>
+        <input type="number" step="0.01" name="self_load_amount" id="self_load_amount" value="<%= load.self_load_amount != null && load.self_load_amount !== '' ? load.self_load_amount : '0.00' %>">
+      </div>
+      <% if (user.role === 'admin' && drivers && drivers.length) { %>
+        <label>Assign Driver</label>
+        <select name="driver_id">
+          <option value="">-- Select Driver --</option>
+          <% drivers.forEach(d => { %>
+            <option value="<%= d.id %>" <%= String(load.driver_id) === String(d.id) ? 'selected' : '' %>><%= d.name %></option>
+          <% }) %>
+        </select>
+      <% } %>
+      <label>Supporting Documents (optional)</label>
+      <input type="file" name="documents" multiple accept="image/*,.pdf">
+      <button type="submit">Submit Load</button>
+    </form>
+  </div>
+  <div class="bottom-nav">
+    <a href="/">Home</a>
+    <a href="/loads">Loads</a>
+    <a href="/receipts">Receipts</a>
+    <a href="/fuel">Fuel</a>
+    <a href="/profile">Profile</a>
+  </div>
+  <script>
+    const projectSelect = document.getElementById('project_select');
+    const rateInput = document.querySelector('input[name="rate"]');
+    const fscInput = document.querySelector('input[name="has_fuel_surcharge"]');
+    const driveInput = document.querySelector('input[name="has_drive_time"]');
+    const driveAmount = document.querySelector('input[name="drive_time_amount"]');
+    const driveWrap = document.getElementById('drive_time_wrap');
+    const selfInput = document.querySelector('input[name="has_self_load"]');
+    const selfAmount = document.querySelector('input[name="self_load_amount"]');
+    const selfWrap = document.getElementById('self_load_wrap');
+
+    function money(value) {
+      const n = Number(value);
+      return (Number.isFinite(n) ? n : 0).toFixed(2);
+    }
+
+    function syncDriveWrap() {
+      driveWrap.style.display = driveInput.checked ? 'block' : 'none';
+    }
+
+    function syncSelfWrap() {
+      selfWrap.style.display = selfInput.checked ? 'block' : 'none';
+    }
+
+    function applyProject() {
+      const opt = projectSelect.options[projectSelect.selectedIndex];
+      if (!opt || !opt.value) return;
+      rateInput.value = money(opt.getAttribute('data-rate'));
+      fscInput.checked = opt.getAttribute('data-fsc') === '1';
+      const hasDrive = opt.getAttribute('data-drivetime') === '1';
+      driveInput.checked = hasDrive;
+      driveAmount.value = hasDrive ? money(opt.getAttribute('data-drivetime-amount')) : '0.00';
+      syncDriveWrap();
+    }
+
+    projectSelect.addEventListener('change', applyProject);
+
+    driveInput.addEventListener('change', () => {
+      if (driveInput.checked) {
+        const opt = projectSelect.options[projectSelect.selectedIndex];
+        if (!driveAmount.value || Number(driveAmount.value) === 0) {
+          driveAmount.value = money(opt ? opt.getAttribute('data-drivetime-amount') : 0);
+        }
+      } else {
+        driveAmount.value = '0.00';
+      }
+      syncDriveWrap();
+    });
+
+    selfInput.addEventListener('change', () => {
+      selfAmount.value = selfInput.checked ? '20.00' : '0.00';
+      syncSelfWrap();
+    });
+
+    syncDriveWrap();
+    syncSelfWrap();
+  </script>
+</body>
+</html>

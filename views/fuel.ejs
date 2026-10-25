@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fuel - DT1 Logistics</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
+    .header { background: #1B365D; color: white; padding: 16px 20px; }
+    .content { padding: 16px; }
+    .rate-box { background: white; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    .current { border-left: 4px solid #1B365D; }
+    .history { max-height: 280px; overflow-y: auto; }
+    .history-item { padding: 8px 0; border-bottom: 1px solid #eee; font-size: 14px; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
+    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header"><strong>Fuel</strong></div>
+  <div class="content">
+    <div class="rate-box current">
+      <strong>Current Weekly Fuel Rate</strong>
+      <% if (current) { %>
+        <p style="font-size:22px;margin:8px 0;">$<%= current.central_atlantic_rate.toFixed(3) %></p>
+        <p>Effective: <%= current.effective_date %> · Surcharge: <%= current.surcharge_percent.toFixed(2) %>%</p>
+        <p style="font-size:13px;color:#666;">Central Atlantic (PADD 1B) · Updated Mondays from EIA</p>
+      <% } else { %>
+        <p>No rate set yet.</p>
+      <% } %>
+    </div>
+
+    <div class="rate-box">
+      <strong>Rate History</strong>
+      <div class="history">
+        <% if (rates && rates.length) { %>
+          <% rates.forEach(r => { %>
+            <div class="history-item">
+              <%= r.effective_date %> — $<%= r.central_atlantic_rate.toFixed(3) %> (<%= r.surcharge_percent.toFixed(2) %>%)
+            </div>
+          <% }) %>
+        <% } else { %>
+          <p>No history yet.</p>
+        <% } %>
+      </div>
+    </div>
+
+    <p>Fuel surcharges are calculated at the load level but are not shown to drivers and are not included in driver pay.</p>
+    <a href="/receipts/new" style="display:inline-block;background:#1B365D;color:white;padding:10px 16px;border-radius:8px;text-decoration:none;">Upload Fuel Receipt</a>
+  </div>
+  <div class="bottom-nav">
+    <a href="/">Home</a>
+    <a href="/loads">Loads</a>
+    <a href="/receipts">Receipts</a>
+    <a href="/fuel">Fuel</a>
+    <a href="/profile">Profile</a>
+  </div>
+</body>
+</html>

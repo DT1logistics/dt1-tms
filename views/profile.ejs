@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Profile - DT1 Logistics</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
+    .header { background: #1B365D; color: white; padding: 16px 20px; }
+    .content { padding: 16px; }
+    .card { background: white; padding: 16px; border-radius: 10px; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
+    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header"><strong>Profile</strong></div>
+  <div class="content">
+    <div class="card">
+      <p><strong>Name:</strong> <%= profile.name || '—' %></p>
+      <p><strong>Email:</strong> <%= profile.email %></p>
+      <p><strong>Phone:</strong> <%= profile.phone || '—' %></p>
+      <p><strong>Address:</strong> <%= profile.address || '—' %></p>
+      <p><strong>Role:</strong> <%= profile.role %></p>
+      <% if (profile.role === 'driver') { %>
+        <p><strong>Hire Date:</strong> <%= profile.hire_date || '—' %></p>
+        <p><strong>Pay Percentage:</strong> <%= profile.pay_percentage || 'Not set' %>%</p>
+      <% } %>
+    </div>
+    <% if (profile.role === 'driver') { %>
+      <p style="margin-top:12px;font-size:14px;color:#666;">You can update your phone and address. Other employment and financial details are managed by Admin.</p>
+    <% } %>
+    <p style="margin-top:16px;"><a href="/logout">Sign Out</a></p>
+  </div>
+  <div class="bottom-nav">
+    <a href="/">Home</a>
+    <a href="/loads">Loads</a>
+    <a href="/receipts">Receipts</a>
+    <a href="/fuel">Fuel</a>
+    <a href="/profile">Profile</a>
+  </div>
+</body>
+</html>
