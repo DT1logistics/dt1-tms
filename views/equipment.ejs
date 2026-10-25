@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Equipment - DT1 Logistics</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
+    .header { background: #1B365D; color: white; padding: 16px 20px; }
+    .content { padding: 16px; }
+    .card { background: white; padding: 12px; border-radius: 8px; margin-bottom: 8px; }
+    .btn { display: inline-block; background: #1B365D; color: white; padding: 10px 16px; border-radius: 8px; text-decoration: none; margin-bottom: 16px; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
+    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header"><strong>Equipment</strong></div>
+  <div class="content">
+    <a href="/equipment/new" class="btn">+ Add Equipment</a>
+    <h3>Trucks</h3>
+    <% if (trucks.length) { trucks.forEach(t => { %>
+      <div class="card"><%= t.number %> — <%= t.description || '' %> (<%= t.status %>)</div>
+    <% }) } else { %><p>No trucks yet.</p><% } %>
+    <h3>Trailers</h3>
+    <% if (trailers.length) { trailers.forEach(t => { %>
+      <div class="card"><%= t.number %> — <%= t.description || '' %> (<%= t.status %>)</div>
+    <% }) } else { %><p>No trailers yet.</p><% } %>
+  </div>
+  <div class="bottom-nav">
+    <a href="/">Home</a>
+    <a href="/loads">Loads</a>
+    <a href="/receipts">Receipts</a>
+    <a href="/fuel">Fuel</a>
+    <a href="/profile">Profile</a>
+  </div>
+</body>
+</html>

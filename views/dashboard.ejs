@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DT1 Logistics - Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; }
+    .header { background: #1B365D; color: white; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; }
+    .nav { background: white; border-bottom: 1px solid #ddd; padding: 12px 20px; }
+    .content { padding: 20px; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
+    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <strong>DT1 LOGISTICS</strong>
+    <span><%= user.name || user.email %> (<%= user.role %>)</span>
+  </div>
+  <div class="nav">
+    <a href="/">Home</a> | <a href="/loads">Loads</a> | <a href="/logout">Sign Out</a>
+  </div>
+  <div class="content">
+    <h2>Dashboard</h2>
+    <p>Welcome to the DT1 Logistics Transportation Operations Management App.</p>
+    <p>Role: <strong><%= user.role %></strong></p>
+  </div>
+  <div class="bottom-nav">
+    <a href="/">Home</a>
+    <a href="/loads">Loads</a>
+    <a href="/receipts">Receipts</a>
+    <a href="/fuel">Fuel</a>
+    <a href="/profile">Profile</a>
+  </div>
+</body>
+</html>
