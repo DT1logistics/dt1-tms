@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Compliance - DT1 Logistics</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
+    .header { background: #1B365D; color: white; padding: 16px 20px; }
+    .content { padding: 16px; }
+    .card { background: white; padding: 16px; border-radius: 10px; margin-bottom: 12px; }
+    .green { color: #155724; }
+    .yellow { color: #856404; }
+    .red { color: #721c24; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
+    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header"><strong>Compliance</strong></div>
+  <div class="content">
+    <div class="card">
+      <h3>FMCSA</h3>
+      <p>Credentials and recurring obligations tracked here.</p>
+    </div>
+    <div class="card">
+      <h3>HUVT</h3>
+      <p>Status and deadlines.</p>
+    </div>
+    <div class="card">
+      <h3>UCR</h3>
+      <p>Status and deadlines.</p>
+    </div>
+    <p>Color coding: <span class="green">Green (Active)</span> · <span class="yellow">Yellow (Expiring ≤45 days)</span> · <span class="red">Red (≤14 days or Expired)</span></p>
+  </div>
+  <div class="bottom-nav">
+    <a href="/">Home</a>
+    <a href="/loads">Loads</a>
+    <a href="/receipts">Receipts</a>
+    <a href="/fuel">Fuel</a>
+    <a href="/profile">Profile</a>
+  </div>
+</body>
+</html>

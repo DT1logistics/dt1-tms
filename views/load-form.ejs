@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Load - DT1 Logistics</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
+    .header { background: #1B365D; color: white; padding: 16px 20px; }
+    .content { padding: 16px; }
+    label { display: block; margin-top: 12px; font-weight: bold; color: #333; }
+    input, textarea { width: 100%; padding: 12px; margin-top: 4px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+    button { width: 100%; padding: 14px; background: #1B365D; color: white; border: none; border-radius: 8px; font-size: 16px; margin-top: 20px; cursor: pointer; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
+    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header"><strong>New Load</strong></div>
+  <div class="content">
+    <form method="POST" action="/loads" enctype="multipart/form-data">
+      <label>Load Date</label>
+      <input type="date" name="load_date" required>
+      <label>Ticket Number</label>
+      <input type="text" name="ticket_number">
+      <label>Description</label>
+      <textarea name="description" rows="3"></textarea>
+      <label>Weight / Quantity</label>
+      <input type="number" step="0.01" name="weight_quantity">
+      <% if (user.role === 'admin' && drivers && drivers.length) { %>
+        <label>Assign Driver</label>
+        <select name="driver_id" style="width:100%;padding:12px;margin-top:4px;border:1px solid #ddd;border-radius:8px;">
+          <option value="">-- Select Driver --</option>
+          <% drivers.forEach(d => { %>
+            <option value="<%= d.id %>"><%= d.name %></option>
+          <% }) %>
+        </select>
+      <% } %>
+      <label>Supporting Documents (optional)</label>
+      <input type="file" name="documents" multiple accept="image/*,.pdf">
+      <button type="submit">Submit Load</button>
+    </form>
+  </div>
+  <div class="bottom-nav">
+    <a href="/">Home</a>
+    <a href="/loads">Loads</a>
+    <a href="/receipts">Receipts</a>
+    <a href="/fuel">Fuel</a>
+    <a href="/profile">Profile</a>
+  </div>
+</body>
+</html>

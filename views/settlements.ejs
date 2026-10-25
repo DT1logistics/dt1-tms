@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Settlements - DT1 Logistics</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
+    .header { background: #1B365D; color: white; padding: 16px 20px; }
+    .content { padding: 16px; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
+    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header"><strong>Weekly Settlements</strong></div>
+  <div class="content">
+    <p>Driver settlements are completed and approved on Wednesdays.</p>
+    <p>Invoices are drafted on Wednesdays and sent by 12:00 on Thursdays.</p>
+    <h3>Approved Loads Ready for Settlement</h3>
+    <% if (approvedLoads && approvedLoads.length) { %>
+      <% 
+        const byDriver = {};
+        approvedLoads.forEach(l => {
+          const key = l.driver_name || 'Unassigned';
+          if (!byDriver[key]) byDriver[key] = { loads: [], total: 0, percentage: l.pay_percentage };
+          byDriver[key].loads.push(l);
+          if (l.pay_percentage && l.weight_quantity) {
+            byDriver[key].total += (l.weight_quantity * l.pay_percentage / 100);
+          }
+        });
+      %>
+      <% Object.keys(byDriver).forEach(driver => { %>
+        <div style="background:white;padding:16px;border-radius:10px;margin-bottom:16px;">
+          <strong><%= driver %></strong> — Est. Settlement: $<%= byDriver[driver].total.toFixed(2) %>
+          <div style="margin-top:8px;font-size:14px;">
+            <% byDriver[driver].loads.forEach(l => { %>
+              <div><%= l.load_date %> · <%= l.ticket_number || 'No ticket' %> · Qty: <%= l.weight_quantity || '—' %></div>
+            <% }) %>
+          </div>
+        </div>
+      <% }) %>
+    <% } else { %>
+      <p>No approved loads yet.</p>
+    <% } %>
+    <p style="margin-top:16px;">Settlements are completed and approved on Wednesdays. Fuel surcharges are excluded from driver pay.</p>
+  </div>
+  <div class="bottom-nav">
+    <a href="/">Home</a>
+    <a href="/loads">Loads</a>
+    <a href="/receipts">Receipts</a>
+    <a href="/fuel">Fuel</a>
+    <a href="/profile">Profile</a>
+  </div>
+</body>
+</html>

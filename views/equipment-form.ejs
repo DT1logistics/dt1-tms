@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Add Equipment - DT1 Logistics</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f5f7fa; padding-bottom: 70px; }
+    .header { background: #1B365D; color: white; padding: 16px 20px; }
+    .content { padding: 16px; max-width: 500px; margin: 0 auto; }
+    label { display: block; margin-top: 12px; font-weight: bold; }
+    input, select { width: 100%; padding: 12px; margin-top: 4px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+    button { width: 100%; padding: 14px; background: #1B365D; color: white; border: none; border-radius: 8px; margin-top: 20px; cursor: pointer; }
+    .bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: white; border-top: 1px solid #ddd; display: flex; justify-content: space-around; padding: 10px 0; }
+    .bottom-nav a { text-decoration: none; color: #1B365D; font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header"><strong>Add Equipment</strong></div>
+  <div class="content">
+    <form method="POST" action="/equipment">
+      <label>Type</label>
+      <select name="type" required>
+        <option value="truck">Truck</option>
+        <option value="trailer">Trailer</option>
+      </select>
+      <label>Number</label>
+      <input type="text" name="number" placeholder="e.g. #1002" required>
+      <label>Description</label>
+      <input type="text" name="description">
+      <label>Ownership</label>
+      <input type="text" name="ownership" placeholder="Owned / Leased / Third-party">
+      <button type="submit">Save</button>
+    </form>
+  </div>
+  <div class="bottom-nav">
+    <a href="/">Home</a>
+    <a href="/loads">Loads</a>
+    <a href="/receipts">Receipts</a>
+    <a href="/fuel">Fuel</a>
+    <a href="/profile">Profile</a>
+  </div>
+</body>
+</html>
