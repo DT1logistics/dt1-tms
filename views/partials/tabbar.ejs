@@ -3,17 +3,13 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.6 12 4l8 6.6V20a1 1 0 0 1-1 1h-5.2v-6.2H10.2V21H5a1 1 0 0 1-1-1v-9.4z"/></svg>
     <span>Home</span>
   </a>
-  <a class="<%= active === 'receipts' ? 'active' : '' %>" href="/receipts">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 12.2 10.2 16 17.5 8"/></svg>
-    <span>Receipts</span>
-  </a>
-  <a class="<%= active === 'loads' ? 'active' : '' %>" href="/loads">
+  <a class="<%= active === 'loads' || active === 'new-load' ? 'active' : '' %>" href="/loads">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2 20 7.6 12 12 4 7.6 12 3.2z"/><path d="M20 7.6v8.8L12 20.8V12"/><path d="M4 7.6v8.8L12 20.8"/></svg>
     <span>Loads</span>
   </a>
-  <a class="<%= active === 'new-load' ? 'active' : '' %>" href="/loads/new">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-    <span>New Load</span>
+  <a class="<%= active === 'receipts' ? 'active' : '' %>" href="/receipts">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 12.2 10.2 16 17.5 8"/></svg>
+    <span>Receipts</span>
   </a>
   <a class="<%= active === 'fuel' ? 'active' : '' %>" href="/fuel">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8.2A1.8 1.8 0 0 1 16 5.3V20H6V3.5z"/><path d="M8.2 7.2h5.2"/><path d="M16 8.2h1.6a1.6 1.6 0 0 1 1.6 1.6v4.2a1.5 1.5 0 0 0 3 0V8.4L19.4 5.6"/></svg>
