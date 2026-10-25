@@ -3,6 +3,7 @@ const session = require('express-session');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 
 const app = express();
@@ -16,9 +17,28 @@ db.pragma('foreign_keys = ON');
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.locals.money = (n) => (Number(n) || 0).toFixed(2);
+
+// Helper functions available in all EJS templates (e.g. driver-profile.ejs)
+app.locals.getStatusClass = function(exp) {
+  if (!exp) return 'red';
+  const days = Math.ceil((new Date(exp) - new Date()) / (1000 * 60 * 60 * 24));
+  if (days < 0 || days <= 14) return 'red';
+  if (days <= 60) return 'yellow';
+  return 'green';
+};
+
+app.locals.getStatusText = function(exp) {
+  if (!exp) return 'Missing';
+  const days = Math.ceil((new Date(exp) - new Date()) / (1000 * 60 * 60 * 24));
+  if (days < 0) return 'Expired';
+  if (days <= 14) return 'Expiring ≤14 days';
+  if (days <= 60) return 'Expiring ≤60 days';
+  return 'Active';
+};
 
 // File upload setup
 const uploadDir = path.join(__dirname, 'uploads');
@@ -30,7 +50,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 app.use(session({
-  secret: 'dt1-logistics-secret-change-in-production',
+  secret: process.env.SESSION_SECRET || 'dt1-logistics-secret-change-in-production',
   resave: false,
   saveUninitialized: false,
   cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 }
@@ -301,6 +321,9 @@ const loadQuery = `
 // Routes
 app.get('/', (req, res) => {
   if (req.session.user) {
+    if (req.session.user.must_change_password) {
+      return res.redirect('/change-password');
+    }
     res.render('dashboard', { user: req.session.user });
   } else {
     res.render('login');
@@ -309,10 +332,18 @@ app.get('/', (req, res) => {
 
 app.post('/login', (req, res) => {
   const { email, password } = req.body;
-  const bcrypt = require('bcryptjs');
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
-  if (user && bcrypt.compareSync(password, user.password)) {
-    req.session.user = { id: user.id, email: user.email, role: user.role, name: user.name };
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get((email || '').trim());
+  if (user && bcrypt.compareSync(password || '', user.password)) {
+    req.session.user = {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      name: user.name,
+      must_change_password: user.must_change_password
+    };
+    if (user.must_change_password) {
+      return res.redirect('/change-password');
+    }
     res.redirect('/');
   } else {
     res.render('login', { error: 'Invalid credentials' });
@@ -320,8 +351,9 @@ app.post('/login', (req, res) => {
 });
 
 app.get('/logout', (req, res) => {
-  req.session.destroy();
-  res.redirect('/');
+  req.session.destroy(() => {
+    res.redirect('/');
+  });
 });
 
 // Middleware to require login and handle forced password change
@@ -665,6 +697,19 @@ app.post('/drivers/:id/send-welcome', requireAuth, (req, res) => {
   // For now, record the action and show confirmation
   console.log(`Welcome email would be sent to ${driver.email} with temporary password`);
   res.render('welcome-sent', { user: req.session.user, driver });
+});
+
+app.post('/drivers/:id/upload', requireAuth, upload.single('file'), (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/');
+  const { doc_type, expiration_date } = req.body;
+  if (req.file && doc_type) {
+    db.prepare('DELETE FROM driver_documents WHERE driver_id = ? AND doc_type = ?').run(req.params.id, doc_type);
+    db.prepare(`
+      INSERT INTO driver_documents (driver_id, doc_type, filename, original_name, expiration_date)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(req.params.id, doc_type, req.file.filename, req.file.originalname, expiration_date || null);
+  }
+  res.redirect(`/drivers/${req.params.id}`);
 });
 
 app.get('/drivers/:id', requireAuth, (req, res) => {
