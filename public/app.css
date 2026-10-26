@@ -141,6 +141,7 @@ form > button[type="submit"] { width: 100%; margin-top: 16px; }
 .form-actions > button, .form-actions > .btn,
 .load-actions > button, .load-actions > .btn { flex: 1; width: auto; margin: 0; text-align: center; padding: 12px 6px; font-size: 13px; line-height: 1.2; }
 .load-actions .btn-draft { background: #fff; color: var(--navy); border: 1px solid var(--navy); }
+.load-total { margin-top: 16px; font-size: 18px; font-weight: 700; color: var(--navy); }
 .ticket-block { margin-top: 8px; }
 .ticket-btn {
   position: relative;

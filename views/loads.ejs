@@ -13,9 +13,9 @@
           <div>Date: <%= load.load_date || '—' %></div>
           <div>Project: <%= load.project_display || '—' %></div>
           <div>Description: <%= load.description || '—' %></div>
-          <div>Qty: <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
+          <div>Qty/Wet Ton: <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
           <div>Rate: $<%= money(rate) %></div>
-          <div>Base Hauling: $<%= money(baseHauling) %></div>
+          <div>Load Total: $<%= money(baseHauling) %></div>
           <% if (user.role === 'admin') { %>
             <div>Fuel Surcharge: <%= Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No' %></div>
           <% } %>
