@@ -14,6 +14,23 @@
 <% if (load.status === 'draft' && load.rejection_reason) { %>
   <div class="reject-note"><strong>Rejection reason:</strong> <%= load.rejection_reason %></div>
 <% } %>
+<% if (load.approved_by_name && load.status === 'approved') { %>
+  <p class="muted">Approved by <%= load.approved_by_name %><% if (load.approved_at) { %> on <%= auditStamp(load.approved_at) %><% } %></p>
+<% } %>
+<% if (load.rejected_by_name && load.status === 'draft') { %>
+  <p class="muted">Rejected by <%= load.rejected_by_name %><% if (load.rejected_at) { %> on <%= auditStamp(load.rejected_at) %><% } %></p>
+<% } %>
+<% if (load.updated_by_name) { %>
+  <p class="muted">Edited by <%= load.updated_by_name %><% if (load.updated_at) { %> on <%= auditStamp(load.updated_at) %><% } %></p>
+<% } %>
+<% if (typeof audit !== 'undefined' && audit && audit.length) { %>
+  <div class="card">
+    <h2>Audit</h2>
+    <% audit.forEach(function (entry) { %>
+      <div><%= entry.action %> by <%= entry.actor_name %> on <%= auditStamp(entry.created_at) %><% if (entry.detail) { %> — <%= entry.detail %><% } %></div>
+    <% }) %>
+  </div>
+<% } %>
 
 <div class="card">
   <div><strong>Ticket #</strong> <%= load.ticket_number || '—' %></div>

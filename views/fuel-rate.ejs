@@ -1,22 +1,36 @@
-<%- include('partials/open', { title: `Fuel Rate (Central Atlantic)`, user: user, active: 'fuel-rate' }) %>
+<%- include('partials/open', { title: 'Fuel Rate (Central Atlantic)', user: user, active: 'fuel-rate' }) %>
 <h1>Fuel Rate (Central Atlantic)</h1>
+<% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
 <% if (latest) { %>
-      <div class="card">
-        <p><strong>Effective:</strong> <%= latest.effective_date %></p>
-        <p><strong>Current Rate:</strong> $<%= latest.central_atlantic_rate.toFixed(3) %></p>
-        <p><strong>Base:</strong> $4.00</p>
-        <p><strong>Surcharge %:</strong> <%= latest.surcharge_percent.toFixed(2) %>%</p>
-        <p style="font-size:13px;color:#666;">Updated every Monday from EIA Central Atlantic (PADD 1B).</p>
+  <div class="card">
+    <p><strong>Effective:</strong> <%= latest.effective_date %></p>
+    <p><strong>Current Rate:</strong> $<%= Number(latest.central_atlantic_rate || 0).toFixed(3) %></p>
+    <p><strong>Base:</strong> $4.00</p>
+    <p><strong>Surcharge %:</strong> <%= Number(latest.surcharge_percent || 0).toFixed(2) %>%</p>
+    <p><strong>Updated by:</strong> <%= latest.updated_by || 'Not recorded' %><% if (latest.updated_at) { %> on <%= auditStamp(latest.updated_at) %><% } %></p>
+    <p style="font-size:13px;color:#666;">Updated every Tuesday from EIA Central Atlantic (PADD 1B).</p>
+  </div>
+<% } else { %>
+  <p>No fuel rate set yet.</p>
+<% } %>
+<form method="POST" action="/fuel-rate">
+  <label>Effective Date</label>
+  <input type="date" name="effective_date" required>
+  <label>Central Atlantic Diesel Rate ($)</label>
+  <input type="number" step="0.001" name="central_atlantic_rate" placeholder="e.g. 6.508" required>
+  <button type="submit">Save / Update Rate</button>
+</form>
+<% if (history && history.length) { %>
+  <h2>Rate history</h2>
+  <div class="card">
+    <% history.forEach(function (row) { %>
+      <div>
+        <%= row.effective_date || '—' %> — $<%= Number(row.central_atlantic_rate || 0).toFixed(3) %>
+        (<%= Number(row.surcharge_percent || 0).toFixed(2) %>%)
+        · Updated by: <%= row.updated_by || 'Not recorded' %><% if (row.updated_at) { %> on <%= auditStamp(row.updated_at) %><% } %>
       </div>
-    <% } else { %>
-      <p>No fuel rate set yet.</p>
-    <% } %>
-    <form method="POST" action="/fuel-rate">
-      <label>Effective Date</label>
-      <input type="date" name="effective_date" required>
-      <label>Central Atlantic Diesel Rate ($)</label>
-      <input type="number" step="0.001" name="central_atlantic_rate" placeholder="e.g. 6.508" required>
-      <button type="submit">Save / Update Rate</button>
-    </form>
-    <p style="margin-top:12px;font-size:13px;">Source: <a href="https://www.eia.gov/petroleum/gasdiesel/" target="_blank">EIA Gasoline and Diesel Fuel Update</a></p>
+    <% }) %>
+  </div>
+<% } %>
+<p style="margin-top:12px;font-size:13px;">Source: <a href="https://www.eia.gov/petroleum/gasdiesel/" target="_blank">EIA Gasoline and Diesel Fuel Update</a></p>
 <%- include('partials/close') %>

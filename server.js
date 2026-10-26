@@ -150,9 +150,57 @@ function ticketFileKind(name) {
   return 'file';
 }
 
+function auditStamp(value) {
+  if (!value) return '';
+  const text = String(value).trim();
+  const iso = text.includes('T') ? text : `${text.replace(' ', 'T')}Z`;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return text;
+  return date.toLocaleString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'UTC'
+  });
+}
+
+const LOGIN_ALIASES = {
+  'logan.dt1@mail.grokbot.com': 'david.dt1@mail.grokbot.com'
+};
+
+function loginEmail(email) {
+  const trimmed = String(email || '').trim();
+  return LOGIN_ALIASES[trimmed.toLowerCase()] || trimmed;
+}
+
+function actorName(req) {
+  return (req.session.user && req.session.user.name) || 'Unknown';
+}
+
+function logAudit(req, action, entityType, entityId, detail) {
+  const name = actorName(req);
+  db.prepare(`
+    INSERT INTO audit_log (actor_id, actor_name, action, entity_type, entity_id, detail)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(req.session.user ? req.session.user.id : null, name, action, entityType, entityId || null, detail || null);
+  return name;
+}
+
+function loadAudit(loadId) {
+  return db.prepare(`
+    SELECT actor_name, action, detail, created_at
+    FROM audit_log
+    WHERE entity_type = 'load' AND entity_id = ?
+    ORDER BY id DESC
+  `).all(loadId);
+}
+
 app.locals.loadStatusLabel = loadStatusLabel;
 app.locals.settlementWeekLabel = settlementWeekLabel;
 app.locals.ticketFileKind = ticketFileKind;
+app.locals.auditStamp = auditStamp;
 
 app.use((req, res, next) => {
   const png = path.join(__dirname, 'public', 'logo.png');
@@ -349,7 +397,14 @@ function initDB() {
       status TEXT DEFAULT 'draft',
       submitted_by INTEGER,
       approved_by INTEGER,
+      approved_by_name TEXT,
       approved_at DATETIME,
+      rejected_by INTEGER,
+      rejected_by_name TEXT,
+      rejected_at DATETIME,
+      updated_by INTEGER,
+      updated_by_name TEXT,
+      updated_at DATETIME,
       settlement_status TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (driver_id) REFERENCES users(id),
@@ -386,6 +441,9 @@ function initDB() {
       central_atlantic_rate REAL,
       base_rate REAL DEFAULT 4.00,
       surcharge_percent REAL,
+      updated_by TEXT,
+      updated_by_id INTEGER,
+      updated_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -429,8 +487,20 @@ function initDB() {
       week_end DATE NOT NULL,
       status TEXT DEFAULT 'approved',
       approved_by INTEGER,
+      approved_by_name TEXT,
       approved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(driver_id, week_start)
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      actor_id INTEGER,
+      actor_name TEXT,
+      action TEXT,
+      entity_type TEXT,
+      entity_id INTEGER,
+      detail TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS receipt_lines (
@@ -470,7 +540,18 @@ function initDB() {
   ensureColumn('loads', 'notes', 'TEXT');
   ensureColumn('loads', 'rejection_reason', 'TEXT');
   ensureColumn('loads', 'settlement_status', 'TEXT');
+  ensureColumn('loads', 'approved_by_name', 'TEXT');
+  ensureColumn('loads', 'rejected_by', 'INTEGER');
+  ensureColumn('loads', 'rejected_by_name', 'TEXT');
+  ensureColumn('loads', 'rejected_at', 'DATETIME');
+  ensureColumn('loads', 'updated_by', 'INTEGER');
+  ensureColumn('loads', 'updated_by_name', 'TEXT');
+  ensureColumn('loads', 'updated_at', 'DATETIME');
   ensureColumn('documents', 'file_blob', 'BLOB');
+  ensureColumn('fuel_rates', 'updated_by', 'TEXT');
+  ensureColumn('fuel_rates', 'updated_by_id', 'INTEGER');
+  ensureColumn('fuel_rates', 'updated_at', 'DATETIME');
+  ensureColumn('driver_settlements', 'approved_by_name', 'TEXT');
   ensureColumn('equipment', 'registration_expiration', 'DATE');
   ensureColumn('equipment', 'inspection_expiration', 'DATE');
   ensureColumn('equipment', 'maintenance_status', "TEXT DEFAULT 'active'");
@@ -495,6 +576,35 @@ function initDB() {
   ].forEach(([email, name, firstName, lastName]) => {
     if (!findAdmin.get(email)) insertAdmin.run(email, adminPassword, name, firstName, lastName);
   });
+
+  // Logan's login is separate from Kammy's. A later password change on /profile updates only that user.
+  const loganEmail = 'david.dt1@mail.grokbot.com';
+  const logan = db.prepare('SELECT id, password FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))').get(loganEmail);
+  const needsLoganPassword = !logan || !String(logan.password || '').trim();
+  if (needsLoganPassword) {
+    const loganPassword = bcrypt.hashSync(process.env.LOGAN_TMS_PASSWORD || 'LoganDT1Ops2026!', 10);
+    if (!logan) insertAdmin.run(loganEmail, loganPassword, 'Logan (Operations Manager)', 'Logan', 'Operations Manager');
+    else db.prepare('UPDATE users SET password = ? WHERE id = ?').run(loganPassword, logan.id);
+  }
+
+  db.prepare('DELETE FROM fuel_rates WHERE central_atlantic_rate IS NULL OR surcharge_percent IS NULL').run();
+  const validFuel = db.prepare(`
+    SELECT COUNT(*) AS n FROM fuel_rates
+    WHERE central_atlantic_rate IS NOT NULL AND surcharge_percent IS NOT NULL
+  `).get().n;
+  if (!validFuel) {
+    db.prepare(`
+      INSERT INTO fuel_rates (
+        effective_date, central_atlantic_rate, base_rate, surcharge_percent, updated_by, updated_at
+      ) VALUES ('2026-10-19', 6.508, 4.00, 2.508, 'Logan (Operations Manager)', CURRENT_TIMESTAMP)
+    `).run();
+  }
+
+  db.prepare(`
+    UPDATE loads
+    SET approved_by_name = (SELECT name FROM users WHERE users.id = loads.approved_by)
+    WHERE approved_by IS NOT NULL AND (approved_by_name IS NULL OR approved_by_name = '')
+  `).run();
 
   backfillUserNames();
   backfillUserAddresses();
@@ -847,7 +957,7 @@ app.get('/login', (req, res) => {
 });
 
 app.post('/login', (req, res) => {
-  const email = req.body.email || '';
+  const email = loginEmail(req.body.email || '');
   const password = (req.body.password || '').trim();
   const user = db.prepare('SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))').get(email);
   if (user && password && bcrypt.compareSync(password, user.password)) {
@@ -1159,9 +1269,11 @@ app.post('/loads/:id/approve', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/loads');
   const result = db.prepare(`
     UPDATE loads
-    SET status = 'approved', approved_by = ?, approved_at = CURRENT_TIMESTAMP, rejection_reason = NULL
+    SET status = 'approved', approved_by = ?, approved_by_name = ?, approved_at = CURRENT_TIMESTAMP,
+        rejection_reason = NULL, rejected_by = NULL, rejected_by_name = NULL, rejected_at = NULL
     WHERE id = ? AND status = 'submitted'
-  `).run(req.session.user.id, req.params.id);
+  `).run(req.session.user.id, actorName(req), req.params.id);
+  if (result.changes) logAudit(req, 'Approved', 'load', req.params.id, 'Load approved');
   res.redirect(`/loads/${req.params.id}${result.changes ? '?saved=approved' : ''}`);
 });
 
@@ -1170,9 +1282,11 @@ app.post('/loads/:id/reject', requireAuth, (req, res) => {
   const reason = String(req.body.rejection_reason || '').trim();
   const result = db.prepare(`
     UPDATE loads
-    SET status = 'draft', rejection_reason = ?, approved_by = NULL, approved_at = NULL, settlement_status = NULL
+    SET status = 'draft', rejection_reason = ?, approved_by = NULL, approved_by_name = NULL, approved_at = NULL,
+        settlement_status = NULL, rejected_by = ?, rejected_by_name = ?, rejected_at = CURRENT_TIMESTAMP
     WHERE id = ? AND status IN ('submitted', 'approved')
-  `).run(reason || null, req.params.id);
+  `).run(reason || null, req.session.user.id, actorName(req), req.params.id);
+  if (result.changes) logAudit(req, 'Rejected', 'load', req.params.id, reason || 'Sent back to draft');
   res.redirect(`/loads/${req.params.id}${result.changes ? '?saved=rejected' : ''}`);
 });
 
@@ -1372,6 +1486,7 @@ app.get('/loads/:id', requireAuth, (req, res) => {
     user: req.session.user,
     load,
     tickets: ticketRows(load.id),
+    audit: loadAudit(load.id),
     saved: req.query.saved || '',
     ...form
   });
@@ -1430,7 +1545,8 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), (req, res) => {
     SET ticket_number = ?, load_date = ?, driver_id = ?, truck_id = ?, project_id = ?, description = ?,
         origin = ?, destination = ?, notes = ?,
         weight_quantity = ?, rate = ?, has_fuel_surcharge = ?, has_drive_time = ?, drive_time_amount = ?,
-        has_self_load = ?, self_load_amount = ?, status = ?, rejection_reason = ?
+        has_self_load = ?, self_load_amount = ?, status = ?, rejection_reason = ?,
+        updated_by = ?, updated_by_name = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ? ${isAdmin ? '' : "AND status = 'draft'"}
   `).run(
     values.ticket_number,
@@ -1451,10 +1567,13 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), (req, res) => {
     values.selfAmount,
     status,
     rejectionReason,
+    req.session.user.id,
+    actorName(req),
     existing.id
   );
   removeSelectedTickets(existing.id, req.body);
   saveTicketFiles(existing.id, req.files, req.session.user.id);
+  logAudit(req, 'Edited', 'load', existing.id, isAdmin ? 'Admin edited the load' : 'Driver edited the draft');
   res.redirect(isAdmin ? `/loads/${existing.id}?saved=edited` : '/loads');
 });
 
@@ -1877,26 +1996,50 @@ app.post('/equipment/:id', requireAuth, (req, res) => {
 
 // Fuel rate
 function calculateSurchargePercent(currentRate) {
-  const base = 4.00;
-  const diff = Math.max(0, currentRate - base);
-  return (diff / 0.10) * 0.1;
+  const percent = Math.max(0, ((Number(currentRate) - 4.00) / 0.10) * 0.1);
+  return Math.round(percent * 1000) / 1000;
+}
+
+function fuelRateValue(body) {
+  const raw = body && String(body.central_atlantic_rate || '').trim() !== ''
+    ? body.central_atlantic_rate
+    : (body ? body.rate : '');
+  const rate = parseFloat(raw);
+  return Number.isFinite(rate) ? rate : null;
+}
+
+function validFuelRates() {
+  return db.prepare(`
+    SELECT * FROM fuel_rates
+    WHERE central_atlantic_rate IS NOT NULL AND surcharge_percent IS NOT NULL
+    ORDER BY effective_date DESC, id DESC
+  `).all();
 }
 
 app.get('/fuel-rate', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  const latest = db.prepare('SELECT * FROM fuel_rates ORDER BY effective_date DESC LIMIT 1').get();
-  res.render('fuel-rate', { user: req.session.user, latest });
+  const history = validFuelRates();
+  res.render('fuel-rate', {
+    user: req.session.user,
+    latest: history[0] || null,
+    history,
+    error: req.query.error === 'rate' ? 'Enter a valid Central Atlantic diesel rate.' : ''
+  });
 });
 
 app.post('/fuel-rate', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  const { central_atlantic_rate, effective_date } = req.body;
-  const rate = parseFloat(central_atlantic_rate);
+  const rate = fuelRateValue(req.body);
+  if (rate == null) return res.redirect('/fuel-rate?error=rate');
   const percent = calculateSurchargePercent(rate);
-  db.prepare(`
-    INSERT INTO fuel_rates (effective_date, central_atlantic_rate, surcharge_percent)
-    VALUES (?, ?, ?)
-  `).run(effective_date || new Date().toISOString().slice(0, 10), rate, percent);
+  const effectiveDate = String(req.body.effective_date || '').trim() || new Date().toISOString().slice(0, 10);
+  const name = actorName(req);
+  const result = db.prepare(`
+    INSERT INTO fuel_rates (
+      effective_date, central_atlantic_rate, base_rate, surcharge_percent, updated_by, updated_by_id, updated_at
+    ) VALUES (?, ?, 4.00, ?, ?, ?, CURRENT_TIMESTAMP)
+  `).run(effectiveDate, rate, percent, name, req.session.user.id);
+  logAudit(req, 'Updated fuel rate', 'fuel_rate', result.lastInsertRowid, `$${rate.toFixed(3)} effective ${effectiveDate}`);
   res.redirect('/fuel-rate');
 });
 
@@ -2113,16 +2256,18 @@ app.post('/settlements/approve-week', requireAuth, (req, res) => {
   const saveWeek = db.transaction(() => {
     loads.forEach((load) => mark.run(load.id));
     db.prepare(`
-      INSERT INTO driver_settlements (driver_id, week_start, week_end, status, approved_by, approved_at)
-      VALUES (?, ?, ?, 'approved', ?, CURRENT_TIMESTAMP)
+      INSERT INTO driver_settlements (driver_id, week_start, week_end, status, approved_by, approved_by_name, approved_at)
+      VALUES (?, ?, ?, 'approved', ?, ?, CURRENT_TIMESTAMP)
       ON CONFLICT(driver_id, week_start) DO UPDATE SET
         week_end = excluded.week_end,
         status = 'approved',
         approved_by = excluded.approved_by,
+        approved_by_name = excluded.approved_by_name,
         approved_at = CURRENT_TIMESTAMP
-    `).run(driverId, week.start, week.end, req.session.user.id);
+    `).run(driverId, week.start, week.end, req.session.user.id, actorName(req));
   });
   saveWeek();
+  logAudit(req, 'Approved weekly settlement', 'driver_settlement', driverId, `Week of ${week.range}`);
   res.redirect('/settlements?saved=week');
 });
 

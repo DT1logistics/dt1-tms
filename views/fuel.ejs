@@ -3,9 +3,9 @@
 <div class="rate-box current">
       <strong>Current Weekly Fuel Rate</strong>
       <% if (current) { %>
-        <p style="font-size:22px;margin:8px 0;">$<%= current.central_atlantic_rate.toFixed(3) %></p>
-        <p>Effective: <%= current.effective_date %> · Surcharge: <%= current.surcharge_percent.toFixed(2) %>%</p>
-        <p style="font-size:13px;color:#666;">Central Atlantic (PADD 1B) · Updated Mondays from EIA</p>
+        <p style="font-size:22px;margin:8px 0;">$<%= Number(current.central_atlantic_rate || 0).toFixed(3) %></p>
+        <p>Effective: <%= current.effective_date %> · Surcharge: <%= Number(current.surcharge_percent || 0).toFixed(2) %>%</p>
+        <p style="font-size:13px;color:#666;">Central Atlantic (PADD 1B) · Updated Tuesdays from EIA</p>
       <% } else { %>
         <p>No rate set yet.</p>
       <% } %>
@@ -17,7 +17,7 @@
         <% if (rates && rates.length) { %>
           <% rates.forEach(r => { %>
             <div class="history-item">
-              <%= r.effective_date %> — $<%= r.central_atlantic_rate.toFixed(3) %> (<%= r.surcharge_percent.toFixed(2) %>%)
+              <%= r.effective_date %> — $<%= Number(r.central_atlantic_rate || 0).toFixed(3) %> (<%= Number(r.surcharge_percent || 0).toFixed(2) %>%)
             </div>
           <% }) %>
         <% } else { %>
