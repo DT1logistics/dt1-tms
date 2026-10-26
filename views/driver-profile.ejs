@@ -20,8 +20,14 @@
     <div><strong>Hire Date:</strong> <%= driver.hire_date || '—' %></div>
     <div><strong>DOB:</strong> <%= driver.dob || '—' %></div>
     <div><strong>Pay %:</strong> <%= driver.pay_percentage || 'Not set' %></div>
+    <div><strong>Status:</strong> <%= (driver.status || 'active') === 'inactive' ? 'Inactive' : 'Active' %></div>
   </div>
 </div>
+<form method="POST" action="/drivers/<%= driver.id %>/status">
+  <input type="hidden" name="return_to" value="profile">
+  <input type="hidden" name="status" value="<%= (driver.status || 'active') === 'inactive' ? 'active' : 'inactive' %>">
+  <button type="submit"><%= (driver.status || 'active') === 'inactive' ? 'Activate' : 'Deactivate' %></button>
+</form>
 
 <div class="card">
   <h2>Edit Driver</h2>
@@ -51,6 +57,11 @@
     <input type="date" name="dob" value="<%= driver.dob || '' %>">
     <label>Driver Percentage Pay (%)</label>
     <input type="number" step="0.01" name="pay_percentage" value="<%= driver.pay_percentage != null ? driver.pay_percentage : '' %>">
+    <label>Status</label>
+    <select name="status">
+      <option value="active" <%= (driver.status || 'active') !== 'inactive' ? 'selected' : '' %>>Active</option>
+      <option value="inactive" <%= driver.status === 'inactive' ? 'selected' : '' %>>Inactive</option>
+    </select>
     <button type="submit">Save Driver</button>
   </form>
 </div>
@@ -93,10 +104,12 @@
   </form>
 </div>
 <div class="card">
-  <h2>Welcome Email</h2>
+  <h2>Welcome Email &amp; Text</h2>
   <p class="muted">Send this driver their login and the steps to save the DT1 Logistics app on their phone. If their temporary password is no longer on file, a new one is created.</p>
-  <form method="POST" action="/drivers/<%= driver.id %>/send-welcome">
-    <button type="submit">Send Welcome Email</button>
+  <form class="welcome-actions" method="POST" action="/drivers/<%= driver.id %>/send-welcome">
+    <button type="submit" name="channel" value="both">Send Welcome Email &amp; Text</button>
+    <button type="submit" class="btn-draft" name="channel" value="email">Send Email</button>
+    <button type="submit" class="btn-draft" name="channel" value="sms">Send Text (SMS)</button>
   </form>
 </div>
 <p><a href="/drivers">Back to Drivers</a></p>

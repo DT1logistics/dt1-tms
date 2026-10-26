@@ -1,18 +1,42 @@
 <%- include('partials/open', { title: 'Drivers', user: user, active: 'drivers' }) %>
 <h1>Drivers</h1>
-<p class="muted">Every driver is listed with green, yellow, and red status levels.</p>
+<p class="muted">Active drivers are listed first. Inactive drivers stay on file and can be activated again.</p>
 <a href="/drivers/new" class="btn">+ Add New Driver</a>
-<% if (drivers.length === 0) { %>
-  <p>No drivers yet.</p>
-<% } else { %>
-  <% drivers.forEach(function (d) { %>
-    <a class="card driver-link" href="/drivers/<%= d.id %>">
+
+<div class="card" id="notification-settings">
+  <h2>Email &amp; SMS Settings Status</h2>
+  <p>SMTP Email: <span class="badge <%= notifications && notifications.email ? 'green' : 'yellow' %>"><%= notifications && notifications.email ? 'Connected' : 'Not configured' %></span></p>
+  <p>Twilio SMS: <span class="badge <%= notifications && notifications.sms ? 'green' : 'yellow' %>"><%= notifications && notifications.sms ? 'Connected' : 'Not configured' %></span></p>
+  <p class="muted">Automatic email uses SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM. Automatic text uses Twilio (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER) or an SMTP-to-SMS gateway (SMS_GATEWAY_DOMAIN). One-tap email and text links still work when automatic delivery is off.</p>
+</div>
+
+<% const activeDrivers = drivers.filter(function (d) { return (d.status || 'active') !== 'inactive'; }); %>
+<% const inactiveDrivers = drivers.filter(function (d) { return d.status === 'inactive'; }); %>
+
+<% function driverCard(d) { %>
+  <div class="card driver-row">
+    <a class="driver-link" href="/drivers/<%= d.id %>">
       <strong><%= d.name || 'Unnamed' %></strong>
       <div class="muted"><%= d.email %></div>
       <% if (d.addressLine) { %><div class="muted"><%= d.addressLine %></div><% } %>
-      <div class="muted">Pay: <%= d.pay_percentage ? d.pay_percentage + '%' : 'Not set' %> · <%= d.status || 'active' %></div>
+      <div class="muted">Pay: <%= d.pay_percentage ? d.pay_percentage + '%' : 'Not set' %> · <%= (d.status || 'active') === 'inactive' ? 'Inactive' : 'Active' %></div>
       <%- include('partials/levels', { levels: d.levels, linked: false }) %>
     </a>
-  <% }) %>
+    <div class="row-actions">
+      <form method="POST" action="/drivers/<%= d.id %>/send-welcome">
+        <button type="submit" name="channel" value="both">Send Welcome Email &amp; Text</button>
+      </form>
+      <form method="POST" action="/drivers/<%= d.id %>/status">
+        <input type="hidden" name="status" value="<%= (d.status || 'active') === 'inactive' ? 'active' : 'inactive' %>">
+        <button type="submit"><%= (d.status || 'active') === 'inactive' ? 'Activate' : 'Deactivate' %></button>
+      </form>
+    </div>
+  </div>
 <% } %>
+
+<h2>Active Drivers (<%= activeDrivers.length %>)</h2>
+<% if (activeDrivers.length) { activeDrivers.forEach(driverCard); } else { %><p>No active drivers.</p><% } %>
+
+<h2>Inactive Drivers (<%= inactiveDrivers.length %>)</h2>
+<% if (inactiveDrivers.length) { inactiveDrivers.forEach(driverCard); } else { %><p>No inactive drivers.</p><% } %>
 <%- include('partials/close') %>

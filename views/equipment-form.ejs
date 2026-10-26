@@ -6,16 +6,29 @@
     <option value="truck" <%= equipment.type === 'trailer' ? '' : 'selected' %>>Truck</option>
     <option value="trailer" <%= equipment.type === 'trailer' ? 'selected' : '' %>>Trailer</option>
   </select>
-  <label>Number</label>
+  <label>Equipment Number / Identifier</label>
   <input type="text" name="number" placeholder="e.g. #1002" value="<%= equipment.number || '' %>" required>
+  <label>VIN#</label>
+  <input type="text" name="vin" value="<%= equipment.vin || '' %>">
+  <label>Year</label>
+  <input type="text" name="year" value="<%= equipment.year || '' %>">
+  <label>Make</label>
+  <input type="text" name="make" value="<%= equipment.make || '' %>">
+  <label>Model</label>
+  <input type="text" name="model" value="<%= equipment.model || '' %>">
   <label>Description</label>
   <input type="text" name="description" value="<%= equipment.description || '' %>">
   <label>Ownership</label>
   <input type="text" name="ownership" placeholder="Owned / Leased / Third-party" value="<%= equipment.ownership || '' %>">
-  <label>Registration Expiration</label>
+  <label>Registration Expiration Date</label>
   <input type="date" name="registration_expiration" value="<%= equipment.registration_expiration || '' %>">
-  <label>Inspection Expiration</label>
+  <label>Annual DOT Periodic Inspection Date</label>
   <input type="date" name="inspection_expiration" value="<%= equipment.inspection_expiration || '' %>">
+  <label>Status</label>
+  <select name="status">
+    <option value="active" <%= equipment.status === 'inactive' ? '' : 'selected' %>>Active</option>
+    <option value="inactive" <%= equipment.status === 'inactive' ? 'selected' : '' %>>Inactive</option>
+  </select>
   <label>Maintenance Status</label>
   <select name="maintenance_status">
     <option value="active" <%= equipment.maintenance_status === 'maintenance' || equipment.maintenance_status === 'out_of_service' ? '' : 'selected' %>>Active</option>

@@ -14,6 +14,14 @@
       <p class="muted">Display name is Customer - Project. A typed prefix such as "Synagro - Hunters Pad" is kept once.</p>
       <label>Default Rate ($)</label>
       <input type="number" step="0.01" name="default_rate" required value="<%= project.default_rate != null ? project.default_rate : '' %>">
+      <label>Default Driver Pay Basis</label>
+      <select name="default_driver_pay_type" id="default_driver_pay_type">
+        <option value="percentage" <%= project.default_driver_pay_type === 'flat' ? '' : 'selected' %>>Percentage of Load (%)</option>
+        <option value="flat" <%= project.default_driver_pay_type === 'flat' ? 'selected' : '' %>>Flat / Daily Rate ($)</option>
+      </select>
+      <label>Default Driver Flat / Daily Rate ($)</label>
+      <input type="number" step="0.01" name="default_driver_flat_rate" value="<%= project.default_driver_flat_rate != null ? project.default_driver_flat_rate : '0.00' %>">
+      <p class="muted">New loads for this project start with this driver pay basis. An admin can change it on each load.</p>
       <div class="check">
         <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" <%= project.has_fuel_surcharge ? 'checked' : '' %>>
         <label for="has_fuel_surcharge">Includes Fuel Surcharge</label>

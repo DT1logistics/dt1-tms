@@ -1,5 +1,5 @@
 <%- include('partials/open', { title: 'Welcome Email', user: user, active: 'drivers' }) %>
-<h1>Welcome Email</h1>
+<h1>Welcome Email &amp; Text</h1>
 <p>Prepared for <strong><%= driver.name %></strong> (<%= driver.email %>).</p>
 <%- include('partials/welcome-email', { welcome: welcome }) %>
 <p><a href="/drivers/<%= driver.id %>">Back to Driver</a> · <a href="/drivers">All Drivers</a></p>

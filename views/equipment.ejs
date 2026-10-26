@@ -14,17 +14,22 @@
         <span class="badge green">Active</span>
       <% } %>
     </div>
-    <div><%= item.description || 'No description' %></div>
+    <div class="equip-meta"><strong>VIN#:</strong> <%= item.vin || '—' %></div>
+    <div class="equip-meta"><strong>Year:</strong> <%= item.year || '—' %></div>
+    <div class="equip-meta"><strong>Make:</strong> <%= item.make || '—' %></div>
+    <div class="equip-meta"><strong>Model:</strong> <%= item.model || '—' %></div>
+    <div class="equip-meta"><strong>Description:</strong> <%= item.description || '—' %></div>
+    <div class="muted">Status: <%= item.status === 'inactive' ? 'Inactive' : 'Active' %></div>
     <div class="muted"><%= item.ownership || 'Ownership not set' %></div>
     <div>
-      Registration:
+      Registration Expiration:
       <% if (item.registration_expiration) { %>
         <span class="badge <%= getStatusClass(item.registration_expiration) %>"><%= getStatusText(item.registration_expiration) %></span>
         <%= item.registration_expiration %>
       <% } else { %>—<% } %>
     </div>
     <div>
-      Inspection:
+      Annual DOT Inspection:
       <% if (item.inspection_expiration) { %>
         <span class="badge <%= getStatusClass(item.inspection_expiration) %>"><%= getStatusText(item.inspection_expiration) %></span>
         <%= item.inspection_expiration %>

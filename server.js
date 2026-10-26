@@ -62,6 +62,15 @@ function loadStatusLabel(status, settlementStatus) {
   return status || 'Draft';
 }
 
+function loadOriginLabel(load) {
+  if (!load) return '';
+  if (load.entry_mode === 'entered') return 'Entered by Admin for Driver';
+  if (load.entry_mode === 'assigned' && load.status === 'draft') return 'Assigned by Admin (Driver Draft)';
+  if (load.status === 'submitted' || load.status === 'approved') return 'Submitted by Driver';
+  if (load.entry_mode === 'assigned') return 'Assigned by Admin (Driver Draft)';
+  return '';
+}
+
 function weekBounds(dateStr) {
   if (!dateStr) return null;
   const date = new Date(`${String(dateStr).slice(0, 10)}T00:00:00`);
@@ -95,10 +104,14 @@ function calcDriverPay(load) {
   const rate = Number(load.rate) || 0;
   const percentage = Number(load.pay_percentage) || 0;
   const linehaul = qty * rate;
-  const base = linehaul * (percentage / 100);
+  const flat = load && load.driver_pay_type === 'flat';
+  const base = flat ? (Number(load.driver_flat_rate) || 0) : linehaul * (percentage / 100);
   const drive = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
   const self = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
-  return { linehaul, base, drive, self, pay: base + drive + self, percentage };
+  const basis = flat
+    ? `Flat Daily Rate: $${base.toFixed(2)}`
+    : `${percentage}% of $${linehaul.toFixed(2)}`;
+  return { linehaul, base, drive, self, pay: base + drive + self, percentage, flat, basis };
 }
 
 function payVisible(load) {
@@ -198,6 +211,7 @@ function loadAudit(loadId) {
 }
 
 app.locals.loadStatusLabel = loadStatusLabel;
+app.locals.loadOriginLabel = loadOriginLabel;
 app.locals.settlementWeekLabel = settlementWeekLabel;
 app.locals.ticketFileKind = ticketFileKind;
 app.locals.auditStamp = auditStamp;
@@ -370,6 +384,8 @@ function initDB() {
       has_fuel_surcharge INTEGER DEFAULT 0,
       has_drive_time INTEGER DEFAULT 0,
       default_drive_time_amount REAL DEFAULT 0,
+      default_driver_pay_type TEXT DEFAULT 'percentage',
+      default_driver_flat_rate REAL DEFAULT 0,
       status TEXT DEFAULT 'active',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (customer_id) REFERENCES customers(id)
@@ -394,6 +410,8 @@ function initDB() {
       drive_time_amount REAL DEFAULT 0,
       has_self_load INTEGER DEFAULT 0,
       self_load_amount REAL DEFAULT 0,
+      driver_pay_type TEXT DEFAULT 'percentage',
+      driver_flat_rate REAL DEFAULT 0,
       status TEXT DEFAULT 'draft',
       submitted_by INTEGER,
       approved_by INTEGER,
@@ -406,6 +424,9 @@ function initDB() {
       updated_by_name TEXT,
       updated_at DATETIME,
       settlement_status TEXT,
+      created_by_role TEXT,
+      entry_mode TEXT,
+      missing_info_note TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (driver_id) REFERENCES users(id),
       FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -452,6 +473,10 @@ function initDB() {
       type TEXT CHECK(type IN ('truck', 'trailer')),
       number TEXT,
       description TEXT,
+      vin TEXT,
+      year TEXT,
+      make TEXT,
+      model TEXT,
       status TEXT DEFAULT 'active',
       ownership TEXT,
       registration_expiration DATE,
@@ -547,7 +572,19 @@ function initDB() {
   ensureColumn('loads', 'updated_by', 'INTEGER');
   ensureColumn('loads', 'updated_by_name', 'TEXT');
   ensureColumn('loads', 'updated_at', 'DATETIME');
+  ensureColumn('loads', 'created_by_role', 'TEXT');
+  ensureColumn('loads', 'entry_mode', 'TEXT');
+  ensureColumn('loads', 'missing_info_note', 'TEXT');
+  ensureColumn('loads', 'driver_pay_type', "TEXT DEFAULT 'percentage'");
+  ensureColumn('loads', 'driver_flat_rate', 'REAL DEFAULT 0');
+  ensureColumn('projects', 'default_driver_pay_type', "TEXT DEFAULT 'percentage'");
+  ensureColumn('projects', 'default_driver_flat_rate', 'REAL DEFAULT 0');
   ensureColumn('documents', 'file_blob', 'BLOB');
+  ensureColumn('equipment', 'vin', 'TEXT');
+  ensureColumn('equipment', 'year', 'TEXT');
+  ensureColumn('equipment', 'make', 'TEXT');
+  ensureColumn('equipment', 'model', 'TEXT');
+  ensureColumn('equipment', 'status', "TEXT DEFAULT 'active'");
   ensureColumn('fuel_rates', 'updated_by', 'TEXT');
   ensureColumn('fuel_rates', 'updated_by_id', 'INTEGER');
   ensureColumn('fuel_rates', 'updated_at', 'DATETIME');
@@ -677,6 +714,12 @@ function readProject(body, customer, existing) {
     hasFuel,
     hasDrive,
     driveAmount,
+    payType: bodyHas(body, 'default_driver_pay_type')
+      ? (body.default_driver_pay_type === 'flat' ? 'flat' : 'percentage')
+      : (existing && existing.default_driver_pay_type === 'flat' ? 'flat' : 'percentage'),
+    flatRate: bodyHas(body, 'default_driver_flat_rate') && String(body.default_driver_flat_rate).trim() !== ''
+      ? (Number.isFinite(parseFloat(body.default_driver_flat_rate)) ? parseFloat(body.default_driver_flat_rate) : 0)
+      : (existing ? (Number(existing.default_driver_flat_rate) || 0) : 0),
     status: bodyHas(body, 'status') ? (body.status === 'inactive' ? 'inactive' : 'active') : (existing ? (existing.status || 'active') : 'active'),
     error
   };
@@ -692,12 +735,90 @@ function activeProjects() {
   `).all();
 }
 
-function loadFormData(user) {
-  const drivers = user.role === 'admin'
-    ? db.prepare("SELECT id, name FROM users WHERE role = 'driver' AND status = 'active' ORDER BY name").all()
-    : [];
-  const trucks = db.prepare("SELECT id, number, description FROM equipment WHERE type = 'truck' ORDER BY number").all();
+function loadFormData(user, load) {
+  let drivers = [];
+  if (user.role === 'admin') {
+    drivers = db.prepare("SELECT id, name, status FROM users WHERE role = 'driver' AND (status IS NULL OR status = 'active') ORDER BY name").all();
+    if (load && load.driver_id && !drivers.some((driver) => String(driver.id) === String(load.driver_id))) {
+      const current = db.prepare("SELECT id, name, status FROM users WHERE id = ? AND role = 'driver'").get(load.driver_id);
+      if (current) drivers.unshift(current);
+    }
+  }
+  let trucks = db.prepare("SELECT id, number, description, status FROM equipment WHERE type = 'truck' AND (status IS NULL OR status = 'active') ORDER BY number").all();
+  if (load && load.truck_id && !trucks.some((truck) => String(truck.id) === String(load.truck_id))) {
+    const current = db.prepare("SELECT id, number, description, status FROM equipment WHERE id = ? AND type = 'truck'").get(load.truck_id);
+    if (current) trucks.unshift(current);
+  }
   return { drivers, projects: activeProjects(), trucks };
+}
+
+function submittedLoadGaps(load, hasFile) {
+  const gaps = [];
+  if (!load.driver_id) gaps.push('Driver');
+  if (!load.truck_id) gaps.push('Truck');
+  if (!load.project_id) gaps.push('Customer / Project');
+  if (!load.load_date) gaps.push('Load Date');
+  if (!String(load.ticket_number || '').trim()) gaps.push('Ticket #');
+  const flatPay = load.driver_pay_type === 'flat';
+  if (!flatPay && (load.weight_quantity == null || Number(load.weight_quantity) <= 0)) gaps.push('Qty/Wet Ton');
+  if (!flatPay && (load.rate == null || Number(load.rate) <= 0)) gaps.push('Rate');
+  if (!hasFile) gaps.push('Load Ticket/BOL file');
+  return gaps;
+}
+
+app.locals.submittedLoadGaps = submittedLoadGaps;
+
+function resolveLoadEntry(req, existing) {
+  const isAdmin = req.session.user.role === 'admin';
+  const action = req.body.action || 'submit';
+  if (!isAdmin) {
+    return {
+      status: action === 'draft' ? 'draft' : 'submitted',
+      entryMode: existing && existing.entry_mode ? existing.entry_mode : 'driver',
+      createdByRole: existing && existing.created_by_role ? existing.created_by_role : 'driver',
+      approveNow: false,
+      auditAction: action === 'draft' ? 'Saved draft' : 'Submitted',
+      auditDetail: action === 'draft' ? 'Driver saved a draft' : 'Submitted by Driver'
+    };
+  }
+  if (action === 'save') {
+    return {
+      status: existing ? existing.status : 'draft',
+      entryMode: existing && existing.entry_mode ? existing.entry_mode : 'entered',
+      createdByRole: existing && existing.created_by_role ? existing.created_by_role : 'admin',
+      approveNow: false,
+      auditAction: 'Edited',
+      auditDetail: 'Admin edited the load'
+    };
+  }
+  if (action === 'draft') {
+    return {
+      status: 'draft',
+      entryMode: 'assigned',
+      createdByRole: 'admin',
+      approveNow: false,
+      auditAction: 'Assigned to Driver',
+      auditDetail: `Assigned to Driver by ${actorName(req)}`
+    };
+  }
+  if (action === 'approve') {
+    return {
+      status: 'approved',
+      entryMode: 'entered',
+      createdByRole: existing && existing.created_by_role ? existing.created_by_role : 'admin',
+      approveNow: true,
+      auditAction: 'Submitted and approved',
+      auditDetail: `Entered by Admin for Driver by ${actorName(req)}`
+    };
+  }
+  return {
+    status: 'submitted',
+    entryMode: 'entered',
+    createdByRole: existing && existing.created_by_role ? existing.created_by_role : 'admin',
+    approveNow: false,
+    auditAction: 'Entered for Driver',
+    auditDetail: `Entered by Admin for Driver by ${actorName(req)}`
+  };
 }
 
 const loadQuery = `
@@ -740,7 +861,7 @@ function assessLoad(load, hasFile) {
   if (!hasFile && !load.ticket_number) bump('red', 'Missing ticket number and ticket file');
   else if (!hasFile) bump('yellow', 'Missing ticket file');
   else if (!load.ticket_number) bump('yellow', 'Missing ticket number');
-  const rateMissing = load.rate == null || Number(load.rate) === 0;
+  const rateMissing = load.driver_pay_type !== 'flat' && (load.rate == null || Number(load.rate) === 0);
   if (rateMissing && load.status !== 'draft') {
     bump(load.status === 'approved' ? 'red' : 'yellow', 'Rate not set');
   }
@@ -899,21 +1020,36 @@ function collectAlerts(user) {
     docMap[row.load_id] = row.n;
   });
   loads.forEach((load) => {
-    const title = load.ticket_number || `Load #${load.id}`;
-    if (load.status === 'submitted') {
-      pushAlert(alerts, 'yellow', 'Load', title, 'Pending review', '/loads');
+    const href = `/loads/${load.id}`;
+    const who = load.driver_name || 'Unassigned';
+    const name = `Load #${load.id} (${who})`;
+    const note = String(load.missing_info_note || '').trim();
+    if (user.role === 'admin' && note) {
+      pushAlert(alerts, 'red', 'Load', name, `Missing info flag: ${note}`, href);
     }
+    if (load.status === 'draft') return;
     const hasFile = (docMap[load.id] || 0) > 0;
-    if (!hasFile && !load.ticket_number) {
-      pushAlert(alerts, 'red', 'Load', title, 'Missing ticket number and ticket file', '/loads');
-    } else if (!hasFile) {
-      pushAlert(alerts, 'yellow', 'Load', title, 'Missing ticket file', '/loads');
-    } else if (!load.ticket_number) {
-      pushAlert(alerts, 'yellow', 'Load', title, 'Missing ticket number', '/loads');
+    if (user.role === 'admin' && load.status === 'submitted') {
+      const gaps = submittedLoadGaps(load, hasFile);
+      if (gaps.length) {
+        const onlyTruck = gaps.length === 1 && gaps[0] === 'Truck';
+        pushAlert(alerts, onlyTruck ? 'yellow' : 'red', 'Load', name, `Submitted load missing: ${gaps.join(', ')}`, href);
+      } else {
+        pushAlert(alerts, 'yellow', 'Load', name, 'Pending review', href);
+      }
+      return;
     }
-    const rateMissing = load.rate == null || Number(load.rate) === 0;
+    const title = load.ticket_number || name;
+    if (!hasFile && !load.ticket_number) {
+      pushAlert(alerts, 'red', 'Load', title, 'Missing ticket number and ticket file', href);
+    } else if (!hasFile) {
+      pushAlert(alerts, 'yellow', 'Load', title, 'Missing ticket file', href);
+    } else if (!load.ticket_number) {
+      pushAlert(alerts, 'yellow', 'Load', title, 'Missing ticket number', href);
+    }
+    const rateMissing = load.driver_pay_type !== 'flat' && (load.rate == null || Number(load.rate) === 0);
     if (rateMissing && load.status !== 'draft') {
-      pushAlert(alerts, load.status === 'approved' ? 'red' : 'yellow', 'Load', title, 'Rate not set', '/loads');
+      pushAlert(alerts, load.status === 'approved' ? 'red' : 'yellow', 'Load', title, 'Rate not set', href);
     }
   });
 
@@ -1091,9 +1227,9 @@ app.post('/customers/:id/projects', requireAdmin, (req, res) => {
   db.prepare(`
     INSERT INTO projects (
       customer_id, project_name, display_name, default_rate, has_fuel_surcharge,
-      has_drive_time, default_drive_time_amount, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.status);
+      has_drive_time, default_drive_time_amount, default_driver_pay_type, default_driver_flat_rate, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.status);
   res.redirect('/customers/' + customer.id);
 });
 
@@ -1136,9 +1272,9 @@ app.post('/projects', requireAdmin, (req, res) => {
   db.prepare(`
     INSERT INTO projects (
       customer_id, project_name, display_name, default_rate, has_fuel_surcharge,
-      has_drive_time, default_drive_time_amount, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.status);
+      has_drive_time, default_drive_time_amount, default_driver_pay_type, default_driver_flat_rate, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.status);
   res.redirect('/customers/' + customer.id);
 });
 
@@ -1174,9 +1310,10 @@ app.post('/projects/:id', requireAdmin, (req, res) => {
   db.prepare(`
     UPDATE projects
     SET customer_id = ?, project_name = ?, display_name = ?, default_rate = ?,
-        has_fuel_surcharge = ?, has_drive_time = ?, default_drive_time_amount = ?, status = ?
+        has_fuel_surcharge = ?, has_drive_time = ?, default_drive_time_amount = ?,
+        default_driver_pay_type = ?, default_driver_flat_rate = ?, status = ?
     WHERE id = ?
-  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.status, existing.id);
+  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.status, existing.id);
   res.redirect('/customers/' + customer.id);
 });
 
@@ -1374,6 +1511,25 @@ function buildLoadValues(req, project, existing) {
     if (Number.isFinite(parsed)) weight = parsed;
   }
 
+  let payType = 'percentage';
+  if (!isDriver && bodyHas(body, 'driver_pay_type')) {
+    payType = body.driver_pay_type === 'flat' ? 'flat' : 'percentage';
+  } else if (existing && existing.driver_pay_type) {
+    payType = existing.driver_pay_type === 'flat' ? 'flat' : 'percentage';
+  } else if (project && project.default_driver_pay_type === 'flat') {
+    payType = 'flat';
+  }
+  let flatRate = 0;
+  if (!isDriver && bodyHas(body, 'driver_flat_rate')) {
+    const parsed = parseFloat(body.driver_flat_rate);
+    flatRate = Number.isFinite(parsed) ? parsed : (existing ? (Number(existing.driver_flat_rate) || 0) : 0);
+  } else if (existing && existing.driver_flat_rate != null) {
+    flatRate = Number(existing.driver_flat_rate) || 0;
+  } else if (project && project.default_driver_flat_rate != null) {
+    flatRate = Number(project.default_driver_flat_rate) || 0;
+  }
+  if (payType === 'flat' && (weight == null || weight === '')) weight = 1;
+
   const driverId = isDriver
     ? ((existing && existing.driver_id) || req.session.user.id)
     : (bodyHas(body, 'driver_id') ? (body.driver_id || null) : (existing ? existing.driver_id : null));
@@ -1410,6 +1566,8 @@ function buildLoadValues(req, project, existing) {
     driveAmount,
     hasSelf,
     selfAmount,
+    payType,
+    flatRate,
     status: body.action === 'draft' ? 'draft' : 'submitted'
   };
 }
@@ -1449,7 +1607,7 @@ function editableLoad(req, id) {
 }
 
 function renderLoadForm(req, res, status, load, error) {
-  const form = loadFormData(req.session.user);
+  const form = loadFormData(req.session.user, load);
   const tickets = load && load.id ? ticketRows(load.id) : [];
   return res.status(status).render('load-form', {
     user: req.session.user,
@@ -1469,7 +1627,7 @@ app.get('/loads/:id/edit', requireAuth, (req, res) => {
   const existing = editableLoad(req, req.params.id);
   if (!existing) return res.redirect('/loads');
   const load = db.prepare(loadQuery + ' WHERE l.id = ?').get(existing.id);
-  const form = loadFormData(req.session.user);
+  const form = loadFormData(req.session.user, load);
   res.render('load-form', { user: req.session.user, load, tickets: ticketRows(existing.id), ...form });
 });
 
@@ -1477,7 +1635,7 @@ app.get('/loads/:id', requireAuth, (req, res) => {
   const existing = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!canViewLoad(req, existing)) return res.redirect('/loads');
   const load = annotatePay(db.prepare(loadQuery + ' WHERE l.id = ?').get(existing.id));
-  const form = loadFormData(req.session.user);
+  const form = loadFormData(req.session.user, load);
   if (load.project_id && !form.projects.some((project) => String(project.id) === String(load.project_id))) {
     const current = db.prepare('SELECT * FROM projects WHERE id = ?').get(load.project_id);
     if (current) form.projects = [current].concat(form.projects);
@@ -1492,18 +1650,46 @@ app.get('/loads/:id', requireAuth, (req, res) => {
   });
 });
 
+function loadFormErrorView(req, existing) {
+  const action = req.body.action || 'submit';
+  let entryMode = existing ? existing.entry_mode : '';
+  if (action === 'draft' && req.session.user.role === 'admin') entryMode = 'assigned';
+  else if (action === 'submit' || action === 'approve') entryMode = req.session.user.role === 'admin' ? 'entered' : (existing && existing.entry_mode ? existing.entry_mode : 'driver');
+  return Object.assign({}, existing || {}, req.body, {
+    id: existing ? existing.id : undefined,
+    status: existing ? existing.status : undefined,
+    entry_mode: entryMode
+  });
+}
+
+function stampLoadApproval(loadId, req, entry) {
+  if (!entry.approveNow) return;
+  db.prepare(`
+    UPDATE loads
+    SET approved_by = ?, approved_by_name = ?, approved_at = CURRENT_TIMESTAMP, rejection_reason = NULL
+    WHERE id = ?
+  `).run(req.session.user.id, actorName(req), loadId);
+}
+
 app.post('/loads', requireAuth, upload.array('tickets', 10), (req, res) => {
+  const isAdmin = req.session.user.role === 'admin';
+  const entry = resolveLoadEntry(req, null);
   const project = findActiveProject(req.body.project_id);
-  if (!project && req.body.action !== 'draft') {
-    return renderLoadForm(req, res, 400, req.body, 'Select an active project');
-  }
   const values = buildLoadValues(req, project);
+  values.status = entry.status;
+  if (isAdmin && !values.driver_id) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req), 'Select a driver');
+  }
+  if (!project && req.body.action !== 'draft') {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req), 'Select an active project');
+  }
   const result = db.prepare(`
     INSERT INTO loads (
       ticket_number, load_date, driver_id, truck_id, project_id, description, origin, destination, notes, weight_quantity,
       rate, has_fuel_surcharge, has_drive_time, drive_time_amount, has_self_load, self_load_amount,
-      status, submitted_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      driver_pay_type, driver_flat_rate,
+      status, submitted_by, created_by_role, entry_mode
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     values.ticket_number,
     values.load_date,
@@ -1521,31 +1707,40 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), (req, res) => {
     values.driveAmount,
     values.hasSelf,
     values.selfAmount,
-    values.status,
-    req.session.user.id
+    values.payType,
+    values.flatRate,
+    entry.status,
+    req.session.user.id,
+    entry.createdByRole,
+    entry.entryMode
   );
+  stampLoadApproval(result.lastInsertRowid, req, entry);
   saveTicketFiles(result.lastInsertRowid, req.files, req.session.user.id);
-  res.redirect('/loads');
+  logAudit(req, entry.auditAction, 'load', result.lastInsertRowid, entry.auditDetail);
+  res.redirect(isAdmin ? `/loads/${result.lastInsertRowid}` : '/loads');
 });
 
 app.post('/loads/:id', requireAuth, upload.array('tickets', 10), (req, res) => {
   const existing = editableLoad(req, req.params.id);
   if (!existing) return res.redirect('/loads');
   const isAdmin = req.session.user.role === 'admin';
-  const keepStatus = isAdmin && req.body.action === 'save';
+  const entry = resolveLoadEntry(req, existing);
   const project = findActiveProject(req.body.project_id);
-  if (!project && !keepStatus && req.body.action !== 'draft') {
-    return renderLoadForm(req, res, 400, { ...existing, ...req.body, id: existing.id }, 'Select an active project');
+  if (isAdmin && req.body.action !== 'save' && !buildLoadValues(req, project, existing).driver_id) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), 'Select a driver');
+  }
+  if (!project && req.body.action !== 'draft' && !(isAdmin && req.body.action === 'save')) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), 'Select an active project');
   }
   const values = buildLoadValues(req, project, existing);
-  const status = keepStatus ? existing.status : values.status;
-  const rejectionReason = status === 'submitted' ? null : (existing.rejection_reason || null);
+  const rejectionReason = entry.status === 'submitted' || entry.status === 'approved' ? null : (existing.rejection_reason || null);
   db.prepare(`
     UPDATE loads
     SET ticket_number = ?, load_date = ?, driver_id = ?, truck_id = ?, project_id = ?, description = ?,
         origin = ?, destination = ?, notes = ?,
         weight_quantity = ?, rate = ?, has_fuel_surcharge = ?, has_drive_time = ?, drive_time_amount = ?,
-        has_self_load = ?, self_load_amount = ?, status = ?, rejection_reason = ?,
+        has_self_load = ?, self_load_amount = ?, driver_pay_type = ?, driver_flat_rate = ?, status = ?, rejection_reason = ?,
+        created_by_role = ?, entry_mode = ?,
         updated_by = ?, updated_by_name = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ? ${isAdmin ? '' : "AND status = 'draft'"}
   `).run(
@@ -1565,16 +1760,35 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), (req, res) => {
     values.driveAmount,
     values.hasSelf,
     values.selfAmount,
-    status,
+    values.payType,
+    values.flatRate,
+    entry.status,
     rejectionReason,
+    entry.createdByRole,
+    entry.entryMode,
     req.session.user.id,
     actorName(req),
     existing.id
   );
+  stampLoadApproval(existing.id, req, entry);
   removeSelectedTickets(existing.id, req.body);
   saveTicketFiles(existing.id, req.files, req.session.user.id);
-  logAudit(req, 'Edited', 'load', existing.id, isAdmin ? 'Admin edited the load' : 'Driver edited the draft');
+  logAudit(req, entry.auditAction, 'load', existing.id, entry.auditDetail);
   res.redirect(isAdmin ? `/loads/${existing.id}?saved=edited` : '/loads');
+});
+
+app.post('/loads/:id/missing-info', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/loads');
+  const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+  if (!load) return res.redirect('/loads');
+  const note = String(req.body.missing_info_note || '').trim();
+  db.prepare(`
+    UPDATE loads
+    SET missing_info_note = ?, updated_by = ?, updated_by_name = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(note || null, req.session.user.id, actorName(req), load.id);
+  logAudit(req, note ? 'Missing info flag' : 'Cleared missing info flag', 'load', load.id, note || 'Cleared');
+  res.redirect(`/loads/${load.id}?saved=flag`);
 });
 
 // Admin: Drivers management
@@ -1586,7 +1800,7 @@ app.get('/drivers', requireAuth, (req, res) => {
     driver.addressLine = [driver.address, place].filter(Boolean).join(', ');
     driver.levels = collectDriverLevels(driver.id, { docHref: `/drivers/${driver.id}`, loadHref: '/loads', equipHref: '/equipment' });
   });
-  res.render('drivers', { user: req.session.user, drivers });
+  res.render('drivers', { user: req.session.user, drivers, notifications: notificationStatus() });
 });
 
 app.get('/drivers/new', requireAuth, (req, res) => {
@@ -1606,7 +1820,7 @@ function escapeHtml(value) {
   }[ch]));
 }
 
-function buildWelcomeEmail({ name, email, tempPassword }) {
+function buildWelcomeEmail({ name, email, tempPassword, phone }) {
   const subject = 'Welcome to DT1 Logistics';
   const text = [
     `Hi ${name},`,
@@ -1624,7 +1838,13 @@ function buildWelcomeEmail({ name, email, tempPassword }) {
     'iPhone (Safari):',
     `1. Open ${APP_URL} in Safari.`,
     '2. Tap the Share icon (the square with an arrow pointing up at the bottom of the screen).',
-    '3. Scroll down and tap Add to Home Screen, then tap Add in the top right.',
+    '3. Scroll down and tap Add to Home Screen, then tap Add.',
+    '4. Now the DT1 Logistics app icon is on your phone screen—just tap the app anytime to open it!',
+    '',
+    'iPhone (Chrome):',
+    `1. Open ${APP_URL} in Chrome.`,
+    '2. Tap the Share icon (the square with an arrow pointing up in the top-right address bar).',
+    '3. Scroll down and tap Add to Home Screen, then tap Add.',
     '4. Now the DT1 Logistics app icon is on your phone screen—just tap the app anytime to open it!',
     '',
     'Android (Chrome):',
@@ -1650,7 +1870,14 @@ function buildWelcomeEmail({ name, email, tempPassword }) {
     <ol>
       <li>Open <a href="${APP_URL}">${APP_URL}</a> in <strong>Safari</strong>.</li>
       <li>Tap the <strong>Share</strong> icon (the square with an arrow pointing up at the bottom of the screen).</li>
-      <li>Scroll down and tap <strong>Add to Home Screen</strong>, then tap <strong>Add</strong> in the top right.</li>
+      <li>Scroll down and tap <strong>Add to Home Screen</strong>, then tap <strong>Add</strong>.</li>
+      <li>Now the <strong>DT1 Logistics</strong> app icon is on your phone screen—just tap the app anytime to open it!</li>
+    </ol>
+    <p><strong>iPhone (Chrome):</strong></p>
+    <ol>
+      <li>Open <a href="${APP_URL}">${APP_URL}</a> in <strong>Chrome</strong>.</li>
+      <li>Tap the <strong>Share</strong> icon (the square with an arrow pointing up in the top-right address bar).</li>
+      <li>Scroll down and tap <strong>Add to Home Screen</strong>, then tap <strong>Add</strong>.</li>
       <li>Now the <strong>DT1 Logistics</strong> app icon is on your phone screen—just tap the app anytime to open it!</li>
     </ol>
     <p><strong>Android (Chrome):</strong></p>
@@ -1663,13 +1890,66 @@ function buildWelcomeEmail({ name, email, tempPassword }) {
     <p>— DT1 Logistics</p>
   `;
   const mailto = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
+  const smsText = buildWelcomeSms({ name, email, tempPassword });
   return {
     subject,
     text,
     html,
     mailto,
     to: email,
-    copyText: `Subject: ${subject}\n\n${text}`
+    phone: phone || '',
+    copyText: `Subject: ${subject}\n\n${text}`,
+    smsText,
+    smsHref: smsHref(phone, smsText)
+  };
+}
+
+function buildWelcomeSms({ name, email, tempPassword }) {
+  return [
+    `Hi ${name}, welcome to DT1 Logistics.`,
+    `App: ${APP_URL}`,
+    `Login: ${email}`,
+    `Temp password: ${tempPassword}`,
+    `iPhone (Safari): Open ${APP_URL} in Safari -> tap the Share icon (square with arrow pointing up at the bottom) -> scroll down and tap Add to Home Screen -> tap Add.`,
+    `iPhone (Chrome): Open ${APP_URL} in Chrome -> tap the Share icon (square with arrow pointing up in the top-right address bar) -> scroll down and tap Add to Home Screen -> tap Add.`,
+    `Android (Chrome): Open ${APP_URL} in Chrome -> tap the three-dot menu (⋮) in the top-right corner -> tap Add to Home screen (or Install app) -> tap Add.`
+  ].join('\n');
+}
+
+function smsAddress(phone) {
+  const raw = String(phone || '').trim();
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  if (raw.startsWith('+') && digits.length >= 8) return `+${digits}`;
+  return '';
+}
+
+function smsHref(phone, body) {
+  const address = smsAddress(phone);
+  const encoded = encodeURIComponent(body || '');
+  return address ? `sms:${address}?&body=${encoded}` : `sms:?&body=${encoded}`;
+}
+
+function smtpConfigured() {
+  return Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+}
+
+function twilioConfigured() {
+  return Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM_NUMBER);
+}
+
+function smsGatewayDomain() {
+  return String(process.env.SMS_GATEWAY_DOMAIN || '').trim().replace(/^@/, '');
+}
+
+function notificationStatus() {
+  const gateway = smsGatewayDomain();
+  return {
+    email: smtpConfigured(),
+    sms: twilioConfigured() || Boolean(gateway && smtpConfigured()),
+    twilio: twilioConfigured(),
+    gateway: Boolean(gateway && smtpConfigured())
   };
 }
 
@@ -1694,6 +1974,130 @@ async function deliverWelcomeEmail(welcome) {
     html: welcome.html
   });
   return { sent: true, smtpConfigured: true, smtpError: false };
+}
+
+function gatewayPhone(phone) {
+  const digits = smsAddress(phone).replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('1')) return digits.slice(1);
+  return digits;
+}
+
+async function deliverSmsGateway(phone, body) {
+  const domain = smsGatewayDomain();
+  if (!domain || !smtpConfigured()) return { attempted: false, sent: false };
+  const local = gatewayPhone(phone);
+  if (!local) return { attempted: true, sent: false };
+  const nodemailer = require('nodemailer');
+  const port = Number(process.env.SMTP_PORT || 587);
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port,
+    secure: process.env.SMTP_SECURE === 'true' || port === 465,
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+  });
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to: `${local}@${domain}`,
+    subject: 'DT1 Logistics',
+    text: body
+  });
+  return { attempted: true, sent: true };
+}
+
+async function deliverWelcomeSms(welcome, phone) {
+  const body = welcome && welcome.smsText ? welcome.smsText : '';
+  const target = phone || (welcome && welcome.phone) || '';
+  const twilioOn = twilioConfigured();
+  const gatewayOn = Boolean(smsGatewayDomain() && smtpConfigured());
+  if (!twilioOn && !gatewayOn) {
+    return { smsSent: false, smsConfigured: false, smsError: false, smsStatus: 'Not configured' };
+  }
+  const to = smsAddress(target);
+  if (!to) {
+    return { smsSent: false, smsConfigured: true, smsError: true, smsStatus: 'No phone number on file' };
+  }
+  let twilioSent = false;
+  let gatewaySent = false;
+  let failed = false;
+  if (twilioOn) {
+    try {
+      const sid = process.env.TWILIO_ACCOUNT_SID;
+      const token = process.env.TWILIO_AUTH_TOKEN;
+      const params = new URLSearchParams({ To: to, From: process.env.TWILIO_FROM_NUMBER, Body: body });
+      const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(sid)}/Messages.json`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`,
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: params.toString()
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        console.error('Welcome SMS failed:', response.status, text.slice(0, 300));
+        failed = true;
+      } else {
+        twilioSent = true;
+      }
+    } catch (err) {
+      console.error('Welcome SMS failed:', err.message);
+      failed = true;
+    }
+  }
+  if (gatewayOn) {
+    try {
+      const gateway = await deliverSmsGateway(target, body);
+      gatewaySent = gateway.sent;
+      if (gateway.attempted && !gateway.sent) failed = true;
+    } catch (err) {
+      console.error('Welcome SMS gateway failed:', err.message);
+      failed = true;
+    }
+  }
+  const smsSent = twilioSent || gatewaySent;
+  let smsStatus = 'Not sent';
+  if (twilioSent && gatewaySent) smsStatus = 'Sent via Twilio and email gateway';
+  else if (twilioSent) smsStatus = 'Sent via Twilio';
+  else if (gatewaySent) smsStatus = 'Sent via email gateway';
+  else if (failed) smsStatus = 'Could not send';
+  return { smsSent, smsConfigured: true, smsError: !smsSent, smsStatus };
+}
+
+async function deliverWelcome(welcome, phone, channel) {
+  const mode = channel === 'email' || channel === 'sms' ? channel : 'both';
+  const result = {
+    sent: false,
+    smtpConfigured: notificationStatus().email,
+    smtpError: false,
+    emailAttempted: mode !== 'sms',
+    smsSent: false,
+    smsConfigured: notificationStatus().sms,
+    smsError: false,
+    smsStatus: 'Not sent',
+    smsAttempted: mode !== 'email'
+  };
+  if (result.emailAttempted) {
+    try {
+      Object.assign(result, await deliverWelcomeEmail(welcome), { emailAttempted: true });
+    } catch (err) {
+      console.error('Welcome email failed:', err.message);
+      result.sent = false;
+      result.smtpConfigured = true;
+      result.smtpError = true;
+    }
+  }
+  if (result.smsAttempted) {
+    try {
+      Object.assign(result, await deliverWelcomeSms(welcome, phone), { smsAttempted: true });
+    } catch (err) {
+      console.error('Welcome SMS failed:', err.message);
+      result.smsSent = false;
+      result.smsConfigured = true;
+      result.smsError = true;
+      result.smsAttempted = true;
+    }
+  }
+  return result;
 }
 
 function ensureDriverTempPassword(driver) {
@@ -1722,14 +2126,8 @@ app.post('/drivers', requireAuth, async (req, res) => {
       INSERT INTO users (email, password, role, name, first_name, middle_initial, last_name, phone, address, city, state, zip, pay_percentage, hire_date, dob, app_language, must_change_password, temp_password)
       VALUES (?, ?, 'driver', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'English', 1, ?)
     `).run(email, hash, fullName, firstName, middleInitial, lastName, phone, place.address, place.city, place.state, place.zip, req.body.pay_percentage || null, req.body.hire_date, req.body.dob, tempPassword);
-    const welcome = buildWelcomeEmail({ name: fullName, email, tempPassword });
-    let delivery = { sent: false, smtpConfigured: false, smtpError: false };
-    try {
-      delivery = await deliverWelcomeEmail(welcome);
-    } catch (err) {
-      console.error('Welcome email failed:', err.message);
-      delivery = { sent: false, smtpConfigured: true, smtpError: true };
-    }
+    const welcome = buildWelcomeEmail({ name: fullName, email, tempPassword, phone });
+    const delivery = await deliverWelcome(welcome, phone, 'both');
     res.render('driver-created', {
       user: req.session.user,
       email,
@@ -1748,14 +2146,9 @@ app.post('/drivers/:id/send-welcome', requireAuth, async (req, res) => {
   const driver = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'driver'").get(req.params.id);
   if (!driver) return res.redirect('/drivers');
   const issued = ensureDriverTempPassword(driver);
-  const welcome = buildWelcomeEmail({ name: driver.name, email: driver.email, tempPassword: issued.tempPassword });
-  let delivery = { sent: false, smtpConfigured: false, smtpError: false };
-  try {
-    delivery = await deliverWelcomeEmail(welcome);
-  } catch (err) {
-    console.error('Welcome email failed:', err.message);
-    delivery = { sent: false, smtpConfigured: true, smtpError: true };
-  }
+  const welcome = buildWelcomeEmail({ name: driver.name, email: driver.email, tempPassword: issued.tempPassword, phone: driver.phone });
+  const channel = req.body.channel === 'email' || req.body.channel === 'sms' ? req.body.channel : 'both';
+  const delivery = await deliverWelcome(welcome, driver.phone, channel);
   res.render('welcome-sent', {
     user: req.session.user,
     driver,
@@ -1796,6 +2189,15 @@ app.get('/drivers/:id', requireAuth, (req, res) => {
   renderDriverEditor(req, res, driver, 200, { saved: req.query.saved === '1' });
 });
 
+app.post('/drivers/:id/status', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/');
+  const driver = db.prepare("SELECT id FROM users WHERE id = ? AND role = 'driver'").get(req.params.id);
+  if (!driver) return res.redirect('/drivers');
+  const status = req.body.status === 'inactive' ? 'inactive' : 'active';
+  db.prepare('UPDATE users SET status = ? WHERE id = ?').run(status, driver.id);
+  res.redirect(req.body.return_to === 'profile' ? `/drivers/${driver.id}?saved=1` : '/drivers');
+});
+
 app.post('/drivers/:id', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
   const driver = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(req.params.id, 'driver');
@@ -1822,7 +2224,8 @@ app.post('/drivers/:id', requireAuth, (req, res) => {
     zip: place.zip,
     pay_percentage: Number.isFinite(payPercentage) ? payPercentage : driver.pay_percentage,
     hire_date: bodyHas(req.body, 'hire_date') ? blankToNull(req.body.hire_date) : driver.hire_date,
-    dob: bodyHas(req.body, 'dob') ? blankToNull(req.body.dob) : driver.dob
+    dob: bodyHas(req.body, 'dob') ? blankToNull(req.body.dob) : driver.dob,
+    status: bodyHas(req.body, 'status') ? (req.body.status === 'inactive' ? 'inactive' : 'active') : (driver.status || 'active')
   });
   if (!firstName || !lastName || !email.includes('@')) {
     return renderDriverEditor(req, res, draft, 400, { error: 'Enter a first name, last name, and valid login email.' });
@@ -1833,7 +2236,7 @@ app.post('/drivers/:id', requireAuth, (req, res) => {
     UPDATE users
     SET name = ?, first_name = ?, middle_initial = ?, last_name = ?, email = ?, phone = ?,
         address = ?, city = ?, state = ?, zip = ?,
-        pay_percentage = ?, hire_date = ?, dob = ?, app_language = 'English'
+        pay_percentage = ?, hire_date = ?, dob = ?, status = ?, app_language = 'English'
     WHERE id = ?
   `).run(
     draft.name,
@@ -1849,6 +2252,7 @@ app.post('/drivers/:id', requireAuth, (req, res) => {
     Number.isFinite(Number(payPercentage)) ? Number(payPercentage) : driver.pay_percentage,
     draft.hire_date,
     draft.dob,
+    draft.status,
     driver.id
   );
   res.redirect(`/drivers/${driver.id}?saved=1`);
@@ -1939,11 +2343,17 @@ function readEquipment(body, existing) {
   const type = bodyHas(body, 'type')
     ? (body.type === 'trailer' ? 'trailer' : 'truck')
     : (existing ? existing.type : 'truck');
+  const kept = (key) => (bodyHas(body, key) ? String(body[key] || '').trim() : (existing ? (existing[key] || '') : ''));
   return {
     type,
-    number: bodyHas(body, 'number') ? String(body.number || '').trim() : (existing ? (existing.number || '') : ''),
-    description: bodyHas(body, 'description') ? String(body.description || '').trim() : (existing ? (existing.description || '') : ''),
-    ownership: bodyHas(body, 'ownership') ? String(body.ownership || '').trim() : (existing ? (existing.ownership || '') : ''),
+    number: kept('number'),
+    description: kept('description'),
+    vin: kept('vin'),
+    year: kept('year'),
+    make: kept('make'),
+    model: kept('model'),
+    status: bodyHas(body, 'status') ? (body.status === 'inactive' ? 'inactive' : 'active') : (existing ? (existing.status || 'active') : 'active'),
+    ownership: kept('ownership'),
     registration_expiration: bodyHas(body, 'registration_expiration') ? blankToNull(body.registration_expiration) : (existing ? existing.registration_expiration : null),
     inspection_expiration: bodyHas(body, 'inspection_expiration') ? blankToNull(body.inspection_expiration) : (existing ? existing.inspection_expiration : null),
     maintenance_status: maintenance
@@ -1975,9 +2385,9 @@ app.post('/equipment', requireAuth, (req, res) => {
   const item = readEquipment(req.body);
   db.prepare(`
     INSERT INTO equipment (
-      type, number, description, ownership, registration_expiration, inspection_expiration, maintenance_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(item.type, item.number, item.description, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status);
+      type, number, description, vin, year, make, model, status, ownership, registration_expiration, inspection_expiration, maintenance_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(item.type, item.number, item.description, item.vin, item.year, item.make, item.model, item.status, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status);
   res.redirect('/equipment');
 });
 
@@ -1988,9 +2398,10 @@ app.post('/equipment/:id', requireAuth, (req, res) => {
   const item = readEquipment(req.body, existing);
   db.prepare(`
     UPDATE equipment
-    SET type = ?, number = ?, description = ?, ownership = ?, registration_expiration = ?, inspection_expiration = ?, maintenance_status = ?
+    SET type = ?, number = ?, description = ?, vin = ?, year = ?, make = ?, model = ?, status = ?,
+        ownership = ?, registration_expiration = ?, inspection_expiration = ?, maintenance_status = ?
     WHERE id = ?
-  `).run(item.type, item.number, item.description, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status, req.params.id);
+  `).run(item.type, item.number, item.description, item.vin, item.year, item.make, item.model, item.status, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status, req.params.id);
   res.redirect('/equipment');
 });
 

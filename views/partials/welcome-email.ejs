@@ -1,5 +1,5 @@
 <div class="card welcome-email">
-  <h2>Welcome Email</h2>
+  <h2>Welcome Email &amp; Text</h2>
   <% if (welcome.generatedNewPassword) { %>
     <p class="muted">A new temporary password was created because the previous one was no longer on file. The driver will be asked to set their own password at sign-in.</p>
   <% } %>
@@ -8,24 +8,32 @@
   <p class="muted">Subject</p>
   <p><strong><%= welcome.subject %></strong></p>
   <div class="welcome-body"><%- welcome.html %></div>
+  <h3>Text message</h3>
+  <pre class="sms-preview"><%= welcome.smsText %></pre>
   <div class="welcome-actions">
     <button type="button" class="btn" id="copy-welcome">Copy Welcome Email</button>
     <a class="btn btn-secondary" href="<%= welcome.mailto %>">Open in Email App</a>
+    <button type="button" class="btn" id="copy-welcome-sms">Copy Welcome Text (SMS)</button>
+    <a class="btn btn-secondary" id="send-welcome-sms" href="<%= welcome.smsHref %>">Open Text Message (sms:)</a>
   </div>
   <p class="field-help" id="copy-welcome-status" hidden>Welcome email copied.</p>
-  <% if (welcome.sent) { %>
-    <div class="all-clear">Welcome email sent to <%= welcome.to %>.</div>
-  <% } else if (welcome.smtpError) { %>
-    <div class="error">The email could not be sent. Copy it or open it in your email app.</div>
-  <% } else { %>
-    <p class="muted">Email delivery is not configured. Copy the welcome email or open it in your email app.</p>
-  <% } %>
+  <p class="field-help" id="copy-sms-status" hidden>Welcome text copied.</p>
+  <div class="<%= welcome.sent ? 'all-clear' : 'card' %>">
+    <strong>Welcome Email Sent:</strong>
+    <% if (welcome.emailAttempted === false) { %>Not sent<% } else if (welcome.sent) { %>Yes — sent to <%= welcome.to %><% } else if (welcome.smtpError) { %>No — the email could not be sent. Copy it or open it in your email app.<% } else { %>No — email delivery is not configured. Copy the welcome email or open it in your email app.<% } %>
+  </div>
+  <div class="<%= welcome.smsSent ? 'all-clear' : 'card' %>">
+    <strong>Welcome Text (SMS) Status:</strong>
+    <%= welcome.smsStatus || (welcome.smsSent ? 'Sent' : 'Not configured') %>
+    <% if (!welcome.smsSent) { %> Use Open Text Message to text <%= welcome.phone || 'the driver' %> directly.<% } %>
+  </div>
   <textarea id="welcome-source" readonly><%= welcome.copyText %></textarea>
+  <textarea id="welcome-sms-source" readonly><%= welcome.smsText %></textarea>
 </div>
 <script>
-  document.getElementById('copy-welcome').addEventListener('click', function () {
-    var source = document.getElementById('welcome-source');
-    var status = document.getElementById('copy-welcome-status');
+  function copyFrom(sourceId, statusId) {
+    var source = document.getElementById(sourceId);
+    var status = document.getElementById(statusId);
     var text = source.value;
     function done() { status.hidden = false; }
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -41,5 +49,11 @@
     source.select();
     document.execCommand('copy');
     done();
+  }
+  document.getElementById('copy-welcome').addEventListener('click', function () {
+    copyFrom('welcome-source', 'copy-welcome-status');
+  });
+  document.getElementById('copy-welcome-sms').addEventListener('click', function () {
+    copyFrom('welcome-sms-source', 'copy-sms-status');
   });
 </script>
