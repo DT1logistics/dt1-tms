@@ -34,11 +34,12 @@
       <% }) %>
     </select>
   <% } %>
-  <label>Qty</label>
-  <input type="number" step="0.01" name="weight_quantity" value="<%= load.weight_quantity || '' %>">
+  <label>Qty/Wet Ton</label>
+  <input type="number" step="0.01" name="weight_quantity" id="weight_quantity" value="<%= load.weight_quantity || '' %>">
   <label>Rate ($)</label>
   <input type="number" step="0.01" name="rate" value="<%= load.rate != null && load.rate !== '' ? load.rate : '' %>" <%= user.role === 'admin' ? '' : 'readonly' %>>
   <% if (user.role !== 'admin') { %><p class="muted">Rate comes from the project. An admin can change it.</p><% } %>
+  <div class="load-total" id="load_total">Load Total: $0.00</div>
   <% if (user.role === 'admin') { %>
     <div class="check">
       <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
@@ -126,9 +127,22 @@
     driveInput.checked = hasDrive;
     driveAmount.value = hasDrive ? money(opt.getAttribute('data-drivetime-amount')) : '0.00';
     syncDriveWrap();
+    syncLoadTotal();
+  }
+
+  const qtyInput = document.getElementById('weight_quantity');
+  const loadTotal = document.getElementById('load_total');
+  function syncLoadTotal() {
+    const qty = Number(qtyInput.value);
+    const rate = Number(rateInput.value);
+    const total = (Number.isFinite(qty) ? qty : 0) * (Number.isFinite(rate) ? rate : 0);
+    loadTotal.textContent = 'Load Total: $' + total.toFixed(2);
   }
 
   projectSelect.addEventListener('change', applyProject);
+  qtyInput.addEventListener('input', syncLoadTotal);
+  rateInput.addEventListener('input', syncLoadTotal);
+  syncLoadTotal();
 
   driveInput.addEventListener('change', () => {
     if (driveInput.checked) {
