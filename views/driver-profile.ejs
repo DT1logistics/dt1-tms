@@ -12,6 +12,9 @@
   <div>
     <div><strong>Name:</strong> <%= driver.first_name || '' %> <%= driver.middle_initial || '' %> <%= driver.last_name || '' %></div>
     <div><strong>Address:</strong> <%= driver.address || '—' %></div>
+    <div><strong>City:</strong> <%= driver.city || '—' %></div>
+    <div><strong>State:</strong> <%= driver.state || '—' %></div>
+    <div><strong>Zip:</strong> <%= driver.zip || '—' %></div>
     <div><strong>Phone:</strong> <%= driver.phone || '—' %></div>
     <div><strong>Email:</strong> <%= driver.email %></div>
     <div><strong>Hire Date:</strong> <%= driver.hire_date || '—' %></div>
@@ -35,7 +38,13 @@
     <label>Phone Number</label>
     <input type="tel" name="phone" value="<%= driver.phone || '' %>">
     <label>Address</label>
-    <input type="text" name="address" value="<%= driver.address || '' %>" placeholder="Street, city, state, ZIP">
+    <input type="text" name="address" value="<%= driver.address || '' %>" placeholder="Street address">
+    <label>City</label>
+    <input type="text" name="city" value="<%= driver.city || '' %>">
+    <label>State</label>
+    <input type="text" name="state" value="<%= driver.state || '' %>" maxlength="32">
+    <label>Zip</label>
+    <input type="text" name="zip" value="<%= driver.zip || '' %>" inputmode="numeric">
     <label>Hire Date</label>
     <input type="date" name="hire_date" value="<%= driver.hire_date || '' %>">
     <label>Date of Birth</label>
