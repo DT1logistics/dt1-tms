@@ -2,20 +2,28 @@ const express = require('express');
 const session = require('express-session');
 const path = require('path');
 const fs = require('fs');
+const net = require('net');
+const tls = require('tls');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
-// Database setup
-const db = new Database(path.join(__dirname, 'dt1.db'));
-db.pragma('foreign_keys = ON');
+const dbPath = path.join(__dirname, 'dt1.db');
+const SNAPSHOT_KEY = 'dt1:sqlite:snapshot:v1';
+let db;
 
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use((req, res, next) => {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+  res.on('finish', () => {
+    persistDatabaseSnapshot().catch((err) => console.error('SQLite snapshot failed:', err.message));
+  });
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.set('view engine', 'ejs');
@@ -46,20 +54,93 @@ function getStatusText(exp) {
 app.locals.getStatusClass = getStatusClass;
 app.locals.getStatusText = getStatusText;
 
-function loadStatusLabel(status) {
+function loadStatusLabel(status, settlementStatus) {
+  if (status === 'approved' && settlementStatus === 'approved') return 'Settled';
   if (status === 'approved') return 'Approved (Pending Settlement)';
   if (status === 'submitted') return 'Submitted';
   if (status === 'draft') return 'Draft';
   return status || 'Draft';
 }
 
-function settlementWeekLabel(dateStr) {
-  if (!dateStr) return '';
-  const date = new Date(`${dateStr}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return '';
+function weekBounds(dateStr) {
+  if (!dateStr) return null;
+  const date = new Date(`${String(dateStr).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
   const monday = new Date(date);
   monday.setDate(date.getDate() - ((date.getDay() + 6) % 7));
-  return `week of ${monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const iso = (value) => {
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${value.getFullYear()}-${month}-${day}`;
+  };
+  const label = (value) => value.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
+  const range = `${label(monday)} - ${label(sunday)}`;
+  return {
+    start: iso(monday),
+    end: iso(sunday),
+    range,
+    title: `Driver Load Summary - Week of ${range}`
+  };
+}
+
+function settlementWeekLabel(dateStr) {
+  const week = weekBounds(dateStr);
+  return week ? `week of ${week.range}` : '';
+}
+
+function calcDriverPay(load) {
+  const qty = Number(load.weight_quantity) || 0;
+  const rate = Number(load.rate) || 0;
+  const percentage = Number(load.pay_percentage) || 0;
+  const linehaul = qty * rate;
+  const base = linehaul * (percentage / 100);
+  const drive = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
+  const self = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
+  return { linehaul, base, drive, self, pay: base + drive + self, percentage };
+}
+
+function payVisible(load) {
+  return !!(load && (load.status === 'approved' || load.settlement_status === 'approved'));
+}
+
+function annotatePay(load) {
+  load.payInfo = calcDriverPay(load);
+  load.showPay = payVisible(load);
+  return load;
+}
+
+function driverWeekGroups(driverId) {
+  const loads = attachTickets(db.prepare(loadQuery + `
+    WHERE l.driver_id = ? AND IFNULL(l.settlement_status, '') != 'approved'
+    ORDER BY l.load_date DESC, l.id DESC
+  `).all(driverId)).map(annotatePay);
+  const weeks = new Map();
+  const undated = [];
+  loads.forEach((load) => {
+    const week = weekBounds(load.load_date);
+    if (!week) {
+      undated.push(load);
+      return;
+    }
+    if (!weeks.has(week.start)) weeks.set(week.start, { ...week, loads: [] });
+    weeks.get(week.start).loads.push(load);
+  });
+  const summarize = (group) => {
+    group.count = group.loads.length;
+    group.collapsed = group.loads.length > 1;
+    group.qty = group.loads.reduce((sum, load) => sum + (Number(load.weight_quantity) || 0), 0);
+    group.approvedPay = group.loads.reduce((sum, load) => sum + (load.showPay ? load.payInfo.pay : 0), 0);
+    group.approvedCount = group.loads.filter((load) => load.status === 'approved').length;
+    group.submittedCount = group.loads.filter((load) => load.status === 'submitted').length;
+    group.draftCount = group.loads.filter((load) => load.status === 'draft').length;
+    return group;
+  };
+  return {
+    weeks: Array.from(weeks.values()).sort((a, b) => b.start.localeCompare(a.start)).map(summarize),
+    undated: undated.length ? summarize({ title: 'Undated loads', loads: undated, start: '', end: '', range: '' }) : null
+  };
 }
 
 function ticketFileKind(name) {
@@ -155,12 +236,26 @@ function normalizeState(value) {
   return state.length === 2 ? state.toUpperCase() : state;
 }
 
-function readAddressParts(body) {
+function bodyHas(body, key) {
+  return Object.prototype.hasOwnProperty.call(body || {}, key);
+}
+
+function keptText(body, key, existing) {
+  if (!bodyHas(body, key)) return existing ? existing[key] : null;
+  return blankToNull(body[key]);
+}
+
+function readAddressParts(body, existing) {
+  const pick = (key, normalize) => {
+    if (!bodyHas(body, key)) return existing ? (existing[key] || '') : '';
+    const value = String(body[key] || '').trim();
+    return normalize ? normalize(value) : value;
+  };
   return {
-    address: String(body.address || '').trim(),
-    city: String(body.city || '').trim(),
-    state: normalizeState(body.state),
-    zip: String(body.zip || '').trim()
+    address: pick('address'),
+    city: pick('city'),
+    state: pick('state', normalizeState),
+    zip: pick('zip')
   };
 }
 
@@ -255,6 +350,7 @@ function initDB() {
       submitted_by INTEGER,
       approved_by INTEGER,
       approved_at DATETIME,
+      settlement_status TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (driver_id) REFERENCES users(id),
       FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -277,6 +373,7 @@ function initDB() {
       filename TEXT,
       original_name TEXT,
       category TEXT,
+      file_blob BLOB,
       uploaded_by INTEGER,
       uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       sharepoint_status TEXT DEFAULT 'pending',
@@ -325,6 +422,17 @@ function initDB() {
       FOREIGN KEY (uploaded_by) REFERENCES users(id)
     );
 
+    CREATE TABLE IF NOT EXISTS driver_settlements (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      driver_id INTEGER NOT NULL,
+      week_start DATE NOT NULL,
+      week_end DATE NOT NULL,
+      status TEXT DEFAULT 'approved',
+      approved_by INTEGER,
+      approved_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(driver_id, week_start)
+    );
+
     CREATE TABLE IF NOT EXISTS receipt_lines (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       receipt_id INTEGER,
@@ -361,6 +469,8 @@ function initDB() {
   ensureColumn('loads', 'destination', 'TEXT');
   ensureColumn('loads', 'notes', 'TEXT');
   ensureColumn('loads', 'rejection_reason', 'TEXT');
+  ensureColumn('loads', 'settlement_status', 'TEXT');
+  ensureColumn('documents', 'file_blob', 'BLOB');
   ensureColumn('equipment', 'registration_expiration', 'DATE');
   ensureColumn('equipment', 'inspection_expiration', 'DATE');
   ensureColumn('equipment', 'maintenance_status', "TEXT DEFAULT 'active'");
@@ -388,9 +498,8 @@ function initDB() {
 
   backfillUserNames();
   backfillUserAddresses();
+  backfillDocumentBlobs();
 }
-
-initDB();
 
 function flagValue(value) {
   return value === '1' || value === 'on' || value === 'true' || value === 1 || value === true;
@@ -418,25 +527,35 @@ function refreshProjectDisplayNames(customerId) {
   }
 }
 
-function readCustomer(body) {
+function readCustomer(body, existing) {
+  const text = (key) => bodyHas(body, key) ? String(body[key] || '').trim() : (existing ? (existing[key] || '') : '');
+  const terms = text('terms') || 'Net 30';
+  let status = existing ? (existing.status || 'active') : 'active';
+  if (bodyHas(body, 'status')) status = body.status === 'inactive' ? 'inactive' : 'active';
   return {
-    name: String(body.name || '').trim(),
-    address_line1: String(body.address_line1 || '').trim(),
-    address_line2: String(body.address_line2 || '').trim(),
-    poc_name: String(body.poc_name || '').trim(),
-    poc_phone: String(body.poc_phone || '').trim(),
-    poc_email: String(body.poc_email || '').trim(),
-    terms: String(body.terms || '').trim() || 'Net 30',
-    status: body.status === 'inactive' ? 'inactive' : 'active'
+    name: text('name'),
+    address_line1: text('address_line1'),
+    address_line2: text('address_line2'),
+    poc_name: text('poc_name'),
+    poc_phone: text('poc_phone'),
+    poc_email: text('poc_email'),
+    terms,
+    status
   };
 }
 
-function readProject(body, customer) {
-  const naming = projectNaming(customer.name, body.project_name);
-  const defaultRate = parseFloat(body.default_rate);
-  const hasFuel = flagValue(body.has_fuel_surcharge) ? 1 : 0;
-  const hasDrive = flagValue(body.has_drive_time) ? 1 : 0;
-  let driveAmount = parseFloat(body.default_drive_time_amount);
+function readProject(body, customer, existing) {
+  const naming = projectNaming(customer.name, bodyHas(body, 'project_name') ? body.project_name : (existing ? existing.project_name : ''));
+  const defaultRate = bodyHas(body, 'default_rate') && String(body.default_rate).trim() !== ''
+    ? parseFloat(body.default_rate)
+    : (existing ? Number(existing.default_rate) : NaN);
+  const hasFuel = bodyHas(body, 'has_fuel_surcharge') || !existing
+    ? (flagValue(body.has_fuel_surcharge) ? 1 : 0)
+    : (Number(existing.has_fuel_surcharge) ? 1 : 0);
+  const hasDrive = bodyHas(body, 'has_drive_time') || !existing
+    ? (flagValue(body.has_drive_time) ? 1 : 0)
+    : (Number(existing.has_drive_time) ? 1 : 0);
+  let driveAmount = bodyHas(body, 'default_drive_time_amount') ? parseFloat(body.default_drive_time_amount) : (existing ? Number(existing.default_drive_time_amount) : 0);
   if (!hasDrive || !Number.isFinite(driveAmount)) driveAmount = 0;
   let error = null;
   if (!naming.projectName) error = 'Project name is required';
@@ -448,7 +567,7 @@ function readProject(body, customer) {
     hasFuel,
     hasDrive,
     driveAmount,
-    status: body.status === 'inactive' ? 'inactive' : 'active',
+    status: bodyHas(body, 'status') ? (body.status === 'inactive' ? 'inactive' : 'active') : (existing ? (existing.status || 'active') : 'active'),
     error
   };
 }
@@ -699,27 +818,28 @@ function collectAlerts(user) {
   };
 }
 
-app.get('/', (req, res) => {
-  if (req.session.user) {
-    if (req.session.user.must_change_password) {
-      return res.redirect('/change-password');
-    }
-    if (req.session.user.role === 'driver') {
-      const levels = collectDriverLevels(req.session.user.id, { docHref: '/profile', documentsOnly: true });
-      return res.render('dashboard', {
-        user: req.session.user,
-        levels,
-        redCount: levels.filter((item) => item.level === 'red').length,
-        yellowCount: levels.filter((item) => item.level === 'yellow').length,
-        greenCount: levels.filter((item) => item.level === 'green').length
-      });
-    }
-    const attention = collectAlerts(req.session.user);
-    res.render('dashboard', { user: req.session.user, ...attention });
-  } else {
-    res.render('login');
+function renderDashboard(req, res) {
+  if (!req.session.user) return res.render('login');
+  if (req.session.user.must_change_password) return res.redirect('/change-password');
+  if (req.session.user.role === 'driver') {
+    const levels = collectDriverLevels(req.session.user.id, { docHref: '/profile', documentsOnly: true });
+    const grouped = driverWeekGroups(req.session.user.id);
+    return res.render('dashboard', {
+      user: req.session.user,
+      levels,
+      redCount: levels.filter((item) => item.level === 'red').length,
+      yellowCount: levels.filter((item) => item.level === 'yellow').length,
+      greenCount: levels.filter((item) => item.level === 'green').length,
+      weekGroups: grouped.weeks,
+      undatedLoads: grouped.undated
+    });
   }
-});
+  const attention = collectAlerts(req.session.user);
+  res.render('dashboard', { user: req.session.user, ...attention });
+}
+
+app.get('/', renderDashboard);
+app.get('/dashboard', renderDashboard);
 
 app.get('/login', (req, res) => {
   if (req.session.user) return res.redirect('/');
@@ -831,7 +951,7 @@ app.get('/customers/:id/edit', requireAdmin, (req, res) => {
 app.post('/customers/:id', requireAdmin, (req, res) => {
   const existing = db.prepare('SELECT * FROM customers WHERE id = ?').get(req.params.id);
   if (!existing) return res.redirect('/customers');
-  const customer = { ...readCustomer(req.body), id: existing.id };
+  const customer = { ...readCustomer(req.body, existing), id: existing.id };
   if (!customer.name) {
     return res.status(400).render('customer-form', { user: req.session.user, customer, error: 'Customer name is required' });
   }
@@ -932,7 +1052,7 @@ app.post('/projects/:id', requireAdmin, (req, res) => {
       error: 'Select a customer'
     });
   }
-  const parsed = readProject(req.body, customer);
+  const parsed = readProject(req.body, customer, existing);
   if (parsed.error) {
     return res.status(400).render('project-form', {
       user: req.session.user,
@@ -1021,10 +1141,18 @@ function removeSelectedTickets(loadId, body) {
 }
 
 app.get('/loads', requireAuth, (req, res) => {
-  const loads = req.session.user.role === 'admin'
-    ? db.prepare(loadQuery + ' ORDER BY l.created_at DESC').all()
-    : db.prepare(loadQuery + ' WHERE l.driver_id = ? ORDER BY l.created_at DESC').all(req.session.user.id);
-  res.render('loads', { user: req.session.user, loads: attachTickets(loads), deleted: req.query.deleted === '1' });
+  if (req.session.user.role === 'driver') {
+    const grouped = driverWeekGroups(req.session.user.id);
+    return res.render('loads', {
+      user: req.session.user,
+      loads: [],
+      weekGroups: grouped.weeks,
+      undatedLoads: grouped.undated,
+      deleted: req.query.deleted === '1'
+    });
+  }
+  const loads = attachTickets(db.prepare(loadQuery + ' ORDER BY l.created_at DESC').all()).map(annotatePay);
+  res.render('loads', { user: req.session.user, loads, weekGroups: [], undatedLoads: null, deleted: req.query.deleted === '1' });
 });
 
 app.post('/loads/:id/approve', requireAuth, (req, res) => {
@@ -1042,7 +1170,7 @@ app.post('/loads/:id/reject', requireAuth, (req, res) => {
   const reason = String(req.body.rejection_reason || '').trim();
   const result = db.prepare(`
     UPDATE loads
-    SET status = 'draft', rejection_reason = ?, approved_by = NULL, approved_at = NULL
+    SET status = 'draft', rejection_reason = ?, approved_by = NULL, approved_at = NULL, settlement_status = NULL
     WHERE id = ? AND status IN ('submitted', 'approved')
   `).run(reason || null, req.params.id);
   res.redirect(`/loads/${req.params.id}${result.changes ? '?saved=rejected' : ''}`);
@@ -1062,13 +1190,14 @@ app.get('/loads/:id/files/:fileId', requireAuth, (req, res) => {
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!canViewLoad(req, load)) return res.status(404).send('Not found');
   const file = db.prepare('SELECT * FROM documents WHERE id = ? AND load_id = ?').get(req.params.fileId, load.id);
-  if (!file || !file.filename) return res.status(404).send('Not found');
-  const full = storedTicketPath(file);
-  if (!full || !fs.existsSync(full)) return res.status(404).send('Not found');
+  if (!file) return res.status(404).send('Not found');
   const download = req.query.download === '1' || ticketFileKind(file.original_name || file.filename) === 'file';
   res.setHeader('Content-Type', fileContentType(file.original_name || file.filename));
   res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${safeDownloadName(file.original_name || file.filename)}"`);
-  res.sendFile(full);
+  const full = storedTicketPath(file);
+  if (full && fs.existsSync(full)) return res.sendFile(full);
+  if (file.file_blob) return res.send(Buffer.isBuffer(file.file_blob) ? file.file_blob : Buffer.from(file.file_blob));
+  return res.status(404).send('Not found');
 });
 
 function findActiveProject(projectId) {
@@ -1082,77 +1211,117 @@ function findActiveProject(projectId) {
   `).get(id) || null;
 }
 
-function buildLoadValues(req, project) {
-  const rateMissing = req.body.rate === undefined || req.body.rate === null || String(req.body.rate).trim() === '';
-  let rate = parseFloat(req.body.rate);
-  let hasFuel = flagValue(req.body.has_fuel_surcharge) ? 1 : 0;
-  let hasDrive = flagValue(req.body.has_drive_time) ? 1 : 0;
-  let hasSelf = flagValue(req.body.has_self_load) ? 1 : 0;
-  let driveAmount = parseFloat(req.body.drive_time_amount);
-  let selfAmount = parseFloat(req.body.self_load_amount);
-
-  if (!project) {
-    if (!Number.isFinite(rate)) rate = 0;
-    hasFuel = 0;
-    if (!hasDrive || !Number.isFinite(driveAmount)) driveAmount = 0;
-  } else if (rateMissing || !Number.isFinite(rate)) {
-    rate = Number(project.default_rate) || 0;
-    hasFuel = project.has_fuel_surcharge ? 1 : 0;
-    hasDrive = project.has_drive_time ? 1 : 0;
-    driveAmount = hasDrive ? (Number(project.default_drive_time_amount) || 0) : 0;
-  } else if (!hasDrive) {
-    driveAmount = 0;
-  } else if (!Number.isFinite(driveAmount)) {
-    driveAmount = Number(project.default_drive_time_amount) || 0;
+function buildLoadValues(req, project, existing) {
+  const body = req.body || {};
+  const isDriver = req.session.user.role === 'driver';
+  let rate;
+  if (!bodyHas(body, 'rate') || String(body.rate).trim() === '') {
+    if (existing && existing.rate != null && existing.rate !== '') rate = Number(existing.rate) || 0;
+    else rate = project ? (Number(project.default_rate) || 0) : 0;
+  } else {
+    rate = parseFloat(body.rate);
+    if (!Number.isFinite(rate)) {
+      if (existing && existing.rate != null && existing.rate !== '') rate = Number(existing.rate) || 0;
+      else rate = project ? (Number(project.default_rate) || 0) : 0;
+    }
   }
 
-  if (req.session.user.role === 'driver') {
-    hasFuel = project && project.has_fuel_surcharge ? 1 : 0;
+  let hasFuel;
+  if (isDriver) {
+    if (existing && existing.has_fuel_surcharge != null && existing.has_fuel_surcharge !== '') {
+      hasFuel = Number(existing.has_fuel_surcharge) ? 1 : 0;
+    } else {
+      hasFuel = project && project.has_fuel_surcharge ? 1 : 0;
+    }
+  } else if (!bodyHas(body, 'has_fuel_surcharge') && existing && !Object.prototype.hasOwnProperty.call(body, 'action')) {
+    hasFuel = Number(existing.has_fuel_surcharge) ? 1 : 0;
+  } else {
+    hasFuel = flagValue(body.has_fuel_surcharge) ? 1 : 0;
   }
 
-  if (!hasSelf) {
-    selfAmount = 0;
-  } else if (!Number.isFinite(selfAmount) || selfAmount === 0) {
-    selfAmount = 20;
+  const hasDrive = flagValue(body.has_drive_time) ? 1 : 0;
+  const hasSelf = flagValue(body.has_self_load) ? 1 : 0;
+  let driveAmount = parseFloat(body.drive_time_amount);
+  if (!hasDrive) driveAmount = 0;
+  else if (!Number.isFinite(driveAmount)) {
+    if (existing && existing.drive_time_amount != null) driveAmount = Number(existing.drive_time_amount) || 0;
+    else driveAmount = project ? (Number(project.default_drive_time_amount) || 0) : 0;
+  }
+  let selfAmount = parseFloat(body.self_load_amount);
+  if (!hasSelf) selfAmount = 0;
+  else if (!Number.isFinite(selfAmount) || selfAmount === 0) {
+    if (existing && Number(existing.self_load_amount) > 0) selfAmount = Number(existing.self_load_amount);
+    else selfAmount = 20;
   }
 
-  const weight = parseFloat(req.body.weight_quantity);
-  const assignedDriver = req.session.user.role === 'driver' ? req.session.user.id : (req.body.driver_id || null);
-  const truckId = parseInt(req.body.truck_id, 10);
-  const truck = Number.isInteger(truckId)
-    ? db.prepare("SELECT id FROM equipment WHERE id = ? AND type = 'truck'").get(truckId)
-    : null;
+  let weight = existing ? existing.weight_quantity : null;
+  if (bodyHas(body, 'weight_quantity') && String(body.weight_quantity).trim() !== '') {
+    const parsed = parseFloat(body.weight_quantity);
+    if (Number.isFinite(parsed)) weight = parsed;
+  }
+
+  const driverId = isDriver
+    ? ((existing && existing.driver_id) || req.session.user.id)
+    : (bodyHas(body, 'driver_id') ? (body.driver_id || null) : (existing ? existing.driver_id : null));
+
+  let truckId = existing ? existing.truck_id : null;
+  if (bodyHas(body, 'truck_id')) {
+    const parsed = parseInt(body.truck_id, 10);
+    const truck = Number.isInteger(parsed)
+      ? db.prepare("SELECT id FROM equipment WHERE id = ? AND type = 'truck'").get(parsed)
+      : null;
+    truckId = truck ? truck.id : null;
+  }
+
+  let projectId = existing ? existing.project_id : null;
+  if (bodyHas(body, 'project_id')) {
+    if (project) projectId = project.id;
+    else if (!(existing && String(existing.project_id) === String(body.project_id))) projectId = null;
+  }
 
   return {
-    ticket_number: blankToNull(req.body.ticket_number),
-    load_date: blankToNull(req.body.load_date),
-    driver_id: assignedDriver || null,
-    truck_id: truck ? truck.id : null,
-    project_id: project ? project.id : null,
-    description: blankToNull(req.body.description),
-    origin: blankToNull(req.body.origin),
-    destination: blankToNull(req.body.destination),
-    notes: blankToNull(req.body.notes),
-    weight: Number.isFinite(weight) ? weight : null,
+    ticket_number: keptText(body, 'ticket_number', existing),
+    load_date: keptText(body, 'load_date', existing),
+    driver_id: driverId || null,
+    truck_id: truckId,
+    project_id: projectId,
+    description: keptText(body, 'description', existing),
+    origin: keptText(body, 'origin', existing),
+    destination: keptText(body, 'destination', existing),
+    notes: keptText(body, 'notes', existing),
+    weight: weight == null || weight === '' ? null : weight,
     rate,
     hasFuel,
     hasDrive,
     driveAmount,
     hasSelf,
     selfAmount,
-    status: req.body.action === 'draft' ? 'draft' : 'submitted'
+    status: body.action === 'draft' ? 'draft' : 'submitted'
   };
+}
+
+function backfillDocumentBlobs() {
+  const rows = db.prepare('SELECT id, filename, file_blob FROM documents').all();
+  const update = db.prepare('UPDATE documents SET file_blob = ? WHERE id = ?');
+  rows.forEach((row) => {
+    if (row.file_blob) return;
+    const full = storedTicketPath(row);
+    if (full && fs.existsSync(full)) update.run(fs.readFileSync(full), row.id);
+  });
 }
 
 function saveTicketFiles(loadId, files, userId) {
   const list = Array.isArray(files) ? files : [];
   if (!list.length) return;
   const insertDoc = db.prepare(`
-    INSERT INTO documents (load_id, filename, original_name, category, uploaded_by)
-    VALUES (?, ?, ?, 'load_document', ?)
+    INSERT INTO documents (load_id, filename, original_name, category, uploaded_by, file_blob)
+    VALUES (?, ?, ?, 'load_document', ?, ?)
   `);
   list.forEach((file) => {
-    if (file && file.filename) insertDoc.run(loadId, file.filename, file.originalname, userId);
+    if (!file || !file.filename) return;
+    const full = path.join(uploadDir, path.basename(file.filename));
+    const bytes = fs.existsSync(full) ? fs.readFileSync(full) : null;
+    insertDoc.run(loadId, file.filename, file.originalname, userId, bytes);
   });
 }
 
@@ -1193,7 +1362,7 @@ app.get('/loads/:id/edit', requireAuth, (req, res) => {
 app.get('/loads/:id', requireAuth, (req, res) => {
   const existing = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!canViewLoad(req, existing)) return res.redirect('/loads');
-  const load = db.prepare(loadQuery + ' WHERE l.id = ?').get(existing.id);
+  const load = annotatePay(db.prepare(loadQuery + ' WHERE l.id = ?').get(existing.id));
   const form = loadFormData(req.session.user);
   if (load.project_id && !form.projects.some((project) => String(project.id) === String(load.project_id))) {
     const current = db.prepare('SELECT * FROM projects WHERE id = ?').get(load.project_id);
@@ -1253,7 +1422,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), (req, res) => {
   if (!project && !keepStatus && req.body.action !== 'draft') {
     return renderLoadForm(req, res, 400, { ...existing, ...req.body, id: existing.id }, 'Select an active project');
   }
-  const values = buildLoadValues(req, project);
+  const values = buildLoadValues(req, project, existing);
   const status = keepStatus ? existing.status : values.status;
   const rejectionReason = status === 'submitted' ? null : (existing.rejection_reason || null);
   db.prepare(`
@@ -1512,14 +1681,15 @@ app.post('/drivers/:id', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
   const driver = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(req.params.id, 'driver');
   if (!driver) return res.redirect('/drivers');
-  const firstName = String(req.body.first_name || '').trim();
-  const middleInitial = String(req.body.middle_initial || '').trim().slice(0, 1);
-  const lastName = String(req.body.last_name || '').trim();
-  const email = String(req.body.email || '').trim().toLowerCase();
-  const phone = String(req.body.phone || '').trim();
-  const place = readAddressParts(req.body);
-  const payText = String(req.body.pay_percentage || '').trim();
-  const payPercentage = payText === '' ? null : parseFloat(payText);
+  const firstName = bodyHas(req.body, 'first_name') ? String(req.body.first_name || '').trim() : String(driver.first_name || '').trim();
+  const middleInitial = bodyHas(req.body, 'middle_initial') ? String(req.body.middle_initial || '').trim().slice(0, 1) : String(driver.middle_initial || '').trim().slice(0, 1);
+  const lastName = bodyHas(req.body, 'last_name') ? String(req.body.last_name || '').trim() : String(driver.last_name || '').trim();
+  const email = bodyHas(req.body, 'email') ? String(req.body.email || '').trim().toLowerCase() : driver.email;
+  const phone = bodyHas(req.body, 'phone') ? String(req.body.phone || '').trim() : String(driver.phone || '').trim();
+  const place = readAddressParts(req.body, driver);
+  const payPercentage = bodyHas(req.body, 'pay_percentage') && String(req.body.pay_percentage).trim() !== ''
+    ? parseFloat(req.body.pay_percentage)
+    : driver.pay_percentage;
   const draft = Object.assign({}, driver, {
     first_name: firstName,
     middle_initial: middleInitial,
@@ -1532,8 +1702,8 @@ app.post('/drivers/:id', requireAuth, (req, res) => {
     state: place.state,
     zip: place.zip,
     pay_percentage: Number.isFinite(payPercentage) ? payPercentage : driver.pay_percentage,
-    hire_date: blankToNull(req.body.hire_date),
-    dob: blankToNull(req.body.dob)
+    hire_date: bodyHas(req.body, 'hire_date') ? blankToNull(req.body.hire_date) : driver.hire_date,
+    dob: bodyHas(req.body, 'dob') ? blankToNull(req.body.dob) : driver.dob
   });
   if (!firstName || !lastName || !email.includes('@')) {
     return renderDriverEditor(req, res, draft, 400, { error: 'Enter a first name, last name, and valid login email.' });
@@ -1557,7 +1727,7 @@ app.post('/drivers/:id', requireAuth, (req, res) => {
     place.city,
     place.state,
     place.zip,
-    Number.isFinite(payPercentage) ? payPercentage : null,
+    Number.isFinite(Number(payPercentage)) ? Number(payPercentage) : driver.pay_percentage,
     draft.hire_date,
     draft.dob,
     driver.id
@@ -1628,30 +1798,35 @@ app.post('/compliance', requireAuth, (req, res) => {
 
 app.post('/compliance/:id', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
+  const existing = db.prepare('SELECT * FROM compliance_items WHERE id = ?').get(req.params.id);
+  if (!existing) return res.redirect('/compliance');
   db.prepare(`
     UPDATE compliance_items
     SET name = ?, expiration_date = ?, notes = ?
     WHERE id = ?
   `).run(
-    String(req.body.name || '').trim(),
-    blankToNull(req.body.expiration_date),
-    blankToNull(req.body.notes),
+    bodyHas(req.body, 'name') ? (String(req.body.name || '').trim() || existing.name) : existing.name,
+    bodyHas(req.body, 'expiration_date') ? blankToNull(req.body.expiration_date) : existing.expiration_date,
+    bodyHas(req.body, 'notes') ? blankToNull(req.body.notes) : existing.notes,
     req.params.id
   );
   res.redirect('/compliance');
 });
 
-function readEquipment(body) {
-  const maintenance = ['active', 'maintenance', 'out_of_service'].includes(body.maintenance_status)
+function readEquipment(body, existing) {
+  const maintenance = bodyHas(body, 'maintenance_status') && ['active', 'maintenance', 'out_of_service'].includes(body.maintenance_status)
     ? body.maintenance_status
-    : 'active';
+    : (existing ? (existing.maintenance_status || 'active') : 'active');
+  const type = bodyHas(body, 'type')
+    ? (body.type === 'trailer' ? 'trailer' : 'truck')
+    : (existing ? existing.type : 'truck');
   return {
-    type: body.type === 'trailer' ? 'trailer' : 'truck',
-    number: String(body.number || '').trim(),
-    description: String(body.description || '').trim(),
-    ownership: String(body.ownership || '').trim(),
-    registration_expiration: blankToNull(body.registration_expiration),
-    inspection_expiration: blankToNull(body.inspection_expiration),
+    type,
+    number: bodyHas(body, 'number') ? String(body.number || '').trim() : (existing ? (existing.number || '') : ''),
+    description: bodyHas(body, 'description') ? String(body.description || '').trim() : (existing ? (existing.description || '') : ''),
+    ownership: bodyHas(body, 'ownership') ? String(body.ownership || '').trim() : (existing ? (existing.ownership || '') : ''),
+    registration_expiration: bodyHas(body, 'registration_expiration') ? blankToNull(body.registration_expiration) : (existing ? existing.registration_expiration : null),
+    inspection_expiration: bodyHas(body, 'inspection_expiration') ? blankToNull(body.inspection_expiration) : (existing ? existing.inspection_expiration : null),
     maintenance_status: maintenance
   };
 }
@@ -1689,7 +1864,9 @@ app.post('/equipment', requireAuth, (req, res) => {
 
 app.post('/equipment/:id', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  const item = readEquipment(req.body);
+  const existing = db.prepare('SELECT * FROM equipment WHERE id = ?').get(req.params.id);
+  if (!existing) return res.redirect('/equipment');
+  const item = readEquipment(req.body, existing);
   db.prepare(`
     UPDATE equipment
     SET type = ?, number = ?, description = ?, ownership = ?, registration_expiration = ?, inspection_expiration = ?, maintenance_status = ?
@@ -1749,11 +1926,11 @@ app.get('/profile', requireAuth, (req, res) => {
 app.post('/profile', requireAuth, (req, res) => {
   const current = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.user.id);
   const isDriver = current.role === 'driver';
-  const firstName = String(req.body.first_name || '').trim();
-  const lastName = String(req.body.last_name || '').trim();
-  const phone = String(req.body.phone || '').trim();
-  const place = readAddressParts(req.body);
-  const email = isDriver ? current.email : String(req.body.email || '').trim().toLowerCase();
+  const firstName = bodyHas(req.body, 'first_name') ? String(req.body.first_name || '').trim() : String(current.first_name || '').trim();
+  const lastName = bodyHas(req.body, 'last_name') ? String(req.body.last_name || '').trim() : String(current.last_name || '').trim();
+  const phone = bodyHas(req.body, 'phone') ? String(req.body.phone || '').trim() : String(current.phone || '').trim();
+  const place = readAddressParts(req.body, current);
+  const email = isDriver ? current.email : (bodyHas(req.body, 'email') ? String(req.body.email || '').trim().toLowerCase() : current.email);
   const name = composeName(firstName, current.middle_initial, lastName);
   const draft = Object.assign({}, current, {
     first_name: firstName,
@@ -1794,43 +1971,77 @@ app.post('/profile', requireAuth, (req, res) => {
   res.redirect('/profile?saved=1');
 });
 
-// Settlements and customer invoices (admin)
+function pendingSettlementWeeks() {
+  const loads = db.prepare(loadQuery + `
+    WHERE l.status = 'approved' AND IFNULL(l.settlement_status, '') != 'approved'
+    ORDER BY l.load_date, l.id
+  `).all();
+  const groups = new Map();
+  loads.forEach((load) => {
+    const week = weekBounds(load.load_date) || { start: '', end: '', range: 'Undated', title: 'Undated loads' };
+    const key = `${load.driver_id || 0}:${week.start}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        driverId: load.driver_id,
+        driver: load.driver_name || 'Unassigned',
+        percentage: load.pay_percentage,
+        week,
+        loads: [],
+        total: 0
+      });
+    }
+    const group = groups.get(key);
+    const payInfo = calcDriverPay(load);
+    group.loads.push(Object.assign({}, load, { payInfo }));
+    group.total += payInfo.pay;
+  });
+  return Array.from(groups.values());
+}
+
+function approvedSettlementWeeks(driverId) {
+  const rows = driverId
+    ? db.prepare(`
+        SELECT s.*, u.name AS driver_name, u.pay_percentage
+        FROM driver_settlements s
+        JOIN users u ON u.id = s.driver_id
+        WHERE s.driver_id = ? AND s.status = 'approved'
+        ORDER BY s.week_start DESC
+      `).all(driverId)
+    : db.prepare(`
+        SELECT s.*, u.name AS driver_name, u.pay_percentage
+        FROM driver_settlements s
+        JOIN users u ON u.id = s.driver_id
+        WHERE s.status = 'approved'
+        ORDER BY s.week_start DESC, u.name
+      `).all();
+  return rows.map((row) => {
+    const loads = db.prepare(loadQuery + `
+      WHERE l.driver_id = ? AND l.settlement_status = 'approved'
+        AND l.load_date >= ? AND l.load_date <= ?
+      ORDER BY l.load_date, l.id
+    `).all(row.driver_id, row.week_start, row.week_end).map((load) => Object.assign({}, load, { payInfo: calcDriverPay(load) }));
+    const week = weekBounds(row.week_start);
+    return {
+      ...row,
+      range: week ? week.range : `${row.week_start} - ${row.week_end}`,
+      loads,
+      total: loads.reduce((sum, load) => sum + load.payInfo.pay, 0),
+      base: loads.reduce((sum, load) => sum + load.payInfo.base, 0),
+      drive: loads.reduce((sum, load) => sum + load.payInfo.drive, 0),
+      self: loads.reduce((sum, load) => sum + load.payInfo.self, 0)
+    };
+  });
+}
+
 app.get('/settlements', requireAuth, (req, res) => {
-  if (req.session.user.role !== 'admin') return res.redirect('/');
-  const approvedLoads = db.prepare(loadQuery + ` WHERE l.status = 'approved' ORDER BY c.name, p.display_name, l.load_date`).all();
+  const isAdmin = req.session.user.role === 'admin';
   const latestFuel = db.prepare('SELECT * FROM fuel_rates ORDER BY effective_date DESC, id DESC LIMIT 1').get();
   const surchargePercent = latestFuel && latestFuel.surcharge_percent != null ? Number(latestFuel.surcharge_percent) : 0;
-
-  const byDriver = {};
-  approvedLoads.forEach((load) => {
-    const key = load.driver_name || 'Unassigned';
-    if (!byDriver[key]) {
-      byDriver[key] = {
-        driver: key,
-        percentage: load.pay_percentage,
-        loads: [],
-        linehaul: 0,
-        driveTime: 0,
-        selfLoad: 0,
-        total: 0
-      };
-    }
-    const qty = Number(load.weight_quantity) || 0;
-    const rate = Number(load.rate) || 0;
-    const pct = Number(load.pay_percentage) || 0;
-    // Driver pay is base linehaul plus drive time and self load. Fuel surcharge is never included.
-    const linehaul = qty * rate * (pct / 100);
-    const driveTime = Number(load.drive_time_amount) || 0;
-    const selfLoad = Number(load.self_load_amount) || 0;
-    const pay = linehaul + driveTime + selfLoad;
-    byDriver[key].loads.push({ ...load, linehaul, driveTime, selfLoad, pay });
-    byDriver[key].linehaul += linehaul;
-    byDriver[key].driveTime += driveTime;
-    byDriver[key].selfLoad += selfLoad;
-    byDriver[key].total += pay;
-  });
-
-  const byProject = {};
+  const approvedWeeks = approvedSettlementWeeks(isAdmin ? null : req.session.user.id);
+  let customerInvoices = [];
+  if (isAdmin) {
+    const approvedLoads = db.prepare(loadQuery + ` WHERE l.status = 'approved' ORDER BY c.name, p.display_name, l.load_date`).all();
+    const byProject = {};
   approvedLoads.forEach((load) => {
     const key = load.project_id ? String(load.project_id) : 'unassigned';
     if (!byProject[key]) {
@@ -1855,8 +2066,8 @@ app.get('/settlements', requireAuth, (req, res) => {
     const qty = Number(load.weight_quantity) || 0;
     const rate = Number(load.rate) || 0;
     const hauling = qty * rate;
-    const travelTime = Number(load.drive_time_amount) || 0;
-    const selfLoad = Number(load.self_load_amount) || 0;
+    const travelTime = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
+    const selfLoad = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
     const lineFsc = Number(load.has_fuel_surcharge) === 1 ? hauling * (surchargePercent / 100) : 0;
     byProject[key].loads.push({ ...load, hauling, travelTime, selfLoad, lineFsc });
     byProject[key].hauling += hauling;
@@ -1865,22 +2076,278 @@ app.get('/settlements', requireAuth, (req, res) => {
     byProject[key].selfLoad += selfLoad;
   });
 
-  const customerInvoices = Object.values(byProject).map((invoice) => {
-    invoice.fuelSurcharge = invoice.fscBase * (surchargePercent / 100);
-    invoice.total = invoice.hauling + invoice.fuelSurcharge + invoice.travelTime + invoice.selfLoad;
-    return invoice;
-  });
+    customerInvoices = Object.values(byProject).map((invoice) => {
+      invoice.fuelSurcharge = invoice.fscBase * (surchargePercent / 100);
+      invoice.total = invoice.hauling + invoice.fuelSurcharge + invoice.travelTime + invoice.selfLoad;
+      return invoice;
+    });
+  }
 
   res.render('settlements', {
     user: req.session.user,
-    approvedLoads,
-    driverSettlements: Object.values(byDriver),
+    pendingWeeks: isAdmin ? pendingSettlementWeeks() : [],
+    approvedWeeks,
     customerInvoices,
     surchargePercent,
-    fuelRate: latestFuel || null
+    fuelRate: latestFuel || null,
+    saved: req.query.saved || ''
   });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`DT1 TMS running on port ${PORT}`);
+app.post('/settlements/approve-week', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/settlements');
+  const driverId = parseInt(req.body.driver_id, 10);
+  const week = weekBounds(req.body.week_start);
+  if (!Number.isInteger(driverId) || !week || week.start !== String(req.body.week_start || '')) {
+    return res.redirect('/settlements');
+  }
+  const loads = db.prepare(`
+    SELECT id, load_date FROM loads
+    WHERE driver_id = ? AND status = 'approved' AND IFNULL(settlement_status, '') != 'approved'
+  `).all(driverId).filter((load) => {
+    const bounds = weekBounds(load.load_date);
+    return bounds && bounds.start === week.start;
+  });
+  if (!loads.length) return res.redirect('/settlements');
+  const mark = db.prepare(`UPDATE loads SET settlement_status = 'approved' WHERE id = ?`);
+  const saveWeek = db.transaction(() => {
+    loads.forEach((load) => mark.run(load.id));
+    db.prepare(`
+      INSERT INTO driver_settlements (driver_id, week_start, week_end, status, approved_by, approved_at)
+      VALUES (?, ?, ?, 'approved', ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(driver_id, week_start) DO UPDATE SET
+        week_end = excluded.week_end,
+        status = 'approved',
+        approved_by = excluded.approved_by,
+        approved_at = CURRENT_TIMESTAMP
+    `).run(driverId, week.start, week.end, req.session.user.id);
+  });
+  saveWeek();
+  res.redirect('/settlements?saved=week');
+});
+
+function parseRedisUrl(raw) {
+  const url = new URL(raw);
+  const tlsOn = url.protocol === 'rediss:';
+  return {
+    host: url.hostname,
+    port: Number(url.port) || (tlsOn ? 6380 : 6379),
+    username: decodeURIComponent(url.username || ''),
+    password: decodeURIComponent(url.password || ''),
+    tls: tlsOn
+  };
+}
+
+function encodeRedisCommand(args) {
+  const chunks = [Buffer.from(`*${args.length}\r\n`)];
+  args.forEach((arg) => {
+    const value = Buffer.isBuffer(arg) ? arg : Buffer.from(String(arg));
+    chunks.push(Buffer.from(`$${value.length}\r\n`));
+    chunks.push(value);
+    chunks.push(Buffer.from('\r\n'));
+  });
+  return Buffer.concat(chunks);
+}
+
+function parseRedisReply(buffer) {
+  if (!buffer.length) return null;
+  const kind = String.fromCharCode(buffer[0]);
+  const lineEnd = () => buffer.indexOf('\r\n');
+  if (kind === '+' || kind === '-' || kind === ':') {
+    const end = lineEnd();
+    if (end === -1) return null;
+    const text = buffer.subarray(1, end).toString();
+    if (kind === '-') return { consumed: end + 2, error: new Error(text) };
+    if (kind === ':') return { consumed: end + 2, value: Number(text) };
+    return { consumed: end + 2, value: text };
+  }
+  if (kind === '$') {
+    const end = lineEnd();
+    if (end === -1) return null;
+    const length = Number(buffer.subarray(1, end).toString());
+    if (length === -1) return { consumed: end + 2, value: null };
+    const start = end + 2;
+    if (buffer.length < start + length + 2) return null;
+    return { consumed: start + length + 2, value: buffer.subarray(start, start + length).toString('utf8') };
+  }
+  if (kind === '*') {
+    const end = lineEnd();
+    if (end === -1) return null;
+    const count = Number(buffer.subarray(1, end).toString());
+    if (count === -1) return { consumed: end + 2, value: null };
+    let offset = end + 2;
+    const values = [];
+    for (let i = 0; i < count; i += 1) {
+      const inner = parseRedisReply(buffer.subarray(offset));
+      if (!inner) return null;
+      if (inner.error) return { consumed: offset + inner.consumed, error: inner.error };
+      values.push(inner.value);
+      offset += inner.consumed;
+    }
+    return { consumed: offset, value: values };
+  }
+  return { consumed: buffer.length, error: new Error('Unknown Redis reply') };
+}
+
+class RedisClient {
+  constructor(rawUrl) {
+    this.config = parseRedisUrl(rawUrl);
+    this.socket = null;
+    this.buffer = Buffer.alloc(0);
+    this.queue = [];
+    this.connectPromise = null;
+  }
+
+  connect() {
+    if (this.socket && !this.socket.destroyed) return Promise.resolve(this);
+    if (this.connectPromise) return this.connectPromise;
+    this.connectPromise = new Promise((resolve, reject) => {
+      const socket = this.config.tls
+        ? tls.connect({ host: this.config.host, port: this.config.port, servername: this.config.host })
+        : net.connect({ host: this.config.host, port: this.config.port });
+      const fail = (err) => {
+        this.connectPromise = null;
+        reject(err);
+      };
+      socket.once('error', fail);
+      const ready = () => {
+        socket.removeListener('error', fail);
+        this.socket = socket;
+        socket.on('data', (chunk) => this.onData(chunk));
+        socket.on('error', (err) => this.drop(err));
+        socket.on('close', () => this.drop(new Error('Redis connection closed')));
+        resolve(this);
+      };
+      if (this.config.tls) socket.once('secureConnect', ready);
+      else socket.once('connect', ready);
+    }).then(async (client) => {
+      if (this.config.password) {
+        const args = this.config.username
+          ? ['AUTH', this.config.username, this.config.password]
+          : ['AUTH', this.config.password];
+        await this.command(args);
+      }
+      return client;
+    }).catch((err) => {
+      this.connectPromise = null;
+      if (this.socket) this.socket.destroy();
+      this.socket = null;
+      throw err;
+    });
+    return this.connectPromise;
+  }
+
+  drop(err) {
+    this.socket = null;
+    this.connectPromise = null;
+    this.buffer = Buffer.alloc(0);
+    const pending = this.queue.splice(0);
+    pending.forEach((item) => item.reject(err));
+  }
+
+  command(args) {
+    return new Promise((resolve, reject) => {
+      if (!this.socket || this.socket.destroyed) {
+        reject(new Error('Redis is not connected'));
+        return;
+      }
+      this.queue.push({ resolve, reject });
+      this.socket.write(encodeRedisCommand(args));
+    });
+  }
+
+  onData(chunk) {
+    this.buffer = Buffer.concat([this.buffer, chunk]);
+    while (this.queue.length) {
+      const parsed = parseRedisReply(this.buffer);
+      if (!parsed) return;
+      this.buffer = this.buffer.subarray(parsed.consumed);
+      const item = this.queue.shift();
+      if (parsed.error) item.reject(parsed.error);
+      else item.resolve(parsed.value);
+    }
+  }
+}
+
+let redisClient = null;
+let snapshotChain = Promise.resolve();
+
+function redis() {
+  if (!process.env.REDIS_URL) return Promise.reject(new Error('REDIS_URL is not set'));
+  if (!redisClient) redisClient = new RedisClient(process.env.REDIS_URL);
+  return redisClient.connect();
+}
+
+async function restoreDatabaseSnapshot() {
+  if (!process.env.REDIS_URL) return false;
+  const client = await redis();
+  const payload = await client.command(['GET', SNAPSHOT_KEY]);
+  if (!payload) return false;
+  const bytes = Buffer.from(payload, 'base64');
+  if (bytes.length < 16 || bytes.subarray(0, 15).toString() !== 'SQLite format 3') {
+    throw new Error('Redis snapshot is not a SQLite database');
+  }
+  fs.writeFileSync(dbPath, bytes);
+  ['-wal', '-shm'].forEach((suffix) => {
+    const side = dbPath + suffix;
+    if (fs.existsSync(side)) fs.unlinkSync(side);
+  });
+  return true;
+}
+
+async function writeDatabaseSnapshot() {
+  if (!process.env.REDIS_URL || !db) return;
+  const payload = db.serialize().toString('base64');
+  const client = await redis();
+  await client.command(['SET', SNAPSHOT_KEY, payload]);
+}
+
+function persistDatabaseSnapshot() {
+  if (!process.env.REDIS_URL || !db) return Promise.resolve();
+  const job = snapshotChain.then(writeDatabaseSnapshot, writeDatabaseSnapshot);
+  snapshotChain = job.catch(() => {});
+  return job;
+}
+
+async function boot() {
+  if (process.env.REDIS_URL) {
+    try {
+      const restored = await restoreDatabaseSnapshot();
+      console.log(restored ? 'Restored SQLite snapshot from Redis' : 'No Redis snapshot yet');
+    } catch (err) {
+      console.error('Redis restore skipped:', err.message);
+    }
+  }
+  db = new Database(dbPath);
+  db.pragma('foreign_keys = ON');
+  initDB();
+  if (process.env.REDIS_URL) {
+    try {
+      await persistDatabaseSnapshot();
+      console.log('Saved SQLite snapshot to Redis');
+    } catch (err) {
+      console.error('Initial Redis snapshot skipped:', err.message);
+    }
+  }
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`DT1 TMS running on port ${PORT}`);
+  });
+  let shuttingDown = false;
+  const shutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const done = () => process.exit(0);
+    const timer = setTimeout(done, 4000);
+    timer.unref();
+    persistDatabaseSnapshot()
+      .catch((err) => console.error('Shutdown snapshot failed:', err.message))
+      .finally(done);
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+}
+
+boot().catch((err) => {
+  console.error('Startup failed:', err);
+  process.exit(1);
 });

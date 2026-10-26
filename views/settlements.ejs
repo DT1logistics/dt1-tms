@@ -1,94 +1,131 @@
-<%- include('partials/open', { title: `Settlements &amp; Invoices`, user: user, active: 'settlements' }) %>
-<h1>Settlements &amp; Invoices</h1>
-<p class="muted">Driver settlements are completed and approved on Wednesdays. Invoices are drafted on Wednesdays and sent by 12:00 on Thursdays.</p>
-
-    <h2>Driver Settlements</h2>
-    <p class="muted">Driver pay is base linehaul (Qty × Rate × pay %) + Drive Time + Self Load. Fuel surcharge is not included in driver settlements. Approved loads are pending driver settlement approval and are included here for the week.</p>
-    <% if (driverSettlements && driverSettlements.length) { %>
-      <% driverSettlements.forEach(group => { %>
-        <div class="card">
-          <strong><%= group.driver %></strong>
-          — Pay <%= group.percentage != null ? group.percentage + '%' : 'not set' %>
-          — Settlement: $<%= money(group.total) %>
-          <div class="muted">Base linehaul $<%= money(group.linehaul) %> · Drive Time $<%= money(group.driveTime) %> · Self Load $<%= money(group.selfLoad) %></div>
-          <div style="margin-top:8px;font-size:14px;">
-            <% group.loads.forEach(load => { %>
-              <div>
-                <%= load.load_date || '—' %> · <%= load.ticket_number || 'No ticket' %> · <%= load.project_display || 'Unassigned' %>
-                · Qty <%= load.weight_quantity != null ? load.weight_quantity : '—' %>
-                · Rate $<%= money(load.rate) %>
-                · Linehaul $<%= money(load.linehaul) %>
-                <% if (load.driveTime > 0) { %> · Drive Time $<%= money(load.driveTime) %><% } %>
-                <% if (load.selfLoad > 0) { %> · Self Load $<%= money(load.selfLoad) %><% } %>
-                · Pay $<%= money(load.pay) %>
-              </div>
-            <% }) %>
-          </div>
+<%- include('partials/open', { title: 'Settlements', user: user, active: 'settlements' }) %>
+<h1><%= user.role === 'admin' ? 'Settlements & Invoices' : 'Settlements' %></h1>
+<% if (saved === 'week') { %><div class="all-clear">Weekly driver settlement approved. Those loads are now under Driver Settlements.</div><% } %>
+<% if (user.role === 'admin') { %>
+  <p class="muted">Approve a driver’s Monday–Sunday settlement after the loads for that week are approved. Driver pay is linehaul × pay % plus drive time and self load. Fuel surcharge is never included.</p>
+  <h2>Approve Weekly Driver Settlement</h2>
+  <% if (pendingWeeks && pendingWeeks.length) { %>
+    <% pendingWeeks.forEach(function (group) { %>
+      <div class="card">
+        <strong><%= group.driver %></strong>
+        — <%= group.week.range %>
+        — Pay <%= group.percentage != null ? group.percentage + '%' : 'not set' %>
+        — Driver Pay $<%= money(group.total) %>
+        <div class="muted"><%= group.loads.length %> approved load<%= group.loads.length === 1 ? '' : 's' %> pending settlement</div>
+        <div style="margin-top:8px;font-size:14px;">
+          <% group.loads.forEach(function (load) { %>
+            <div>
+              <%= load.load_date || '—' %> · <%= load.ticket_number || 'No ticket' %> · <%= load.project_display || 'Unassigned' %>
+              · Qty <%= load.weight_quantity != null ? load.weight_quantity : '—' %>
+              · Driver Pay $<%= money(load.payInfo.pay) %>
+            </div>
+          <% }) %>
         </div>
-      <% }) %>
-    <% } else { %>
-      <p>No approved loads yet.</p>
-    <% } %>
+        <% if (group.driverId && group.week.start) { %>
+          <form method="POST" action="/settlements/approve-week" style="margin-top:12px;">
+            <input type="hidden" name="driver_id" value="<%= group.driverId %>">
+            <input type="hidden" name="week_start" value="<%= group.week.start %>">
+            <button type="submit">Approve Weekly Driver Settlement</button>
+          </form>
+        <% } %>
+      </div>
+    <% }) %>
+  <% } else { %>
+    <p>No approved loads are waiting for weekly settlement approval.</p>
+  <% } %>
+<% } else { %>
+  <p class="muted">Approved weekly settlements and the driver pay for each load. Fuel surcharge is not included.</p>
+<% } %>
 
-    <h2>Weekly Customer Invoices</h2>
-    <p class="muted">
-      Approved loads grouped by customer and project.
-      Current EIA surcharge: <%= money(surchargePercent) %>%<% if (!fuelRate) { %> (no fuel rate saved yet)<% } %>.
-      Fuel surcharge applies only to hauling on loads marked Includes Fuel Surcharge.
-    </p>
-    <% if (customerInvoices && customerInvoices.length) { %>
-      <% customerInvoices.forEach(invoice => { %>
-        <div class="card">
-          <h3 style="margin-top:0;">Project: <%= invoice.display_name %></h3>
-          <% if (invoice.customer_name) { %>
-            <div><strong>Bill To:</strong> <%= invoice.customer_name %></div>
-            <div>Phone: <%= invoice.poc_phone || '—' %></div>
-            <div>Address: <%= invoice.address_line1 || '—' %></div>
-            <% if (invoice.address_line2) { %><div><%= invoice.address_line2 %></div><% } %>
-            <div>Email: <%= invoice.poc_email || '—' %></div>
-            <div>Terms: <%= invoice.terms || 'Net 30' %></div>
-            <% if (invoice.poc_name) { %><div class="muted">Point of Contact: <%= invoice.poc_name %></div><% } %>
-          <% } %>
-          <table>
-            <thead>
+<h2>Driver Settlements</h2>
+<% if (approvedWeeks && approvedWeeks.length) { %>
+  <% approvedWeeks.forEach(function (group) { %>
+    <div class="card">
+      <strong><%= group.driver_name %></strong>
+      — Week of <%= group.range %>
+      <% if (user.role === 'admin') { %>— Pay <%= group.pay_percentage != null ? group.pay_percentage + '%' : 'not set' %><% } %>
+      — Driver Pay $<%= money(group.total) %>
+      <div class="muted">Base $<%= money(group.base) %> · Drive Time $<%= money(group.drive) %> · Self Load $<%= money(group.self) %></div>
+      <div style="margin-top:8px;font-size:14px;">
+        <% group.loads.forEach(function (load) { %>
+          <div>
+            <%= load.load_date || '—' %> · <%= load.ticket_number || 'No ticket' %> · <%= load.project_display || 'Unassigned' %>
+            · Qty <%= load.weight_quantity != null ? load.weight_quantity : '—' %>
+            · Rate $<%= money(load.rate) %>
+            · Base $<%= money(load.payInfo.base) %>
+            <% if (load.payInfo.drive > 0) { %> · Drive Time $<%= money(load.payInfo.drive) %><% } %>
+            <% if (load.payInfo.self > 0) { %> · Self Load $<%= money(load.payInfo.self) %><% } %>
+            · Driver Pay $<%= money(load.payInfo.pay) %>
+          </div>
+        <% }) %>
+      </div>
+    </div>
+  <% }) %>
+<% } else { %>
+  <p>No approved weekly driver settlements yet.</p>
+<% } %>
+
+<% if (user.role === 'admin') { %>
+  <h2>Weekly Customer Invoices</h2>
+  <p class="muted">
+    Approved loads grouped by customer and project.
+    Current EIA surcharge: <%= money(surchargePercent) %>%<% if (!fuelRate) { %> (no fuel rate saved yet)<% } %>.
+    Fuel surcharge applies only to hauling on loads marked Includes Fuel Surcharge.
+  </p>
+  <% if (customerInvoices && customerInvoices.length) { %>
+    <% customerInvoices.forEach(function (invoice) { %>
+      <div class="card">
+        <h3 style="margin-top:0;">Project: <%= invoice.display_name %></h3>
+        <% if (invoice.customer_name) { %>
+          <div><strong>Bill To:</strong> <%= invoice.customer_name %></div>
+          <div>Phone: <%= invoice.poc_phone || '—' %></div>
+          <div>Address: <%= invoice.address_line1 || '—' %></div>
+          <% if (invoice.address_line2) { %><div><%= invoice.address_line2 %></div><% } %>
+          <div>Email: <%= invoice.poc_email || '—' %></div>
+          <div>Terms: <%= invoice.terms || 'Net 30' %></div>
+          <% if (invoice.poc_name) { %><div class="muted">Point of Contact: <%= invoice.poc_name %></div><% } %>
+        <% } %>
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Ticket #</th>
+              <th>Description</th>
+              <th class="num">Qty</th>
+              <th class="num">Rate</th>
+              <th class="num">Price</th>
+              <th class="num">Fuel Surcharge</th>
+              <th class="num">Self Load</th>
+              <th class="num">Travel Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% invoice.loads.forEach(function (load) { %>
               <tr>
-                <th>Date</th>
-                <th>Ticket #</th>
-                <th>Description</th>
-                <th class="num">Qty</th>
-                <th class="num">Rate</th>
-                <th class="num">Price</th>
-                <th class="num">Fuel Surcharge</th>
-                <th class="num">Self Load</th>
-                <th class="num">Travel Time</th>
+                <td><%= load.load_date || '—' %></td>
+                <td><%= load.ticket_number || '—' %></td>
+                <td><%= load.description || '—' %></td>
+                <td class="num"><%= load.weight_quantity != null ? load.weight_quantity : '—' %></td>
+                <td class="num">$<%= money(load.rate) %></td>
+                <td class="num">$<%= money(load.hauling) %></td>
+                <td class="num"><%= Number(load.has_fuel_surcharge) === 1 ? '$' + money(load.lineFsc) : '—' %></td>
+                <td class="num">$<%= money(load.selfLoad) %></td>
+                <td class="num">$<%= money(load.travelTime) %></td>
               </tr>
-            </thead>
-            <tbody>
-              <% invoice.loads.forEach(load => { %>
-                <tr>
-                  <td><%= load.load_date || '—' %></td>
-                  <td><%= load.ticket_number || '—' %></td>
-                  <td><%= load.description || '—' %></td>
-                  <td class="num"><%= load.weight_quantity != null ? load.weight_quantity : '—' %></td>
-                  <td class="num">$<%= money(load.rate) %></td>
-                  <td class="num">$<%= money(load.hauling) %></td>
-                  <td class="num"><%= Number(load.has_fuel_surcharge) === 1 ? '$' + money(load.lineFsc) : '—' %></td>
-                  <td class="num">$<%= money(load.selfLoad) %></td>
-                  <td class="num">$<%= money(load.travelTime) %></td>
-                </tr>
-              <% }) %>
-            </tbody>
-          </table>
-          <div class="totals">
-            <div><span>Hauling</span><span>$<%= money(invoice.hauling) %></span></div>
-            <div><span>Fuel Surcharge</span><span>$<%= money(invoice.fuelSurcharge) %></span></div>
-            <div><span>Travel Time</span><span>$<%= money(invoice.travelTime) %></span></div>
-            <div><span>Self Load</span><span>$<%= money(invoice.selfLoad) %></span></div>
-            <div class="grand"><span>TOTAL</span><span>$<%= money(invoice.total) %></span></div>
-          </div>
+            <% }) %>
+          </tbody>
+        </table>
+        <div class="totals">
+          <div><span>Hauling</span><span>$<%= money(invoice.hauling) %></span></div>
+          <div><span>Fuel Surcharge</span><span>$<%= money(invoice.fuelSurcharge) %></span></div>
+          <div><span>Travel Time</span><span>$<%= money(invoice.travelTime) %></span></div>
+          <div><span>Self Load</span><span>$<%= money(invoice.selfLoad) %></span></div>
+          <div class="grand"><span>TOTAL</span><span>$<%= money(invoice.total) %></span></div>
         </div>
-      <% }) %>
-    <% } else { %>
-      <p>No approved loads to invoice yet.</p>
-    <% } %>
+      </div>
+    <% }) %>
+  <% } else { %>
+    <p>No approved loads to invoice yet.</p>
+  <% } %>
+<% } %>
 <%- include('partials/close') %>

@@ -90,6 +90,21 @@ h2 { color: var(--navy); }
 .muted { color: var(--muted); font-size: 14px; }
 .error { color: #c0392b; margin-bottom: 12px; }
 
+.week-summary {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin: 12px 0;
+}
+.week-summary > summary {
+  cursor: pointer;
+  padding: 14px 16px;
+}
+.week-summary > summary strong { display: block; font-size: 16px; line-height: 1.35; }
+.week-summary .week-meta { color: var(--muted); font-size: 13px; margin-top: 6px; line-height: 1.45; }
+.week-summary .week-loads { padding: 0 12px 12px; }
+.pay-line { font-weight: 700; }
+
 .card, .load-card, .rate-box {
   background: white;
   border-radius: 10px;
@@ -350,32 +365,35 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   .tabbar {
     display: flex;
     position: fixed;
-    left: 12px;
-    right: 12px;
+    left: 8px;
+    right: 8px;
     bottom: 12px;
     z-index: 40;
     background: #fff;
     border-radius: 20px;
     box-shadow: 0 4px 20px rgba(15, 23, 42, 0.10);
-    padding: 8px 2px calc(8px + env(safe-area-inset-bottom));
+    padding: 7px 1px calc(7px + env(safe-area-inset-bottom));
     justify-content: space-between;
+    overflow: hidden;
   }
   .tabbar a {
-    flex: 1;
+    flex: 1 1 0;
     min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 3px;
+    gap: 2px;
     text-decoration: none;
     color: #64748b;
-    font-size: 11px;
+    font-size: 9px;
     font-weight: 600;
-    line-height: 1.15;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
     text-align: center;
   }
+  .tabbar a span { white-space: nowrap; max-width: 100%; }
   .tabbar a.active { color: #1b365d; }
-  .tabbar svg { width: 22px; height: 22px; }
+  .tabbar svg { width: 18px; height: 18px; }
   .main { margin-left: 0; padding-top: 56px; padding-bottom: 108px; }
   .content { padding: 16px 16px 8px; }
 }

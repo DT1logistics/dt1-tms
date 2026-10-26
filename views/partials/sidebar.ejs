@@ -8,6 +8,9 @@
     <a class="<%= active === 'new-load' ? 'active' : '' %>" href="/loads/new">New Load</a>
     <a class="<%= active === 'receipts' ? 'active' : '' %>" href="/receipts">Receipts</a>
     <a class="<%= active === 'fuel' ? 'active' : '' %>" href="/fuel">Fuel Log</a>
+    <% if (user.role !== 'admin') { %>
+      <a class="<%= active === 'settlements' ? 'active' : '' %>" href="/settlements">Settlements</a>
+    <% } %>
     <% if (user.role === 'admin') { %>
       <div class="nav-label">Admin</div>
       <a class="<%= active === 'customers' ? 'active' : '' %>" href="/customers">Customers &amp; Projects</a>

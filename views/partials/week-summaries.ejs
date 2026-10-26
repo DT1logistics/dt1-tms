@@ -1,0 +1,24 @@
+<% const groups = (weekGroups || []).concat(undatedLoads ? [undatedLoads] : []); %>
+<% if (!groups.length) { %>
+  <p class="muted">No loads are waiting for weekly settlement approval.</p>
+<% } %>
+<% groups.forEach(function (week) { %>
+  <details class="week-summary"<%= week.collapsed ? '' : ' open' %>>
+    <summary>
+      <strong><%= week.title %></strong>
+      <div class="week-meta">
+        <%= week.count %> load<%= week.count === 1 ? '' : 's' %>
+        · Qty/Wet Ton <%= week.qty %>
+        · Driver Pay $<%= money(week.approvedPay) %>
+        · Approved <%= week.approvedCount %>
+        · Submitted <%= week.submittedCount %>
+        · Draft <%= week.draftCount %>
+      </div>
+    </summary>
+    <div class="week-loads">
+      <% week.loads.forEach(function (load) { %>
+        <%- include('load-card', { load: load, user: user }) %>
+      <% }) %>
+    </div>
+  </details>
+<% }) %>
