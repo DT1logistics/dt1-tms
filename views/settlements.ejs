@@ -46,6 +46,9 @@
       <% if (user.role === 'admin') { %>— Pay <%= group.pay_percentage != null ? group.pay_percentage + '%' : 'not set' %><% } %>
       — Driver Pay $<%= money(group.total) %>
       <div class="muted">Base $<%= money(group.base) %> · Drive Time $<%= money(group.drive) %> · Self Load $<%= money(group.self) %></div>
+      <% if (group.approved_by_name) { %>
+        <div class="muted">Approved by <%= group.approved_by_name %><% if (group.approved_at) { %> on <%= auditStamp(group.approved_at) %><% } %></div>
+      <% } %>
       <div style="margin-top:8px;font-size:14px;">
         <% group.loads.forEach(function (load) { %>
           <div>
