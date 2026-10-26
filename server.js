@@ -46,6 +46,33 @@ function getStatusText(exp) {
 app.locals.getStatusClass = getStatusClass;
 app.locals.getStatusText = getStatusText;
 
+function loadStatusLabel(status) {
+  if (status === 'approved') return 'Approved (Pending Settlement)';
+  if (status === 'submitted') return 'Submitted';
+  if (status === 'draft') return 'Draft';
+  return status || 'Draft';
+}
+
+function settlementWeekLabel(dateStr) {
+  if (!dateStr) return '';
+  const date = new Date(`${dateStr}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return '';
+  const monday = new Date(date);
+  monday.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+  return `week of ${monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+}
+
+function ticketFileKind(name) {
+  const ext = path.extname(String(name || '')).toLowerCase();
+  if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'].includes(ext)) return 'image';
+  if (ext === '.pdf') return 'pdf';
+  return 'file';
+}
+
+app.locals.loadStatusLabel = loadStatusLabel;
+app.locals.settlementWeekLabel = settlementWeekLabel;
+app.locals.ticketFileKind = ticketFileKind;
+
 app.use((req, res, next) => {
   const png = path.join(__dirname, 'public', 'logo.png');
   res.locals.logoSrc = fs.existsSync(png) ? '/logo.png' : '/logo.svg';
@@ -213,6 +240,10 @@ function initDB() {
       truck_id INTEGER,
       project_id INTEGER,
       description TEXT,
+      origin TEXT,
+      destination TEXT,
+      notes TEXT,
+      rejection_reason TEXT,
       weight_quantity REAL,
       rate REAL DEFAULT 0,
       has_fuel_surcharge INTEGER DEFAULT 0,
@@ -326,6 +357,10 @@ function initDB() {
   ensureColumn('loads', 'drive_time_amount', 'REAL DEFAULT 0');
   ensureColumn('loads', 'has_self_load', 'INTEGER DEFAULT 0');
   ensureColumn('loads', 'self_load_amount', 'REAL DEFAULT 0');
+  ensureColumn('loads', 'origin', 'TEXT');
+  ensureColumn('loads', 'destination', 'TEXT');
+  ensureColumn('loads', 'notes', 'TEXT');
+  ensureColumn('loads', 'rejection_reason', 'TEXT');
   ensureColumn('equipment', 'registration_expiration', 'DATE');
   ensureColumn('equipment', 'inspection_expiration', 'DATE');
   ensureColumn('equipment', 'maintenance_status', "TEXT DEFAULT 'active'");
@@ -916,12 +951,16 @@ app.post('/projects/:id', requireAdmin, (req, res) => {
 });
 
 // Loads routes
+function ticketRows(loadId) {
+  return db.prepare('SELECT id, load_id, filename, original_name, category FROM documents WHERE load_id = ? ORDER BY id').all(loadId);
+}
+
 function attachTickets(loads) {
-  const files = db.prepare('SELECT load_id, original_name FROM documents ORDER BY id').all();
+  const files = db.prepare('SELECT id, load_id, filename, original_name FROM documents ORDER BY id').all();
   const byLoad = {};
   files.forEach((file) => {
     if (!byLoad[file.load_id]) byLoad[file.load_id] = [];
-    byLoad[file.load_id].push(file.original_name);
+    byLoad[file.load_id].push(file);
   });
   loads.forEach((load) => {
     load.tickets = byLoad[load.id] || [];
@@ -929,20 +968,107 @@ function attachTickets(loads) {
   return loads;
 }
 
+function canViewLoad(req, load) {
+  if (!req.session.user || !load) return false;
+  if (req.session.user.role === 'admin') return true;
+  return String(load.driver_id) === String(req.session.user.id);
+}
+
+function fileContentType(name) {
+  const ext = path.extname(String(name || '')).toLowerCase();
+  const types = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.bmp': 'image/bmp',
+    '.pdf': 'application/pdf',
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xls': 'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  };
+  return types[ext] || 'application/octet-stream';
+}
+
+function safeDownloadName(name) {
+  return String(name || 'ticket').replace(/[\r\n"]/g, '') || 'ticket';
+}
+
+function storedTicketPath(file) {
+  if (!file || !file.filename) return null;
+  const root = path.resolve(uploadDir);
+  const full = path.resolve(root, path.basename(file.filename));
+  if (full !== root && !full.startsWith(root + path.sep)) return null;
+  return full;
+}
+
+function removeStoredTicket(file) {
+  if (!file) return;
+  const full = storedTicketPath(file);
+  db.prepare('DELETE FROM documents WHERE id = ?').run(file.id);
+  if (full && fs.existsSync(full)) fs.unlinkSync(full);
+}
+
+function removeSelectedTickets(loadId, body) {
+  const raw = body.remove_tickets;
+  const ids = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+  ids.forEach((id) => {
+    const file = db.prepare('SELECT * FROM documents WHERE id = ? AND load_id = ?').get(id, loadId);
+    if (file) removeStoredTicket(file);
+  });
+}
+
 app.get('/loads', requireAuth, (req, res) => {
   const loads = req.session.user.role === 'admin'
     ? db.prepare(loadQuery + ' ORDER BY l.created_at DESC').all()
     : db.prepare(loadQuery + ' WHERE l.driver_id = ? ORDER BY l.created_at DESC').all(req.session.user.id);
-  res.render('loads', { user: req.session.user, loads: attachTickets(loads) });
+  res.render('loads', { user: req.session.user, loads: attachTickets(loads), deleted: req.query.deleted === '1' });
 });
 
 app.post('/loads/:id/approve', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/loads');
-  db.prepare(`
-    UPDATE loads SET status = 'approved', approved_by = ?, approved_at = CURRENT_TIMESTAMP
+  const result = db.prepare(`
+    UPDATE loads
+    SET status = 'approved', approved_by = ?, approved_at = CURRENT_TIMESTAMP, rejection_reason = NULL
     WHERE id = ? AND status = 'submitted'
   `).run(req.session.user.id, req.params.id);
-  res.redirect('/loads');
+  res.redirect(`/loads/${req.params.id}${result.changes ? '?saved=approved' : ''}`);
+});
+
+app.post('/loads/:id/reject', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/loads');
+  const reason = String(req.body.rejection_reason || '').trim();
+  const result = db.prepare(`
+    UPDATE loads
+    SET status = 'draft', rejection_reason = ?, approved_by = NULL, approved_at = NULL
+    WHERE id = ? AND status IN ('submitted', 'approved')
+  `).run(reason || null, req.params.id);
+  res.redirect(`/loads/${req.params.id}${result.changes ? '?saved=rejected' : ''}`);
+});
+
+app.post('/loads/:id/delete', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/loads');
+  const load = db.prepare('SELECT id FROM loads WHERE id = ?').get(req.params.id);
+  if (!load) return res.redirect('/loads');
+  ticketRows(load.id).forEach((file) => removeStoredTicket(file));
+  db.prepare('DELETE FROM documents WHERE load_id = ?').run(load.id);
+  db.prepare('DELETE FROM loads WHERE id = ?').run(load.id);
+  res.redirect('/loads?deleted=1');
+});
+
+app.get('/loads/:id/files/:fileId', requireAuth, (req, res) => {
+  const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+  if (!canViewLoad(req, load)) return res.status(404).send('Not found');
+  const file = db.prepare('SELECT * FROM documents WHERE id = ? AND load_id = ?').get(req.params.fileId, load.id);
+  if (!file || !file.filename) return res.status(404).send('Not found');
+  const full = storedTicketPath(file);
+  if (!full || !fs.existsSync(full)) return res.status(404).send('Not found');
+  const download = req.query.download === '1' || ticketFileKind(file.original_name || file.filename) === 'file';
+  res.setHeader('Content-Type', fileContentType(file.original_name || file.filename));
+  res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${safeDownloadName(file.original_name || file.filename)}"`);
+  res.sendFile(full);
 });
 
 function findActiveProject(projectId) {
@@ -1004,6 +1130,9 @@ function buildLoadValues(req, project) {
     truck_id: truck ? truck.id : null,
     project_id: project ? project.id : null,
     description: blankToNull(req.body.description),
+    origin: blankToNull(req.body.origin),
+    destination: blankToNull(req.body.destination),
+    notes: blankToNull(req.body.notes),
     weight: Number.isFinite(weight) ? weight : null,
     rate,
     hasFuel,
@@ -1027,18 +1156,18 @@ function saveTicketFiles(loadId, files, userId) {
   });
 }
 
-function editableDraft(req, id) {
+function editableLoad(req, id) {
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(id);
-  if (!load || load.status !== 'draft') return null;
-  if (req.session.user.role !== 'admin' && String(load.driver_id) !== String(req.session.user.id)) return null;
+  if (!load) return null;
+  if (req.session.user.role === 'admin') return load;
+  if (load.status !== 'draft') return null;
+  if (String(load.driver_id) !== String(req.session.user.id)) return null;
   return load;
 }
 
 function renderLoadForm(req, res, status, load, error) {
   const form = loadFormData(req.session.user);
-  const tickets = load && load.id
-    ? db.prepare('SELECT original_name FROM documents WHERE load_id = ? ORDER BY id').all(load.id)
-    : [];
+  const tickets = load && load.id ? ticketRows(load.id) : [];
   return res.status(status).render('load-form', {
     user: req.session.user,
     load,
@@ -1054,12 +1183,29 @@ app.get('/loads/new', requireAuth, (req, res) => {
 });
 
 app.get('/loads/:id/edit', requireAuth, (req, res) => {
-  const existing = editableDraft(req, req.params.id);
+  const existing = editableLoad(req, req.params.id);
   if (!existing) return res.redirect('/loads');
   const load = db.prepare(loadQuery + ' WHERE l.id = ?').get(existing.id);
-  const tickets = db.prepare('SELECT original_name FROM documents WHERE load_id = ? ORDER BY id').all(existing.id);
   const form = loadFormData(req.session.user);
-  res.render('load-form', { user: req.session.user, load, tickets, ...form });
+  res.render('load-form', { user: req.session.user, load, tickets: ticketRows(existing.id), ...form });
+});
+
+app.get('/loads/:id', requireAuth, (req, res) => {
+  const existing = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+  if (!canViewLoad(req, existing)) return res.redirect('/loads');
+  const load = db.prepare(loadQuery + ' WHERE l.id = ?').get(existing.id);
+  const form = loadFormData(req.session.user);
+  if (load.project_id && !form.projects.some((project) => String(project.id) === String(load.project_id))) {
+    const current = db.prepare('SELECT * FROM projects WHERE id = ?').get(load.project_id);
+    if (current) form.projects = [current].concat(form.projects);
+  }
+  res.render('load-review', {
+    user: req.session.user,
+    load,
+    tickets: ticketRows(load.id),
+    saved: req.query.saved || '',
+    ...form
+  });
 });
 
 app.post('/loads', requireAuth, upload.array('tickets', 10), (req, res) => {
@@ -1070,10 +1216,10 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), (req, res) => {
   const values = buildLoadValues(req, project);
   const result = db.prepare(`
     INSERT INTO loads (
-      ticket_number, load_date, driver_id, truck_id, project_id, description, weight_quantity,
+      ticket_number, load_date, driver_id, truck_id, project_id, description, origin, destination, notes, weight_quantity,
       rate, has_fuel_surcharge, has_drive_time, drive_time_amount, has_self_load, self_load_amount,
       status, submitted_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     values.ticket_number,
     values.load_date,
@@ -1081,6 +1227,9 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), (req, res) => {
     values.truck_id,
     values.project_id,
     values.description,
+    values.origin,
+    values.destination,
+    values.notes,
     values.weight,
     values.rate,
     values.hasFuel,
@@ -1096,19 +1245,24 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), (req, res) => {
 });
 
 app.post('/loads/:id', requireAuth, upload.array('tickets', 10), (req, res) => {
-  const existing = editableDraft(req, req.params.id);
+  const existing = editableLoad(req, req.params.id);
   if (!existing) return res.redirect('/loads');
+  const isAdmin = req.session.user.role === 'admin';
+  const keepStatus = isAdmin && req.body.action === 'save';
   const project = findActiveProject(req.body.project_id);
-  if (!project && req.body.action !== 'draft') {
+  if (!project && !keepStatus && req.body.action !== 'draft') {
     return renderLoadForm(req, res, 400, { ...existing, ...req.body, id: existing.id }, 'Select an active project');
   }
   const values = buildLoadValues(req, project);
+  const status = keepStatus ? existing.status : values.status;
+  const rejectionReason = status === 'submitted' ? null : (existing.rejection_reason || null);
   db.prepare(`
     UPDATE loads
     SET ticket_number = ?, load_date = ?, driver_id = ?, truck_id = ?, project_id = ?, description = ?,
+        origin = ?, destination = ?, notes = ?,
         weight_quantity = ?, rate = ?, has_fuel_surcharge = ?, has_drive_time = ?, drive_time_amount = ?,
-        has_self_load = ?, self_load_amount = ?, status = ?
-    WHERE id = ? AND status = 'draft'
+        has_self_load = ?, self_load_amount = ?, status = ?, rejection_reason = ?
+    WHERE id = ? ${isAdmin ? '' : "AND status = 'draft'"}
   `).run(
     values.ticket_number,
     values.load_date,
@@ -1116,6 +1270,9 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), (req, res) => {
     values.truck_id,
     values.project_id,
     values.description,
+    values.origin,
+    values.destination,
+    values.notes,
     values.weight,
     values.rate,
     values.hasFuel,
@@ -1123,11 +1280,13 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), (req, res) => {
     values.driveAmount,
     values.hasSelf,
     values.selfAmount,
-    values.status,
+    status,
+    rejectionReason,
     existing.id
   );
+  removeSelectedTickets(existing.id, req.body);
   saveTicketFiles(existing.id, req.files, req.session.user.id);
-  res.redirect('/loads');
+  res.redirect(isAdmin ? `/loads/${existing.id}?saved=edited` : '/loads');
 });
 
 // Admin: Drivers management

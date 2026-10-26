@@ -1,41 +1,66 @@
 <%- include('partials/open', { title: `Loads`, user: user, active: 'loads' }) %>
 <h1>Loads</h1>
 <a href="/loads/new" class="btn">+New Load</a>
-    <% if (loads.length === 0) { %>
-      <p>No loads yet.</p>
-    <% } else { %>
-      <% loads.forEach(load => { %>
-        <% const qty = Number(load.weight_quantity) || 0; %>
-        <% const rate = Number(load.rate) || 0; %>
-        <% const baseHauling = qty * rate; %>
-        <div class="load-card">
-          <div><strong><%= load.ticket_number || 'No Ticket' %></strong> <span class="status <%= load.status %>"><%= load.status %></span></div>
-          <div>Date: <%= load.load_date || '—' %></div>
-          <div>Project: <%= load.project_display || '—' %></div>
-          <div>Description: <%= load.description || '—' %></div>
-          <div>Qty/Wet Ton: <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
-          <div>Rate: $<%= money(rate) %></div>
-          <div>Load Total: $<%= money(baseHauling) %></div>
-          <% if (user.role === 'admin') { %>
-            <div>Fuel Surcharge: <%= Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No' %></div>
-          <% } %>
-          <div>Load Ticket/BOL: <%= load.tickets && load.tickets.length ? load.tickets.join(', ') : 'None' %></div>
-          <% if (load.status === 'draft') { %>
-            <p><a href="/loads/<%= load.id %>/edit">Continue draft</a></p>
-          <% } %>
-          <% if (Number(load.drive_time_amount) > 0) { %>
-            <div>Drive Time: $<%= money(load.drive_time_amount) %></div>
-          <% } %>
-          <% if (Number(load.self_load_amount) > 0) { %>
-            <div>Self Load: $<%= money(load.self_load_amount) %></div>
-          <% } %>
-          <% if (user.role === 'admin') { %><div class="muted">Driver: <%= load.driver_name || 'Unassigned' %></div><% } %>
-          <% if (user.role === 'admin' && load.status === 'submitted') { %>
-            <form method="POST" action="/loads/<%= load.id %>/approve" style="margin-top:8px;">
-              <button type="submit" style="background:#155724;color:white;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;">Approve</button>
-            </form>
-          <% } %>
-        </div>
-      <% }) %>
-    <% } %>
+<% if (typeof deleted !== 'undefined' && deleted) { %><div class="all-clear">Load deleted.</div><% } %>
+<% if (loads.length === 0) { %>
+  <p>No loads yet.</p>
+<% } else { %>
+  <% loads.forEach(load => { %>
+    <% const qty = Number(load.weight_quantity) || 0; %>
+    <% const rate = Number(load.rate) || 0; %>
+    <% const baseHauling = qty * rate; %>
+    <div class="load-card">
+      <div>
+        <strong><%= load.ticket_number || 'No Ticket' %></strong>
+        <span class="status <%= load.status %>"><%= loadStatusLabel(load.status) %></span>
+      </div>
+      <% if (load.status === 'approved') { %>
+        <div class="muted">Pending Driver Settlement Approval<%= load.load_date ? ' · ' + settlementWeekLabel(load.load_date) : '' %></div>
+      <% } %>
+      <% if (load.status === 'draft' && load.rejection_reason) { %>
+        <div class="reject-note"><strong>Rejected — needs a fix:</strong> <%= load.rejection_reason %></div>
+      <% } %>
+      <div>Date: <%= load.load_date || '—' %></div>
+      <div>Project: <%= load.project_display || '—' %></div>
+      <% if (load.origin || load.destination) { %>
+        <div>Origin: <%= load.origin || '—' %> · Destination: <%= load.destination || '—' %></div>
+      <% } %>
+      <div>Description: <%= load.description || '—' %></div>
+      <div>Qty/Wet Ton: <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
+      <div>Rate: $<%= money(rate) %></div>
+      <div>Load Total: $<%= money(baseHauling) %></div>
+      <% if (user.role === 'admin') { %>
+        <div>Fuel Surcharge: <%= Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No' %></div>
+      <% } %>
+      <div>Load Ticket/BOL:
+        <% if (load.tickets && load.tickets.length) { %>
+          <ul class="ticket-names">
+            <% load.tickets.forEach(function (ticket) { %>
+              <li>
+                <%= ticket.original_name || 'Ticket' %>
+                <a href="/loads/<%= load.id %>/files/<%= ticket.id %>" target="_blank" rel="noopener">View</a>
+                <a href="/loads/<%= load.id %>/files/<%= ticket.id %>?download=1">Download</a>
+              </li>
+            <% }) %>
+          </ul>
+        <% } else { %>
+          None
+        <% } %>
+      </div>
+      <% if (Number(load.drive_time_amount) > 0) { %>
+        <div>Drive Time: $<%= money(load.drive_time_amount) %></div>
+      <% } %>
+      <% if (Number(load.self_load_amount) > 0) { %>
+        <div>Self Load: $<%= money(load.self_load_amount) %></div>
+      <% } %>
+      <% if (user.role === 'admin') { %><div class="muted">Driver: <%= load.driver_name || 'Unassigned' %></div><% } %>
+      <p>
+        <a href="/loads/<%= load.id %>">Review</a>
+        <% if (load.status === 'draft' && (user.role === 'admin' || String(load.driver_id) === String(user.id))) { %>
+          · <a href="/loads/<%= load.id %>/edit">Continue draft</a>
+        <% } %>
+      </p>
+    </div>
+  <% }) %>
+<% } %>
 <%- include('partials/close') %>

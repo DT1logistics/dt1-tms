@@ -1,0 +1,155 @@
+<%- include('partials/open', { title: 'Review Load', user: user, active: 'loads', headerTitle: 'Review Load', backHref: '/loads' }) %>
+<h1>Review Load</h1>
+<p>
+  <span class="status <%= load.status %>"><%= loadStatusLabel(load.status) %></span>
+  <% if (load.status === 'approved') { %>
+    <span class="muted">Pending Driver Settlement Approval<%= load.load_date ? ' · ' + settlementWeekLabel(load.load_date) : '' %></span>
+  <% } %>
+</p>
+<% if (saved === 'approved') { %><div class="all-clear">Load approved. It is pending driver settlement approval<%= load.load_date ? ' for the ' + settlementWeekLabel(load.load_date) : '' %>.</div><% } %>
+<% if (saved === 'rejected') { %><div class="reject-note">Load sent back to the driver as a draft.</div><% } %>
+<% if (saved === 'edited') { %><div class="all-clear">Load saved.</div><% } %>
+<% if (load.status === 'draft' && load.rejection_reason) { %>
+  <div class="reject-note"><strong>Rejection reason:</strong> <%= load.rejection_reason %></div>
+<% } %>
+
+<div class="card">
+  <div><strong>Ticket #</strong> <%= load.ticket_number || '—' %></div>
+  <div><strong>Date</strong> <%= load.load_date || '—' %></div>
+  <div><strong>Driver</strong> <%= load.driver_name || 'Unassigned' %></div>
+  <div><strong>Project</strong> <%= load.project_display || '—' %></div>
+  <div><strong>Origin</strong> <%= load.origin || '—' %></div>
+  <div><strong>Destination</strong> <%= load.destination || '—' %></div>
+  <div><strong>Qty/Wet Ton</strong> <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
+  <div><strong>Rate</strong> $<%= money(load.rate) %></div>
+  <div><strong>Load Total</strong> $<%= money((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) %></div>
+  <div><strong>Fuel Surcharge</strong> <%= Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No' %></div>
+  <div><strong>Drive Time</strong> <%= Number(load.has_drive_time) === 1 ? '$' + money(load.drive_time_amount) : 'No' %></div>
+  <div><strong>Self Load</strong> <%= Number(load.has_self_load) === 1 ? '$' + money(load.self_load_amount) : 'No' %></div>
+  <div><strong>Description</strong> <%= load.description || '—' %></div>
+  <div><strong>Notes</strong> <%= load.notes || '—' %></div>
+</div>
+
+<div class="card">
+  <h2>Load Ticket/BOL</h2>
+  <% if (!tickets.length) { %>
+    <p>No ticket or BOL uploaded.</p>
+  <% } %>
+  <% tickets.forEach(function (ticket) { %>
+    <% const kind = ticketFileKind(ticket.original_name || ticket.filename); %>
+    <% const fileUrl = '/loads/' + load.id + '/files/' + ticket.id; %>
+    <div class="ticket-preview">
+      <strong><%= ticket.original_name || 'Ticket' %></strong>
+      <div class="ticket-links">
+        <a href="<%= fileUrl %>" target="_blank" rel="noopener">View</a>
+        <a href="<%= fileUrl %>?download=1">Download</a>
+      </div>
+      <% if (kind === 'image') { %>
+        <img src="<%= fileUrl %>" alt="<%= ticket.original_name || 'Load ticket' %>">
+      <% } else if (kind === 'pdf') { %>
+        <iframe src="<%= fileUrl %>" title="<%= ticket.original_name || 'Load ticket' %>"></iframe>
+      <% } else { %>
+        <p class="muted">Open or download this file to review it.</p>
+      <% } %>
+    </div>
+  <% }) %>
+</div>
+
+<% if (user.role === 'admin') { %>
+  <div class="card">
+    <h2>Edit Load</h2>
+    <form method="POST" action="/loads/<%= load.id %>" enctype="multipart/form-data">
+      <label>Load Date</label>
+      <input type="date" name="load_date" value="<%= load.load_date || '' %>">
+      <label>Ticket Number</label>
+      <input type="text" name="ticket_number" value="<%= load.ticket_number || '' %>">
+      <label>Project</label>
+      <select name="project_id">
+        <option value="">-- Select Project --</option>
+        <% (projects || []).forEach(function (project) { %>
+          <option value="<%= project.id %>" <%= String(load.project_id) === String(project.id) ? 'selected' : '' %>><%= project.display_name %></option>
+        <% }) %>
+      </select>
+      <label>Origin</label>
+      <input type="text" name="origin" value="<%= load.origin || '' %>">
+      <label>Destination</label>
+      <input type="text" name="destination" value="<%= load.destination || '' %>">
+      <label>Description</label>
+      <textarea name="description" rows="3"><%= load.description || '' %></textarea>
+      <label>Notes</label>
+      <textarea name="notes" rows="3"><%= load.notes || '' %></textarea>
+      <% if (trucks && trucks.length) { %>
+        <label>Truck</label>
+        <select name="truck_id">
+          <option value="">-- No truck --</option>
+          <% trucks.forEach(function (truck) { %>
+            <option value="<%= truck.id %>" <%= String(load.truck_id) === String(truck.id) ? 'selected' : '' %>><%= truck.number %><%= truck.description ? ' — ' + truck.description : '' %></option>
+          <% }) %>
+        </select>
+      <% } %>
+      <label>Qty/Wet Ton</label>
+      <input type="number" step="0.01" name="weight_quantity" value="<%= load.weight_quantity != null ? load.weight_quantity : '' %>">
+      <label>Rate ($)</label>
+      <input type="number" step="0.01" name="rate" value="<%= load.rate != null && load.rate !== '' ? load.rate : '' %>">
+      <div class="check">
+        <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
+        <label for="has_fuel_surcharge">Includes Fuel Surcharge</label>
+      </div>
+      <div class="check">
+        <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
+        <label for="has_drive_time">Includes Drive Time</label>
+      </div>
+      <label>Drive Time Amount ($)</label>
+      <input type="number" step="0.01" name="drive_time_amount" value="<%= load.drive_time_amount != null ? load.drive_time_amount : '0.00' %>">
+      <div class="check">
+        <input type="checkbox" name="has_self_load" id="has_self_load" value="1" <%= load.has_self_load ? 'checked' : '' %>>
+        <label for="has_self_load">Self Load</label>
+      </div>
+      <label>Self Load Amount ($)</label>
+      <input type="number" step="0.01" name="self_load_amount" value="<%= load.self_load_amount != null ? load.self_load_amount : '0.00' %>">
+      <% if (drivers && drivers.length) { %>
+        <label>Assign Driver</label>
+        <select name="driver_id">
+          <option value="">-- Select Driver --</option>
+          <% drivers.forEach(function (driver) { %>
+            <option value="<%= driver.id %>" <%= String(load.driver_id) === String(driver.id) ? 'selected' : '' %>><%= driver.name %></option>
+          <% }) %>
+        </select>
+      <% } %>
+      <% if (tickets.length) { %>
+        <label>Remove uploaded ticket/BOL</label>
+        <% tickets.forEach(function (ticket) { %>
+          <div class="check">
+            <input type="checkbox" name="remove_tickets" value="<%= ticket.id %>" id="remove-<%= ticket.id %>">
+            <label for="remove-<%= ticket.id %>">Remove <%= ticket.original_name || 'file' %></label>
+          </div>
+        <% }) %>
+      <% } %>
+      <label>Add ticket/BOL files</label>
+      <input type="file" name="tickets" accept="image/*,application/pdf,.pdf,.doc,.docx,.xls,.xlsx" multiple>
+      <button type="submit" name="action" value="save">Save Changes</button>
+    </form>
+  </div>
+
+  <div class="review-actions">
+    <% if (load.status === 'submitted') { %>
+      <form method="POST" action="/loads/<%= load.id %>/approve">
+        <button class="approve" type="submit">Approve</button>
+      </form>
+    <% } %>
+    <% if (load.status === 'submitted' || load.status === 'approved') { %>
+      <form method="POST" action="/loads/<%= load.id %>/reject" onsubmit="return confirm('Send this load back to the driver as a draft?');">
+        <label>Rejection reason</label>
+        <textarea name="rejection_reason" rows="3" placeholder="Tell the driver what to fix"></textarea>
+        <button class="danger" type="submit">Reject to Draft</button>
+      </form>
+    <% } %>
+    <form method="POST" action="/loads/<%= load.id %>/delete" onsubmit="return confirm('Delete this load? This cannot be undone.');">
+      <button class="danger" type="submit">Delete Load</button>
+    </form>
+  </div>
+<% } else if (load.status === 'draft') { %>
+  <p><a class="btn" href="/loads/<%= load.id %>/edit">Edit Draft</a></p>
+<% } %>
+<p><a href="/loads">Back to Loads</a></p>
+<%- include('partials/close') %>
