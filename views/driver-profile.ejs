@@ -105,6 +105,7 @@
 </div>
 <div class="card">
   <h2>Welcome Email &amp; Text</h2>
+  <p><a class="btn btn-secondary" href="/communications?driver_id=<%= driver.id %>">Message Driver</a></p>
   <p class="muted">Send this driver their login and the steps to save the DT1 Logistics app on their phone. If their temporary password is no longer on file, a new one is created.</p>
   <form class="welcome-actions" method="POST" action="/drivers/<%= driver.id %>/send-welcome">
     <button type="submit" name="channel" value="both">Send Welcome Email &amp; Text</button>

@@ -1,0 +1,187 @@
+<%- include('partials/open', { title: 'Communications', user: user, active: 'communications' }) %>
+<h1>Communications</h1>
+<p class="muted">Email and text drivers the same message, one driver at a time. Nothing is sent as a group email or a group text.</p>
+
+<% if (error) { %><div class="error"><%= error %></div><% } %>
+
+<div class="card" id="notification-settings">
+  <p>SMTP Email: <span class="badge <%= notifications.email ? 'green' : 'yellow' %>"><%= notifications.email ? 'Connected' : 'Not configured' %></span>
+  Twilio / SMS gateway: <span class="badge <%= notifications.sms ? 'green' : 'yellow' %>"><%= notifications.sms ? 'Connected' : 'Not configured' %></span></p>
+  <p class="muted">If automatic delivery is off, use Open Email and Open SMS on the results below. Each link opens that one driver's message.</p>
+</div>
+
+<% if (results && results.length) { %>
+  <div class="card comm-result">
+    <h2>Messages sent individually</h2>
+    <p class="muted">Each driver below received their own email and their own text. Other drivers' addresses were not included.</p>
+    <% results.forEach(function (row) { %>
+      <div class="card">
+        <strong><%= row.driver_name %></strong>
+        <div class="muted"><%= row.driver_email || 'No email' %> · <%= row.driver_phone || 'No phone' %></div>
+        <div>Channels: <%= row.channels %></div>
+        <div>Email: <span class="badge <%= row.email_status === 'Sent' ? 'green' : (row.email_status === 'Could not send' ? 'red' : 'yellow') %>"><%= row.email_status %></span></div>
+        <div>Text: <span class="badge <%= (row.sms_status === 'Sent' || String(row.sms_status).indexOf('Sent via') === 0) ? 'green' : (row.sms_status === 'Could not send' || row.sms_status === 'No phone number on file' ? 'red' : 'yellow') %>"><%= row.sms_status %></span></div>
+        <p class="muted">Subject: <%= row.subject || '—' %></p>
+        <pre class="sms-preview"><%= row.message_body %></pre>
+        <div class="welcome-actions">
+          <a class="btn btn-secondary" href="<%= row.mailto %>">Open Email</a>
+          <a class="btn btn-secondary" href="<%= row.smsHref %>">Open SMS</a>
+          <button type="button" class="copy-message">Copy</button>
+        </div>
+        <textarea class="message-source" readonly><%= row.message_body %></textarea>
+      </div>
+    <% }) %>
+  </div>
+<% } %>
+
+<form method="POST" action="/communications/send" id="comm-form">
+  <div class="card">
+    <h2>Recipients</h2>
+    <p class="muted">Each selected driver receives their own individual Email and individual Text Message (never a group thread). You can use <code>{{name}}</code> or <code>{{first_name}}</code> to personalize the greeting for each driver.</p>
+    <div class="comm-toolbar">
+      <button type="button" id="select-all-active">Select All Active Drivers</button>
+      <button type="button" id="clear-selection" class="btn-draft">Clear Selection</button>
+    </div>
+    <div class="driver-checklist" data-driver-group="active">
+      <% if (!activeDrivers.length) { %><p>No active drivers.</p><% } %>
+      <% activeDrivers.forEach(function (driver) { %>
+        <label class="driver-check">
+          <input class="driver-pick" type="checkbox" name="driver_ids" value="<%= driver.id %>" <%= selectedIds.indexOf(String(driver.id)) !== -1 ? 'checked' : '' %>>
+          <span>
+            <strong><%= driver.name || 'Unnamed' %></strong>
+            <span class="muted"><%= driver.email || 'No email' %> · <%= driver.phone || 'No phone' %></span>
+          </span>
+        </label>
+      <% }) %>
+    </div>
+    <label class="check">
+      <input type="checkbox" name="show_inactive" id="show-inactive" value="1" <%= showInactive ? 'checked' : '' %>>
+      <span>Show inactive drivers</span>
+    </label>
+    <div id="inactive-drivers" <%= showInactive ? '' : 'hidden' %>>
+      <h3>Inactive Drivers</h3>
+      <div class="driver-checklist" data-driver-group="inactive">
+        <% if (!inactiveDrivers.length) { %><p>No inactive drivers.</p><% } %>
+        <% inactiveDrivers.forEach(function (driver) { %>
+          <label class="driver-check">
+            <input class="driver-pick" type="checkbox" name="driver_ids" value="<%= driver.id %>" <%= selectedIds.indexOf(String(driver.id)) !== -1 ? 'checked' : '' %>>
+            <span>
+              <strong><%= driver.name || 'Unnamed' %> (Inactive)</strong>
+              <span class="muted"><%= driver.email || 'No email' %> · <%= driver.phone || 'No phone' %></span>
+            </span>
+          </label>
+        <% }) %>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Delivery</h2>
+    <label class="check">
+      <input type="checkbox" name="send_email" value="1" <%= sendEmail ? 'checked' : '' %>>
+      <span>Send Email</span>
+    </label>
+    <label class="check">
+      <input type="checkbox" name="send_sms" value="1" <%= sendSms ? 'checked' : '' %>>
+      <span>Send Text Message (SMS)</span>
+    </label>
+    <p class="muted">Leave both checked to send each driver their own email and their own text. Uncheck one to send email only or text only.</p>
+  </div>
+
+  <div class="card">
+    <h2>Message</h2>
+    <label for="subject">Subject Line</label>
+    <input id="subject" type="text" name="subject" value="<%= subject %>">
+    <div class="preset-row">
+      <% presets.forEach(function (preset) { %>
+        <button type="button" class="subject-preset" data-subject="<%= preset %>"><%= preset.replace('DT1 Logistics — ', '') %></button>
+      <% }) %>
+    </div>
+    <label for="message">Message Body</label>
+    <textarea id="message" name="message" rows="8" placeholder="Hi {{first_name}}, ..."><%= message %></textarea>
+    <button type="submit">Send to Selected Drivers</button>
+  </div>
+</form>
+
+<div class="card comm-log">
+  <h2>Recent Communications Log</h2>
+  <% if (!log.length) { %>
+    <p class="muted">No messages have been sent yet.</p>
+  <% } else { %>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Date/Time</th>
+            <th>Sent By</th>
+            <th>Driver</th>
+            <th>Channels</th>
+            <th>Subject / Message</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% log.forEach(function (row) { %>
+            <tr>
+              <td><%= auditStamp(row.created_at) %></td>
+              <td><%= row.sent_by_name || '—' %></td>
+              <td><%= row.driver_name %><div class="muted"><%= row.driver_email || '' %></div></td>
+              <td><%= row.channels %></td>
+              <td><strong><%= row.subject || '—' %></strong><div class="muted"><%= row.preview %></div></td>
+              <td>
+                <div>Email <span class="badge <%= row.email_status === 'Sent' ? 'green' : (row.email_status === 'Could not send' ? 'red' : 'yellow') %>"><%= row.email_status %></span></div>
+                <div>Text <span class="badge <%= (row.sms_status === 'Sent' || String(row.sms_status).indexOf('Sent via') === 0) ? 'green' : (row.sms_status === 'Could not send' ? 'red' : 'yellow') %>"><%= row.sms_status %></span></div>
+              </td>
+              <td>
+                <a href="<%= row.mailto %>">Open Email</a><br>
+                <a href="<%= row.smsHref %>">Open SMS</a>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    </div>
+  <% } %>
+</div>
+<script>
+  var inactive = document.getElementById('inactive-drivers');
+  var showInactive = document.getElementById('show-inactive');
+  if (showInactive && inactive) {
+    showInactive.addEventListener('change', function () {
+      inactive.hidden = !showInactive.checked;
+    });
+  }
+  document.getElementById('select-all-active').addEventListener('click', function () {
+    document.querySelectorAll('[data-driver-group="active"] .driver-pick').forEach(function (box) { box.checked = true; });
+  });
+  document.getElementById('clear-selection').addEventListener('click', function () {
+    document.querySelectorAll('.driver-pick').forEach(function (box) { box.checked = false; });
+  });
+  document.querySelectorAll('.subject-preset').forEach(function (button) {
+    button.addEventListener('click', function () {
+      document.getElementById('subject').value = button.getAttribute('data-subject');
+    });
+  });
+  document.querySelectorAll('.copy-message').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var source = button.parentElement.parentElement.querySelector('.message-source');
+      var text = source ? source.value : '';
+      function done() { button.textContent = 'Copied'; }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(function () {
+          source.focus();
+          source.select();
+          document.execCommand('copy');
+          done();
+        });
+        return;
+      }
+      source.focus();
+      source.select();
+      document.execCommand('copy');
+      done();
+    });
+  });
+</script>
+<%- include('partials/close') %>
