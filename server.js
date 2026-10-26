@@ -536,6 +536,22 @@ function initDB() {
       amount REAL,
       FOREIGN KEY (receipt_id) REFERENCES receipts(id)
     );
+
+    CREATE TABLE IF NOT EXISTS communications_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      driver_id INTEGER,
+      driver_name TEXT,
+      driver_email TEXT,
+      driver_phone TEXT,
+      channels TEXT,
+      subject TEXT,
+      message_body TEXT,
+      email_status TEXT,
+      sms_status TEXT,
+      sent_by INTEGER,
+      sent_by_name TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Safe upgrades for databases created before these columns existed.
@@ -2099,6 +2115,174 @@ async function deliverWelcome(welcome, phone, channel) {
   }
   return result;
 }
+
+const COMM_PRESETS = [
+  'DT1 Logistics — Dispatch / Schedule Update',
+  'DT1 Logistics — Load Ticket / Paperwork Reminder',
+  'DT1 Logistics — Weather / Site Update',
+  'DT1 Logistics — Compliance / Document Reminder'
+];
+
+function personalizeMessage(template, driver) {
+  const name = String(driver.name || '').trim() || [driver.first_name, driver.last_name].filter(Boolean).join(' ') || driver.email || 'Driver';
+  const first = String(driver.first_name || '').trim() || name.split(/\s+/)[0] || name;
+  return String(template || '')
+    .replace(/\{\{\s*first_name\s*\}\}/gi, first)
+    .replace(/\{\{\s*name\s*\}\}/gi, name);
+}
+
+function messageHtml(body) {
+  const html = escapeHtml(body).replace(/\r\n/g, '\n').replace(/\n/g, '<br>');
+  return `<p>${html}</p><p>— DT1 Logistics</p>`;
+}
+
+function decorateComm(row) {
+  const email = row.driver_email || '';
+  const body = row.message_body || '';
+  const subject = row.subject || '';
+  return Object.assign({}, row, {
+    mailto: `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`,
+    smsHref: smsHref(row.driver_phone, body),
+    preview: body.length > 140 ? `${body.slice(0, 140)}…` : body
+  });
+}
+
+function renderCommunications(req, res, extras) {
+  const extra = extras || {};
+  const drivers = db.prepare(`
+    SELECT id, name, first_name, last_name, email, phone, status
+    FROM users WHERE role = 'driver' ORDER BY name
+  `).all();
+  const activeDrivers = drivers.filter((driver) => (driver.status || 'active') !== 'inactive');
+  const inactiveDrivers = drivers.filter((driver) => driver.status === 'inactive');
+  const selectedIds = Array.isArray(extra.selectedIds) ? extra.selectedIds.map((id) => String(id)) : [];
+  if (!extra.selectedIds && req.query.driver_id) selectedIds.push(String(req.query.driver_id));
+  const selectedInactive = inactiveDrivers.some((driver) => selectedIds.includes(String(driver.id)));
+  const log = db.prepare('SELECT * FROM communications_log ORDER BY id DESC LIMIT 40').all().map(decorateComm);
+  const results = extra.results || req.session.commResults || [];
+  if (req.session.commResults) delete req.session.commResults;
+  res.status(extra.statusCode || 200).render('communications', {
+    user: req.session.user,
+    activeDrivers,
+    inactiveDrivers,
+    selectedIds,
+    showInactive: Boolean(extra.showInactive || selectedInactive),
+    notifications: notificationStatus(),
+    presets: COMM_PRESETS,
+    subject: extra.subject != null ? extra.subject : 'DT1 Logistics — Dispatch / Operations Update',
+    message: extra.message || '',
+    sendEmail: extra.sendEmail != null ? extra.sendEmail : true,
+    sendSms: extra.sendSms != null ? extra.sendSms : true,
+    error: extra.error || '',
+    log,
+    results
+  });
+}
+
+app.get('/communications', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/');
+  renderCommunications(req, res);
+});
+
+app.post('/communications/send', requireAuth, async (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/');
+  const sendEmail = req.body.send_email === '1' || req.body.send_email === 'on';
+  const sendSms = req.body.send_sms === '1' || req.body.send_sms === 'on';
+  const subject = String(req.body.subject || '').trim();
+  const message = String(req.body.message || '').trim();
+  const rawIds = Array.isArray(req.body.driver_ids) ? req.body.driver_ids : (req.body.driver_ids ? [req.body.driver_ids] : []);
+  const selectedIds = rawIds.map((id) => parseInt(id, 10)).filter((id) => Number.isInteger(id));
+  const showInactive = req.body.show_inactive === '1' || req.body.show_inactive === 'on';
+  const formState = { selectedIds, subject, message, sendEmail, sendSms, showInactive };
+  if (!sendEmail && !sendSms) {
+    return renderCommunications(req, res, Object.assign({ statusCode: 400, error: 'Choose Email, Text, or both.' }, formState));
+  }
+  if (!message) {
+    return renderCommunications(req, res, Object.assign({ statusCode: 400, error: 'Enter a message.' }, formState));
+  }
+  if (sendEmail && !subject) {
+    return renderCommunications(req, res, Object.assign({ statusCode: 400, error: 'Enter a subject for the email.' }, formState));
+  }
+  if (!selectedIds.length) {
+    return renderCommunications(req, res, Object.assign({ statusCode: 400, error: 'Select at least one driver.' }, formState));
+  }
+  const placeholders = selectedIds.map(() => '?').join(',');
+  const found = db.prepare(`SELECT * FROM users WHERE role = 'driver' AND id IN (${placeholders})`).all(...selectedIds);
+  const byId = new Map(found.map((driver) => [driver.id, driver]));
+  const drivers = selectedIds.map((id) => byId.get(id)).filter(Boolean);
+  if (!drivers.length) {
+    return renderCommunications(req, res, Object.assign({ statusCode: 400, error: 'Select at least one driver.' }, formState));
+  }
+  const channels = sendEmail && sendSms ? 'Email + Text' : (sendEmail ? 'Email' : 'Text');
+  const insert = db.prepare(`
+    INSERT INTO communications_log (
+      driver_id, driver_name, driver_email, driver_phone, channels, subject, message_body,
+      email_status, sms_status, sent_by, sent_by_name
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const results = [];
+  for (const driver of drivers) {
+    const body = personalizeMessage(message, driver);
+    const personalSubject = personalizeMessage(subject, driver);
+    let emailStatus = 'Not sent';
+    let smsStatus = 'Not sent';
+    if (sendEmail) {
+      const welcome = {
+        to: driver.email,
+        subject: personalSubject,
+        text: `${body}\n\n— DT1 Logistics`,
+        html: messageHtml(body)
+      };
+      try {
+        const delivery = await deliverWelcomeEmail(welcome);
+        if (delivery.sent) emailStatus = 'Sent';
+        else if (delivery.smtpError) emailStatus = 'Could not send';
+        else emailStatus = 'Not configured';
+      } catch (err) {
+        console.error('Driver email failed:', err.message);
+        emailStatus = 'Could not send';
+      }
+    }
+    if (sendSms) {
+      try {
+        const delivery = await deliverWelcomeSms({ smsText: body, phone: driver.phone }, driver.phone);
+        smsStatus = delivery.smsStatus || (delivery.smsSent ? 'Sent' : 'Not configured');
+      } catch (err) {
+        console.error('Driver SMS failed:', err.message);
+        smsStatus = 'Could not send';
+      }
+    }
+    const saved = insert.run(
+      driver.id,
+      driver.name || driver.email,
+      driver.email || '',
+      driver.phone || '',
+      channels,
+      personalSubject,
+      body,
+      emailStatus,
+      smsStatus,
+      req.session.user.id,
+      actorName(req)
+    );
+    logAudit(req, 'Sent message', 'communication', saved.lastInsertRowid, `${channels} to ${driver.name || driver.email}`);
+    results.push(decorateComm({
+      id: saved.lastInsertRowid,
+      driver_id: driver.id,
+      driver_name: driver.name || driver.email,
+      driver_email: driver.email || '',
+      driver_phone: driver.phone || '',
+      channels,
+      subject: personalSubject,
+      message_body: body,
+      email_status: emailStatus,
+      sms_status: smsStatus,
+      sent_by_name: actorName(req)
+    }));
+  }
+  req.session.commResults = results;
+  res.redirect('/communications?sent=1');
+});
 
 function ensureDriverTempPassword(driver) {
   const existing = String(driver.temp_password || '').trim();

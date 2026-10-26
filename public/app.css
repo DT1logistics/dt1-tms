@@ -173,8 +173,20 @@ form > button[type="submit"] { width: 100%; margin-top: 16px; }
 .origin-badge { display: inline-block; margin-left: 8px; background: #e8eef6; color: var(--navy); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; vertical-align: middle; }
 .driver-row .row-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .driver-row .row-actions form { margin: 0; }
-.driver-row .row-actions button { width: auto; margin: 0; }
+.driver-row .row-actions button, .driver-row .row-actions .btn { width: auto; margin: 0; }
 .welcome-actions .btn-draft { background: #fff; color: var(--navy); border: 1px solid var(--navy); }
+.driver-checklist { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.driver-check { display: flex; gap: 10px; align-items: flex-start; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; font-weight: 400; }
+.driver-check input { width: auto; margin-top: 4px; }
+.driver-check strong { display: block; }
+.comm-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+.comm-toolbar button, .comm-toolbar .btn { width: auto; margin: 0; }
+.preset-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.preset-row button { width: auto; margin: 0; background: #fff; color: var(--navy); border: 1px solid var(--navy); }
+.comm-result, .comm-log { margin-top: 16px; }
+.comm-result .welcome-actions { margin-top: 8px; }
+.message-source { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+#inactive-drivers[hidden] { display: none !important; }
 .sms-preview { white-space: pre-wrap; background: #f8fafc; border: 1px solid var(--line); border-radius: 10px; padding: 12px; font: inherit; }
 #welcome-sms-source { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
 .welcome-actions button { width: auto; margin: 0; }

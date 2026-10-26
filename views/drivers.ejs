@@ -23,6 +23,7 @@
       <%- include('partials/levels', { levels: d.levels, linked: false }) %>
     </a>
     <div class="row-actions">
+      <a class="btn btn-secondary" href="/communications?driver_id=<%= d.id %>">Message Driver</a>
       <form method="POST" action="/drivers/<%= d.id %>/send-welcome">
         <button type="submit" name="channel" value="both">Send Welcome Email &amp; Text</button>
       </form>
