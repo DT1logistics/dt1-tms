@@ -1,6 +1,9 @@
 <%- include('partials/open', { title: load && load.id ? 'Edit Load' : 'New Load', user: user, active: load && load.id ? 'loads' : 'new-load', headerTitle: load && load.id ? 'Edit Load' : 'New Load', backHref: '/loads' }) %>
 <h1><%= load && load.id ? 'Edit Load' : 'New Load' %></h1>
 <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
+<% if (load && load.status === 'draft' && load.rejection_reason) { %>
+  <div class="reject-note"><strong>This load was sent back as a draft.</strong> <%= load.rejection_reason %></div>
+<% } %>
 <% if (!projects || !projects.length) { %>
   <p>No active projects yet. An admin needs to add a customer and project before a load can be entered.</p>
 <% } %>
@@ -23,8 +26,14 @@
       </option>
     <% }) %>
   </select>
+  <label>Origin</label>
+  <input type="text" name="origin" value="<%= load.origin || '' %>">
+  <label>Destination</label>
+  <input type="text" name="destination" value="<%= load.destination || '' %>">
   <label>Description</label>
   <textarea name="description" rows="3"><%= load.description || '' %></textarea>
+  <label>Notes</label>
+  <textarea name="notes" rows="3"><%= load.notes || '' %></textarea>
   <% if (trucks && trucks.length) { %>
     <label>Truck</label>
     <select name="truck_id">
@@ -77,7 +86,17 @@
       <p class="muted">Already attached</p>
       <ul class="ticket-names">
         <% tickets.forEach(function (ticket) { %>
-          <li><%= ticket.original_name %></li>
+          <li>
+            <% if (ticket.id && load.id) { %>
+              <a href="/loads/<%= load.id %>/files/<%= ticket.id %>" target="_blank" rel="noopener"><%= ticket.original_name %></a>
+              <a href="/loads/<%= load.id %>/files/<%= ticket.id %>?download=1">Download</a>
+            <% } else { %>
+              <%= ticket.original_name %>
+            <% } %>
+            <% if (ticket.id) { %>
+              <label class="check"><input type="checkbox" name="remove_tickets" value="<%= ticket.id %>"> Remove</label>
+            <% } %>
+          </li>
         <% }) %>
       </ul>
     <% } %>
@@ -90,6 +109,9 @@
   </div>
   <div class="load-actions">
     <a class="btn btn-secondary" href="/loads">Cancel</a>
+    <% if (user.role === 'admin' && load && load.id && load.status && load.status !== 'draft') { %>
+      <button type="submit" name="action" value="save">Save Changes</button>
+    <% } %>
     <button type="submit" name="action" value="draft" class="btn-draft">Save as Draft</button>
     <button type="submit" name="action" value="submit">Submit Load</button>
   </div>
