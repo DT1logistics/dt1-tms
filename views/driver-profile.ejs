@@ -92,5 +92,12 @@
     <button type="submit">Upload Medical Card</button>
   </form>
 </div>
+<div class="card">
+  <h2>Welcome Email</h2>
+  <p class="muted">Send this driver their login and the steps to save the DT1 Logistics app on their phone. If their temporary password is no longer on file, a new one is created.</p>
+  <form method="POST" action="/drivers/<%= driver.id %>/send-welcome">
+    <button type="submit">Send Welcome Email</button>
+  </form>
+</div>
 <p><a href="/drivers">Back to Drivers</a></p>
 <%- include('partials/close') %>

@@ -5,10 +5,11 @@
   <p>Email / Username: <strong><%= email %></strong></p>
   <p>Temporary Password:</p>
   <div class="temp"><%= tempPassword %></div>
-  <p>Provide this temporary password to the driver. They will be required to change it on first login.</p>
+  <p>They will be prompted to set their own password the first time they sign in.</p>
   <form method="POST" action="/drivers/<%= driverId %>/send-welcome">
-    <button type="submit">Send Welcome Login to Driver</button>
+    <button type="submit">Send Welcome Email</button>
   </form>
-  <p><a href="/drivers">Back to Drivers</a></p>
 </div>
+<%- include('partials/welcome-email', { welcome: welcome }) %>
+<p><a href="/drivers">Back to Drivers</a></p>
 <%- include('partials/close') %>

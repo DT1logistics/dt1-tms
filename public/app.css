@@ -215,6 +215,14 @@ th { color: var(--navy); }
 .current { border-left: 4px solid var(--navy); }
 .profile-pic { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; background: #ccc; }
 .temp { background: #fff3cd; padding: 16px; border-radius: 8px; font-family: monospace; font-size: 18px; margin: 16px 0; }
+.welcome-email { max-width: 760px; }
+.welcome-body { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 8px 18px 4px; }
+.welcome-body h2 { font-size: 18px; color: var(--navy); margin: 20px 0 8px; }
+.welcome-body ol { margin: 8px 0 16px; padding-left: 22px; }
+.welcome-body li { margin: 6px 0; }
+.welcome-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.welcome-actions .btn { width: auto; margin: 0; }
+#welcome-source { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
 .projects { margin: 8px 0 0; padding-left: 18px; }
 
 .login-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
