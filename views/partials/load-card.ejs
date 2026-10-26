@@ -2,6 +2,8 @@
   <div>
     <strong><%= load.ticket_number || 'No Ticket' %></strong>
     <span class="status <%= load.status %>"><%= loadStatusLabel(load.status, load.settlement_status) %></span>
+    <% const origin = loadOriginLabel(load); %>
+    <% if (origin) { %><span class="origin-badge"><%= origin %></span><% } %>
   </div>
   <% if (load.status === 'approved' && load.settlement_status !== 'approved') { %>
     <div class="muted">Pending Driver Settlement Approval<%= load.load_date ? ' · ' + settlementWeekLabel(load.load_date) : '' %></div>
@@ -21,9 +23,12 @@
   <% if (user.role === 'admin') { %>
     <div>Fuel Surcharge: <%= Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No' %></div>
   <% } %>
+  <% if (load.payInfo && user.role === 'admin') { %>
+    <div class="muted"><%= load.payInfo.basis %></div>
+  <% } %>
   <% if (load.showPay) { %>
     <div class="pay-line">Driver Pay: $<%= money(load.payInfo.pay) %></div>
-    <div class="muted">Base $<%= money(load.payInfo.base) %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %></div>
+    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %></div>
   <% } %>
   <div>Load Ticket/BOL:
     <% if (load.tickets && load.tickets.length) { %>

@@ -10,6 +10,7 @@
           <strong><%= project.display_name %></strong>
           <div class="muted"><%= project.customer_name %> · <%= project.status || 'active' %></div>
           <div>Default Rate: $<%= money(project.default_rate) %></div>
+          <div>Default Driver Pay: <%= project.default_driver_pay_type === 'flat' ? 'Flat / Daily Rate $' + money(project.default_driver_flat_rate) : 'Percentage of Load' %></div>
           <div class="muted">Fuel Surcharge: <%= project.has_fuel_surcharge ? 'Yes' : 'No' %> · Drive Time: <%= project.has_drive_time ? '$' + money(project.default_drive_time_amount) : 'No' %></div>
           <p><a href="/projects/<%= project.id %>/edit">Edit</a> · <a href="/customers/<%= project.customer_id %>">Customer</a></p>
         </div>

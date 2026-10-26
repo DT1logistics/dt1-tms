@@ -2,6 +2,8 @@
 <h1>Review Load</h1>
 <p>
   <span class="status <%= load.status %>"><%= loadStatusLabel(load.status, load.settlement_status) %></span>
+  <% const origin = loadOriginLabel(load); %>
+  <% if (origin) { %><span class="origin-badge"><%= origin %></span><% } %>
   <% if (load.status === 'approved' && load.settlement_status !== 'approved') { %>
     <span class="muted">Pending Driver Settlement Approval<%= load.load_date ? ' · ' + settlementWeekLabel(load.load_date) : '' %></span>
   <% } else if (load.settlement_status === 'approved') { %>
@@ -11,6 +13,14 @@
 <% if (saved === 'approved') { %><div class="all-clear">Load approved. It is pending driver settlement approval<%= load.load_date ? ' for the ' + settlementWeekLabel(load.load_date) : '' %>.</div><% } %>
 <% if (saved === 'rejected') { %><div class="reject-note">Load sent back to the driver as a draft.</div><% } %>
 <% if (saved === 'edited') { %><div class="all-clear">Load saved.</div><% } %>
+<% if (saved === 'flag') { %><div class="all-clear">Missing info flag saved.</div><% } %>
+<% if (user.role === 'admin' && load.status === 'submitted') { %>
+  <% const gaps = submittedLoadGaps(load, tickets && tickets.length); %>
+  <% if (gaps.length) { %><div class="reject-note"><strong>Submitted load missing:</strong> <%= gaps.join(', ') %></div><% } %>
+<% } %>
+<% if (load.missing_info_note) { %>
+  <div class="reject-note"><strong>Missing Info Flag:</strong> <%= load.missing_info_note %></div>
+<% } %>
 <% if (load.status === 'draft' && load.rejection_reason) { %>
   <div class="reject-note"><strong>Rejection reason:</strong> <%= load.rejection_reason %></div>
 <% } %>
@@ -42,9 +52,12 @@
   <div><strong>Qty/Wet Ton</strong> <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
   <div><strong>Rate</strong> $<%= money(load.rate) %></div>
   <div><strong>Load Total</strong> $<%= money((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) %></div>
+  <% if (load.payInfo && (user.role === 'admin' || load.showPay)) { %>
+    <div><strong>Driver Pay Basis</strong> <%= load.payInfo.basis %></div>
+  <% } %>
   <% if (load.showPay) { %>
     <div class="pay-line"><strong>Driver Pay</strong> $<%= money(load.payInfo.pay) %></div>
-    <div class="muted">Base $<%= money(load.payInfo.base) %> (linehaul × <%= load.payInfo.percentage %>%) · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %>. Fuel surcharge is not included.</div>
+    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %>. Fuel surcharge is not included.</div>
   <% } %>
   <% if (user.role === 'admin') { %>
     <div><strong>Fuel Surcharge</strong> <%= Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No' %></div>
@@ -116,6 +129,16 @@
       <input type="number" step="0.01" name="weight_quantity" value="<%= load.weight_quantity != null ? load.weight_quantity : '' %>">
       <label>Rate ($)</label>
       <input type="number" step="0.01" name="rate" value="<%= load.rate != null && load.rate !== '' ? load.rate : '' %>">
+      <label for="driver_pay_type">Driver Pay Basis / Type</label>
+      <select name="driver_pay_type" id="driver_pay_type">
+        <option value="percentage" <%= load.driver_pay_type === 'flat' ? '' : 'selected' %>>Percentage of Load (% — uses Driver's Profile Pay %)</option>
+        <option value="flat" <%= load.driver_pay_type === 'flat' ? 'selected' : '' %>>Flat / Daily Rate ($ for this load/day)</option>
+      </select>
+      <div id="flat_rate_wrap">
+        <label for="driver_flat_rate">Driver Flat / Daily Rate ($)</label>
+        <input type="number" step="0.01" name="driver_flat_rate" id="driver_flat_rate" value="<%= load.driver_flat_rate != null && load.driver_flat_rate !== '' ? load.driver_flat_rate : '0.00' %>">
+      </div>
+      <p class="muted" id="pay_basis_help"></p>
       <div class="check">
         <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
         <label for="has_fuel_surcharge">Includes Fuel Surcharge</label>
@@ -137,7 +160,7 @@
         <select name="driver_id">
           <option value="">-- Select Driver --</option>
           <% drivers.forEach(function (driver) { %>
-            <option value="<%= driver.id %>" <%= String(load.driver_id) === String(driver.id) ? 'selected' : '' %>><%= driver.name %></option>
+            <option value="<%= driver.id %>" <%= String(load.driver_id) === String(driver.id) ? 'selected' : '' %>><%= driver.name %><%= driver.status === 'inactive' ? ' (Inactive)' : '' %></option>
           <% }) %>
         </select>
       <% } %>
@@ -155,6 +178,16 @@
       <button type="submit" name="action" value="save">Save Changes</button>
     </form>
   </div>
+
+  <% if (user.role === 'admin') { %>
+    <form class="card" method="POST" action="/loads/<%= load.id %>/missing-info">
+      <h2>Missing Info Flag</h2>
+      <p class="muted">This note stays on the admin dashboard until it is cleared.</p>
+      <label>Completeness note</label>
+      <textarea name="missing_info_note" rows="3"><%= load.missing_info_note || '' %></textarea>
+      <button type="submit">Save Missing Info Flag</button>
+    </form>
+  <% } %>
 
   <div class="review-actions">
     <% if (load.status === 'submitted') { %>
@@ -177,4 +210,23 @@
   <p><a class="btn" href="/loads/<%= load.id %>/edit">Edit Draft</a></p>
 <% } %>
 <p><a href="/loads">Back to Loads</a></p>
+<script>
+  const payType = document.getElementById('driver_pay_type');
+  const flatWrap = document.getElementById('flat_rate_wrap');
+  const payHelp = document.getElementById('pay_basis_help');
+  function syncPayType() {
+    if (!payType || !flatWrap) return;
+    const flat = payType.value === 'flat';
+    flatWrap.style.display = flat ? 'block' : 'none';
+    if (payHelp) {
+      payHelp.textContent = flat
+        ? 'Driver Pay = Driver Flat / Daily Rate + Drive Time + Self Load. Fuel surcharge is not included.'
+        : 'Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load. Fuel surcharge is not included.';
+    }
+  }
+  if (payType) {
+    payType.addEventListener('change', syncPayType);
+    syncPayType();
+  }
+</script>
 <%- include('partials/close') %>

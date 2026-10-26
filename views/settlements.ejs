@@ -2,7 +2,7 @@
 <h1><%= user.role === 'admin' ? 'Settlements & Invoices' : 'Settlements' %></h1>
 <% if (saved === 'week') { %><div class="all-clear">Weekly driver settlement approved. Those loads are now under Driver Settlements.</div><% } %>
 <% if (user.role === 'admin') { %>
-  <p class="muted">Approve a driver’s Monday–Sunday settlement after the loads for that week are approved. Driver pay is linehaul × pay % plus drive time and self load. Fuel surcharge is never included.</p>
+  <p class="muted">Approve a driver’s Monday–Sunday settlement after the loads for that week are approved. Percentage loads and flat daily-rate loads in the same week add together. Fuel surcharge is never included in driver pay.</p>
   <h2>Approve Weekly Driver Settlement</h2>
   <% if (pendingWeeks && pendingWeeks.length) { %>
     <% pendingWeeks.forEach(function (group) { %>

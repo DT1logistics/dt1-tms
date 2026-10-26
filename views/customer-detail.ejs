@@ -19,6 +19,7 @@
         <div class="card">
           <strong><%= project.display_name %></strong>
           <div class="muted">Default Rate: $<%= money(project.default_rate) %></div>
+          <div class="muted">Default Driver Pay: <%= project.default_driver_pay_type === 'flat' ? 'Flat / Daily Rate $' + money(project.default_driver_flat_rate) : 'Percentage of Load' %></div>
           <div class="muted">Includes Fuel Surcharge: <%= project.has_fuel_surcharge ? 'Yes' : 'No' %></div>
           <div class="muted">Includes Drive Time Fee: <%= project.has_drive_time ? 'Yes' : 'No' %><% if (project.has_drive_time) { %> — $<%= money(project.default_drive_time_amount) %><% } %></div>
           <div class="muted">Status: <%= project.status || 'active' %></div>

@@ -6,8 +6,10 @@
   <p>Temporary Password:</p>
   <div class="temp"><%= tempPassword %></div>
   <p>They will be prompted to set their own password the first time they sign in.</p>
-  <form method="POST" action="/drivers/<%= driverId %>/send-welcome">
-    <button type="submit">Send Welcome Email</button>
+  <form class="welcome-actions" method="POST" action="/drivers/<%= driverId %>/send-welcome">
+    <button type="submit" name="channel" value="both">Send Welcome Email &amp; Text</button>
+    <button type="submit" class="btn-draft" name="channel" value="email">Send Email</button>
+    <button type="submit" class="btn-draft" name="channel" value="sms">Send Text (SMS)</button>
   </form>
 </div>
 <%- include('partials/welcome-email', { welcome: welcome }) %>
