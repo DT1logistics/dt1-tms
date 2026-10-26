@@ -105,6 +105,13 @@ h2 { color: var(--navy); }
 .week-summary .week-loads { padding: 0 12px 12px; }
 .pay-line { font-weight: 700; }
 
+.settlement-card h3 { margin: 0 0 8px; font-size: 17px; line-height: 1.35; }
+.settlement-meta { margin-top: 6px; font-size: 14px; line-height: 1.45; }
+.settlement-loads { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.settlement-loads > summary { cursor: pointer; font-weight: 700; color: var(--navy); }
+.settlement-load { padding: 10px 0; border-top: 1px solid var(--line); font-size: 14px; line-height: 1.4; }
+.settlement-card form { margin-top: 12px; }
+
 .card, .load-card, .rate-box {
   background: white;
   border-radius: 10px;

@@ -6,23 +6,19 @@
   <h2>Approve Weekly Driver Settlement</h2>
   <% if (pendingWeeks && pendingWeeks.length) { %>
     <% pendingWeeks.forEach(function (group) { %>
-      <div class="card">
-        <strong><%= group.driver %></strong>
-        — <%= group.week.range %>
-        — Pay <%= group.percentage != null ? group.percentage + '%' : 'not set' %>
-        — Driver Pay $<%= money(group.total) %>
-        <div class="muted"><%= group.loads.length %> approved load<%= group.loads.length === 1 ? '' : 's' %> pending settlement</div>
-        <div style="margin-top:8px;font-size:14px;">
-          <% group.loads.forEach(function (load) { %>
-            <div>
-              <%= load.load_date || '—' %> · <%= load.ticket_number || 'No ticket' %> · <%= load.project_display || 'Unassigned' %>
-              · Qty <%= load.weight_quantity != null ? load.weight_quantity : '—' %>
-              · Driver Pay $<%= money(load.payInfo.pay) %>
-            </div>
-          <% }) %>
+      <% const range = group.week && group.week.range && group.week.start ? group.week.range : ''; %>
+      <div class="card settlement-card">
+        <h3><%= range ? 'Driver Settlement - Week of ' + range : 'Driver Settlement - Undated' %></h3>
+        <div><strong><%= group.driver %></strong><% if (group.percentage != null) { %> · Pay <%= group.percentage %><% } %></div>
+        <div class="settlement-meta">
+          <%= group.loads.length %> load<%= group.loads.length === 1 ? '' : 's' %>
+          · Qty/Wet Ton <%= group.qty %>
+          · Driver Pay $<%= money(group.total) %>
+          · Pending approval
         </div>
+        <%- include('partials/settlement-loads', { loads: group.loads }) %>
         <% if (group.driverId && group.week.start) { %>
-          <form method="POST" action="/settlements/approve-week" style="margin-top:12px;">
+          <form method="POST" action="/settlements/approve-week">
             <input type="hidden" name="driver_id" value="<%= group.driverId %>">
             <input type="hidden" name="week_start" value="<%= group.week.start %>">
             <button type="submit">Approve Weekly Driver Settlement</button>
@@ -40,28 +36,22 @@
 <h2>Driver Settlements</h2>
 <% if (approvedWeeks && approvedWeeks.length) { %>
   <% approvedWeeks.forEach(function (group) { %>
-    <div class="card">
-      <strong><%= group.driver_name %></strong>
-      — Week of <%= group.range %>
-      <% if (user.role === 'admin') { %>— Pay <%= group.pay_percentage != null ? group.pay_percentage + '%' : 'not set' %><% } %>
-      — Driver Pay $<%= money(group.total) %>
+    <div class="card settlement-card">
+      <h3>Driver Settlement - Week of <%= group.range %></h3>
+      <% if (user.role === 'admin') { %>
+        <div><strong><%= group.driver_name %></strong><% if (group.pay_percentage != null) { %> · Pay <%= group.pay_percentage %><% } %></div>
+      <% } %>
+      <div class="settlement-meta">
+        <%= group.loads.length %> load<%= group.loads.length === 1 ? '' : 's' %>
+        · Qty/Wet Ton <%= group.qty %>
+        · Driver Pay $<%= money(group.total) %>
+        · Approved
+      </div>
       <div class="muted">Base $<%= money(group.base) %> · Drive Time $<%= money(group.drive) %> · Self Load $<%= money(group.self) %></div>
       <% if (group.approved_by_name) { %>
         <div class="muted">Approved by <%= group.approved_by_name %><% if (group.approved_at) { %> on <%= auditStamp(group.approved_at) %><% } %></div>
       <% } %>
-      <div style="margin-top:8px;font-size:14px;">
-        <% group.loads.forEach(function (load) { %>
-          <div>
-            <%= load.load_date || '—' %> · <%= load.ticket_number || 'No ticket' %> · <%= load.project_display || 'Unassigned' %>
-            · Qty <%= load.weight_quantity != null ? load.weight_quantity : '—' %>
-            · Rate $<%= money(load.rate) %>
-            · Base $<%= money(load.payInfo.base) %>
-            <% if (load.payInfo.drive > 0) { %> · Drive Time $<%= money(load.payInfo.drive) %><% } %>
-            <% if (load.payInfo.self > 0) { %> · Self Load $<%= money(load.payInfo.self) %><% } %>
-            · Driver Pay $<%= money(load.payInfo.pay) %>
-          </div>
-        <% }) %>
-      </div>
+      <%- include('partials/settlement-loads', { loads: group.loads }) %>
     </div>
   <% }) %>
 <% } else { %>

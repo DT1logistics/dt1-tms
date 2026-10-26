@@ -2138,7 +2138,11 @@ function pendingSettlementWeeks() {
     group.loads.push(Object.assign({}, load, { payInfo }));
     group.total += payInfo.pay;
   });
-  return Array.from(groups.values());
+  return Array.from(groups.values()).map((group) => {
+    group.qty = group.loads.reduce((sum, load) => sum + (Number(load.weight_quantity) || 0), 0);
+    group.status = 'pending';
+    return group;
+  });
 }
 
 function approvedSettlementWeeks(driverId) {
@@ -2168,6 +2172,7 @@ function approvedSettlementWeeks(driverId) {
       ...row,
       range: week ? week.range : `${row.week_start} - ${row.week_end}`,
       loads,
+      qty: loads.reduce((sum, load) => sum + (Number(load.weight_quantity) || 0), 0),
       total: loads.reduce((sum, load) => sum + load.payInfo.pay, 0),
       base: loads.reduce((sum, load) => sum + load.payInfo.base, 0),
       drive: loads.reduce((sum, load) => sum + load.payInfo.drive, 0),

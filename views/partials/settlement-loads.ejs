@@ -1,0 +1,12 @@
+<details class="settlement-loads">
+  <summary>View <%= loads.length %> Load<%= loads.length === 1 ? '' : 's' %> in Settlement</summary>
+  <div class="settlement-load-list">
+    <% loads.forEach(function (load) { %>
+      <div class="settlement-load">
+        <div><strong><%= load.load_date || '—' %></strong> · Ticket <%= load.ticket_number || '—' %></div>
+        <div><%= load.project_display || 'Unassigned' %><% if (load.customer_name) { %> · <%= load.customer_name %><% } %></div>
+        <div>Qty/Wet Ton <%= load.weight_quantity != null ? load.weight_quantity : '—' %> · Driver Pay $<%= money(load.payInfo.pay) %></div>
+      </div>
+    <% }) %>
+  </div>
+</details>
