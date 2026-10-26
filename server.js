@@ -336,14 +336,20 @@ function initDB() {
     ['FMCSA', 'HVUT', 'UCR', 'IFTA', 'Insurance'].forEach((name) => insertCompliance.run(name));
   }
 
-  // Seed admin if not exists
-  const admin = db.prepare('SELECT id FROM users WHERE email = ?').get('admin@dt1logistics.com');
-  if (!admin) {
-    const bcrypt = require('bcryptjs');
-    const hash = bcrypt.hashSync('changeme123', 10);
-    db.prepare(`INSERT INTO users (email, password, role, name, first_name, app_language) VALUES (?, ?, 'admin', 'Administrator', 'Administrator', 'English')`)
-      .run('admin@dt1logistics.com', hash);
-  }
+  // Seed admin accounts if they do not exist yet. Matching is case-insensitive.
+  const adminPassword = bcrypt.hashSync('changeme123', 10);
+  const findAdmin = db.prepare('SELECT id FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))');
+  const insertAdmin = db.prepare(`
+    INSERT INTO users (email, password, role, name, first_name, last_name, app_language, status)
+    VALUES (?, ?, 'admin', ?, ?, ?, 'English', 'active')
+  `);
+  [
+    ['admin@dt1logistics.com', 'Administrator', 'Administrator', ''],
+    ['kammy@dt1logistics.com', 'Kammy', 'Kammy', ''],
+    ['kammy.hall@gmail.com', 'Kammy Hall', 'Kammy', 'Hall']
+  ].forEach(([email, name, firstName, lastName]) => {
+    if (!findAdmin.get(email)) insertAdmin.run(email, adminPassword, name, firstName, lastName);
+  });
 
   backfillUserNames();
   backfillUserAddresses();
@@ -680,10 +686,16 @@ app.get('/', (req, res) => {
   }
 });
 
+app.get('/login', (req, res) => {
+  if (req.session.user) return res.redirect('/');
+  res.render('login');
+});
+
 app.post('/login', (req, res) => {
-  const { email, password } = req.body;
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get((email || '').trim());
-  if (user && bcrypt.compareSync(password || '', user.password)) {
+  const email = req.body.email || '';
+  const password = (req.body.password || '').trim();
+  const user = db.prepare('SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))').get(email);
+  if (user && password && bcrypt.compareSync(password, user.password)) {
     req.session.user = {
       id: user.id,
       email: user.email,
