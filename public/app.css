@@ -244,12 +244,17 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 .profile-page h1 { color: #111827; font-size: 28px; letter-spacing: -0.03em; margin-bottom: 6px; }
 .profile-lead { color: #6b7280; margin: 0 0 8px; font-size: 15px; }
 .profile-page label { color: #111827; font-size: 15px; margin-top: 18px; }
-.profile-page input, .profile-page select {
+.profile-page input, .profile-page select, .profile-page textarea {
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   padding: 14px 16px;
   background: #fff;
 }
+.profile-page input:disabled {
+  background: #f8fafc;
+  color: #64748b;
+}
+.field-help { color: #6b7280; font-size: 13px; margin: 6px 0 0; }
 .profile-page select {
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' stroke='%2364748b' stroke-width='2' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");

@@ -76,6 +76,36 @@ function ensureColumn(table, column, definition) {
   }
 }
 
+function composeName(firstName, middleInitial, lastName) {
+  return [firstName, middleInitial, lastName].map((part) => String(part || '').trim()).filter(Boolean).join(' ');
+}
+
+function splitStoredName(name, middleInitial) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return { first_name: '', last_name: '' };
+  const middle = String(middleInitial || '').trim().replace(/\.$/, '');
+  const rest = parts.slice(1);
+  if (middle && middle.length === 1 && rest.length && rest[0].replace(/\.$/, '') === middle) {
+    rest.shift();
+  }
+  return { first_name: parts[0], last_name: rest.join(' ') };
+}
+
+function backfillUserNames() {
+  const people = db.prepare('SELECT id, name, first_name, middle_initial, last_name, app_language FROM users').all();
+  const fillNames = db.prepare('UPDATE users SET first_name = ?, last_name = ?, name = ? WHERE id = ?');
+  const forceEnglish = db.prepare("UPDATE users SET app_language = 'English' WHERE id = ?");
+  people.forEach((person) => {
+    const first = String(person.first_name || '').trim();
+    const last = String(person.last_name || '').trim();
+    if (!first && !last && String(person.name || '').trim()) {
+      const split = splitStoredName(person.name, person.middle_initial);
+      fillNames.run(split.first_name, split.last_name, composeName(split.first_name, person.middle_initial, split.last_name), person.id);
+    }
+    if (person.app_language !== 'English') forceEnglish.run(person.id);
+  });
+}
+
 // Initialize database tables
 function initDB() {
   db.exec(`
@@ -229,6 +259,8 @@ function initDB() {
   ensureColumn('users', 'first_name', 'TEXT');
   ensureColumn('users', 'middle_initial', 'TEXT');
   ensureColumn('users', 'last_name', 'TEXT');
+  ensureColumn('users', 'phone', 'TEXT');
+  ensureColumn('users', 'address', 'TEXT');
   ensureColumn('users', 'hire_date', 'DATE');
   ensureColumn('users', 'dob', 'DATE');
   ensureColumn('users', 'profile_pic', 'TEXT');
@@ -256,9 +288,11 @@ function initDB() {
   if (!admin) {
     const bcrypt = require('bcryptjs');
     const hash = bcrypt.hashSync('changeme123', 10);
-    db.prepare(`INSERT INTO users (email, password, role, name) VALUES (?, ?, 'admin', 'Administrator')`)
+    db.prepare(`INSERT INTO users (email, password, role, name, first_name, app_language) VALUES (?, ?, 'admin', 'Administrator', 'Administrator', 'English')`)
       .run('admin@dt1logistics.com', hash);
   }
+
+  backfillUserNames();
 }
 
 initDB();
@@ -1033,7 +1067,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), (req, res) => {
 // Admin: Drivers management
 app.get('/drivers', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  const drivers = db.prepare("SELECT id, name, email, phone, pay_percentage, status, created_at FROM users WHERE role = 'driver' ORDER BY name").all();
+  const drivers = db.prepare("SELECT id, name, first_name, last_name, email, phone, address, pay_percentage, status, created_at FROM users WHERE role = 'driver' ORDER BY name").all();
   drivers.forEach((driver) => {
     driver.levels = collectDriverLevels(driver.id, { docHref: `/drivers/${driver.id}`, loadHref: '/loads', equipHref: '/equipment' });
   });
@@ -1048,15 +1082,20 @@ app.get('/drivers/new', requireAuth, (req, res) => {
 app.post('/drivers', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
   const bcrypt = require('bcryptjs');
-  const { first_name, middle_initial, last_name, email, phone, address, pay_percentage, hire_date, dob } = req.body;
-  const fullName = [first_name, middle_initial, last_name].filter(Boolean).join(' ');
+  const firstName = String(req.body.first_name || '').trim();
+  const middleInitial = String(req.body.middle_initial || '').trim().slice(0, 1);
+  const lastName = String(req.body.last_name || '').trim();
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const phone = String(req.body.phone || '').trim();
+  const address = String(req.body.address || '').trim();
+  const fullName = composeName(firstName, middleInitial, lastName);
   const tempPassword = Math.random().toString(36).slice(-8);
   const hash = bcrypt.hashSync(tempPassword, 10);
   try {
     const result = db.prepare(`
-      INSERT INTO users (email, password, role, name, first_name, middle_initial, last_name, phone, address, pay_percentage, hire_date, dob, must_change_password)
-      VALUES (?, ?, 'driver', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-    `).run(email, hash, fullName, first_name, middle_initial, last_name, phone, address, pay_percentage || null, hire_date, dob);
+      INSERT INTO users (email, password, role, name, first_name, middle_initial, last_name, phone, address, pay_percentage, hire_date, dob, app_language, must_change_password)
+      VALUES (?, ?, 'driver', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'English', 1)
+    `).run(email, hash, fullName, firstName, middleInitial, lastName, phone, address, req.body.pay_percentage || null, req.body.hire_date, req.body.dob);
     res.render('driver-created', { user: req.session.user, email, tempPassword, name: fullName, driverId: result.lastInsertRowid });
   } catch (e) {
     res.render('driver-form', { user: req.session.user, error: 'Email already exists or invalid data' });
@@ -1086,13 +1125,74 @@ app.post('/drivers/:id/upload', requireAuth, upload.single('file'), (req, res) =
   res.redirect(`/drivers/${req.params.id}`);
 });
 
+function renderDriverEditor(req, res, driver, status, extras) {
+  const docs = db.prepare('SELECT * FROM driver_documents WHERE driver_id = ?').all(driver.id);
+  const levels = collectDriverLevels(driver.id, { docHref: '', loadHref: '/loads', equipHref: '/equipment' });
+  res.status(status).render('driver-profile', Object.assign({
+    user: req.session.user,
+    driver,
+    docs,
+    levels,
+    saved: false,
+    error: ''
+  }, extras));
+}
+
 app.get('/drivers/:id', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
   const driver = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(req.params.id, 'driver');
   if (!driver) return res.redirect('/drivers');
-  const docs = db.prepare('SELECT * FROM driver_documents WHERE driver_id = ?').all(req.params.id);
-  const levels = collectDriverLevels(driver.id, { docHref: '', loadHref: '/loads', equipHref: '/equipment' });
-  res.render('driver-profile', { user: req.session.user, driver, docs, levels });
+  renderDriverEditor(req, res, driver, 200, { saved: req.query.saved === '1' });
+});
+
+app.post('/drivers/:id', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/');
+  const driver = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(req.params.id, 'driver');
+  if (!driver) return res.redirect('/drivers');
+  const firstName = String(req.body.first_name || '').trim();
+  const middleInitial = String(req.body.middle_initial || '').trim().slice(0, 1);
+  const lastName = String(req.body.last_name || '').trim();
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const phone = String(req.body.phone || '').trim();
+  const address = String(req.body.address || '').trim();
+  const payText = String(req.body.pay_percentage || '').trim();
+  const payPercentage = payText === '' ? null : parseFloat(payText);
+  const draft = Object.assign({}, driver, {
+    first_name: firstName,
+    middle_initial: middleInitial,
+    last_name: lastName,
+    name: composeName(firstName, middleInitial, lastName),
+    email,
+    phone,
+    address,
+    pay_percentage: Number.isFinite(payPercentage) ? payPercentage : driver.pay_percentage,
+    hire_date: blankToNull(req.body.hire_date),
+    dob: blankToNull(req.body.dob)
+  });
+  if (!firstName || !lastName || !email.includes('@')) {
+    return renderDriverEditor(req, res, draft, 400, { error: 'Enter a first name, last name, and valid login email.' });
+  }
+  const duplicate = db.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ?').get(email, driver.id);
+  if (duplicate) return renderDriverEditor(req, res, draft, 400, { error: 'That email is already in use.' });
+  db.prepare(`
+    UPDATE users
+    SET name = ?, first_name = ?, middle_initial = ?, last_name = ?, email = ?, phone = ?, address = ?,
+        pay_percentage = ?, hire_date = ?, dob = ?, app_language = 'English'
+    WHERE id = ?
+  `).run(
+    draft.name,
+    firstName,
+    middleInitial,
+    lastName,
+    email,
+    phone,
+    address,
+    Number.isFinite(payPercentage) ? payPercentage : null,
+    draft.hire_date,
+    draft.dob,
+    driver.id
+  );
+  res.redirect(`/drivers/${driver.id}?saved=1`);
 });
 
 // Receipts
@@ -1278,12 +1378,22 @@ app.get('/profile', requireAuth, (req, res) => {
 
 app.post('/profile', requireAuth, (req, res) => {
   const current = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.user.id);
-  const name = String(req.body.name || '').trim();
-  const email = String(req.body.email || '').trim().toLowerCase();
+  const isDriver = current.role === 'driver';
+  const firstName = String(req.body.first_name || '').trim();
+  const lastName = String(req.body.last_name || '').trim();
   const phone = String(req.body.phone || '').trim();
-  const languages = ['English', 'Spanish'];
-  const appLanguage = languages.includes(req.body.language) ? req.body.language : 'English';
-  const draft = Object.assign({}, current, { name, email, phone, app_language: appLanguage });
+  const address = String(req.body.address || '').trim();
+  const email = isDriver ? current.email : String(req.body.email || '').trim().toLowerCase();
+  const name = composeName(firstName, current.middle_initial, lastName);
+  const draft = Object.assign({}, current, {
+    first_name: firstName,
+    last_name: lastName,
+    name,
+    email,
+    phone,
+    address,
+    app_language: 'English'
+  });
   const renderForm = (status, error) => res.status(status).render('profile', {
     user: req.session.user,
     profile: draft,
@@ -1291,13 +1401,21 @@ app.post('/profile', requireAuth, (req, res) => {
     saved: false,
     error
   });
-  if (!name || !email.includes('@')) {
-    return renderForm(400, 'Enter your name and a valid email.');
+  if (!firstName || !lastName) {
+    return renderForm(400, 'Enter your first and last name.');
   }
-  const duplicate = db.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ?').get(email, current.id);
-  if (duplicate) return renderForm(400, 'That email is already in use.');
-  db.prepare('UPDATE users SET name = ?, email = ?, phone = ?, app_language = ? WHERE id = ?')
-    .run(name, email, phone, appLanguage, current.id);
+  if (!isDriver && !email.includes('@')) {
+    return renderForm(400, 'Enter a valid email.');
+  }
+  if (!isDriver) {
+    const duplicate = db.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ?').get(email, current.id);
+    if (duplicate) return renderForm(400, 'That email is already in use.');
+  }
+  db.prepare(`
+    UPDATE users
+    SET name = ?, first_name = ?, last_name = ?, email = ?, phone = ?, address = ?, app_language = 'English'
+    WHERE id = ?
+  `).run(name, firstName, lastName, email, phone, address, current.id);
   req.session.user.name = name;
   req.session.user.email = email;
   res.redirect('/profile?saved=1');
