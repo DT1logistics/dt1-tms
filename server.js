@@ -174,6 +174,7 @@ function initDB() {
       profile_pic TEXT,
       status TEXT DEFAULT 'active',
       must_change_password INTEGER DEFAULT 0,
+      temp_password TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -316,6 +317,7 @@ function initDB() {
   ensureColumn('users', 'dob', 'DATE');
   ensureColumn('users', 'profile_pic', 'TEXT');
   ensureColumn('users', 'app_language', "TEXT DEFAULT 'English'");
+  ensureColumn('users', 'temp_password', 'TEXT');
 
   ensureColumn('loads', 'project_id', 'INTEGER');
   ensureColumn('loads', 'rate', 'REAL DEFAULT 0');
@@ -733,7 +735,7 @@ app.post('/change-password', requireAuth, (req, res) => {
     return res.render('change-password', { user: req.session.user, error: 'Password must be at least 6 characters' });
   }
   const hash = bcrypt.hashSync(password, 10);
-  db.prepare('UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?').run(hash, req.session.user.id);
+  db.prepare('UPDATE users SET password = ?, must_change_password = 0, temp_password = NULL WHERE id = ?').run(hash, req.session.user.id);
   req.session.user.must_change_password = 0;
   res.redirect('/');
 });
@@ -1133,9 +1135,120 @@ app.get('/drivers/new', requireAuth, (req, res) => {
   res.render('driver-form', { user: req.session.user });
 });
 
-app.post('/drivers', requireAuth, (req, res) => {
+const APP_URL = 'https://dt1-tms.onrender.com';
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[ch]));
+}
+
+function buildWelcomeEmail({ name, email, tempPassword }) {
+  const subject = 'Welcome to DT1 Logistics';
+  const text = [
+    `Hi ${name},`,
+    '',
+    'Welcome to DT1 Logistics. Your driver account is ready.',
+    '',
+    `App: ${APP_URL}`,
+    `Login email: ${email}`,
+    `Temporary password: ${tempPassword}`,
+    '',
+    "You'll be prompted to set your own password the first time you sign in.",
+    '',
+    'Save the DT1 Logistics App to Your Phone (One-Tap Access)',
+    '',
+    'iPhone (Safari):',
+    `1. Open ${APP_URL} in Safari.`,
+    '2. Tap the Share icon (the square with an arrow pointing up at the bottom of the screen).',
+    '3. Scroll down and tap Add to Home Screen, then tap Add in the top right.',
+    '4. Now the DT1 Logistics app icon is on your phone screen—just tap the app anytime to open it!',
+    '',
+    'Android (Chrome):',
+    `1. Open ${APP_URL} in Chrome.`,
+    '2. Tap the three-dot menu (⋮) in the top-right corner.',
+    '3. Tap Add to Home screen (or Install app), then tap Add.',
+    '4. Now the DT1 Logistics app icon is on your phone screen—just tap the app anytime to open it!',
+    '',
+    '— DT1 Logistics'
+  ].join('\n');
+  const safeName = escapeHtml(name);
+  const safeEmail = escapeHtml(email);
+  const safePassword = escapeHtml(tempPassword);
+  const html = `
+    <p>Hi ${safeName},</p>
+    <p>Welcome to DT1 Logistics. Your driver account is ready.</p>
+    <p><strong>App:</strong> <a href="${APP_URL}">${APP_URL}</a><br>
+    <strong>Login email:</strong> ${safeEmail}<br>
+    <strong>Temporary password:</strong> ${safePassword}</p>
+    <p>You'll be prompted to set your own password the first time you sign in.</p>
+    <h2>Save the DT1 Logistics App to Your Phone (One-Tap Access)</h2>
+    <p><strong>iPhone (Safari):</strong></p>
+    <ol>
+      <li>Open <a href="${APP_URL}">${APP_URL}</a> in <strong>Safari</strong>.</li>
+      <li>Tap the <strong>Share</strong> icon (the square with an arrow pointing up at the bottom of the screen).</li>
+      <li>Scroll down and tap <strong>Add to Home Screen</strong>, then tap <strong>Add</strong> in the top right.</li>
+      <li>Now the <strong>DT1 Logistics</strong> app icon is on your phone screen—just tap the app anytime to open it!</li>
+    </ol>
+    <p><strong>Android (Chrome):</strong></p>
+    <ol>
+      <li>Open <a href="${APP_URL}">${APP_URL}</a> in <strong>Chrome</strong>.</li>
+      <li>Tap the <strong>three-dot menu (⋮)</strong> in the top-right corner.</li>
+      <li>Tap <strong>Add to Home screen</strong> (or <strong>Install app</strong>), then tap <strong>Add</strong>.</li>
+      <li>Now the <strong>DT1 Logistics</strong> app icon is on your phone screen—just tap the app anytime to open it!</li>
+    </ol>
+    <p>— DT1 Logistics</p>
+  `;
+  const mailto = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
+  return {
+    subject,
+    text,
+    html,
+    mailto,
+    to: email,
+    copyText: `Subject: ${subject}\n\n${text}`
+  };
+}
+
+async function deliverWelcomeEmail(welcome) {
+  const host = process.env.SMTP_HOST;
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  if (!host || !user || !pass) return { sent: false, smtpConfigured: false, smtpError: false };
+  const nodemailer = require('nodemailer');
+  const port = Number(process.env.SMTP_PORT || 587);
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure: process.env.SMTP_SECURE === 'true' || port === 465,
+    auth: { user, pass }
+  });
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM || user,
+    to: welcome.to,
+    subject: welcome.subject,
+    text: welcome.text,
+    html: welcome.html
+  });
+  return { sent: true, smtpConfigured: true, smtpError: false };
+}
+
+function ensureDriverTempPassword(driver) {
+  const existing = String(driver.temp_password || '').trim();
+  if (existing) return { tempPassword: existing, generatedNewPassword: false };
+  const tempPassword = Math.random().toString(36).slice(-8);
+  const hash = bcrypt.hashSync(tempPassword, 10);
+  db.prepare('UPDATE users SET password = ?, temp_password = ?, must_change_password = 1 WHERE id = ?')
+    .run(hash, tempPassword, driver.id);
+  return { tempPassword, generatedNewPassword: true };
+}
+
+app.post('/drivers', requireAuth, async (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  const bcrypt = require('bcryptjs');
   const firstName = String(req.body.first_name || '').trim();
   const middleInitial = String(req.body.middle_initial || '').trim().slice(0, 1);
   const lastName = String(req.body.last_name || '').trim();
@@ -1147,23 +1260,48 @@ app.post('/drivers', requireAuth, (req, res) => {
   const hash = bcrypt.hashSync(tempPassword, 10);
   try {
     const result = db.prepare(`
-      INSERT INTO users (email, password, role, name, first_name, middle_initial, last_name, phone, address, city, state, zip, pay_percentage, hire_date, dob, app_language, must_change_password)
-      VALUES (?, ?, 'driver', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'English', 1)
-    `).run(email, hash, fullName, firstName, middleInitial, lastName, phone, place.address, place.city, place.state, place.zip, req.body.pay_percentage || null, req.body.hire_date, req.body.dob);
-    res.render('driver-created', { user: req.session.user, email, tempPassword, name: fullName, driverId: result.lastInsertRowid });
+      INSERT INTO users (email, password, role, name, first_name, middle_initial, last_name, phone, address, city, state, zip, pay_percentage, hire_date, dob, app_language, must_change_password, temp_password)
+      VALUES (?, ?, 'driver', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'English', 1, ?)
+    `).run(email, hash, fullName, firstName, middleInitial, lastName, phone, place.address, place.city, place.state, place.zip, req.body.pay_percentage || null, req.body.hire_date, req.body.dob, tempPassword);
+    const welcome = buildWelcomeEmail({ name: fullName, email, tempPassword });
+    let delivery = { sent: false, smtpConfigured: false, smtpError: false };
+    try {
+      delivery = await deliverWelcomeEmail(welcome);
+    } catch (err) {
+      console.error('Welcome email failed:', err.message);
+      delivery = { sent: false, smtpConfigured: true, smtpError: true };
+    }
+    res.render('driver-created', {
+      user: req.session.user,
+      email,
+      tempPassword,
+      name: fullName,
+      driverId: result.lastInsertRowid,
+      welcome: Object.assign({}, welcome, delivery, { generatedNewPassword: false })
+    });
   } catch (e) {
     res.render('driver-form', { user: req.session.user, error: 'Email already exists or invalid data' });
   }
 });
 
-app.post('/drivers/:id/send-welcome', requireAuth, (req, res) => {
+app.post('/drivers/:id/send-welcome', requireAuth, async (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  const driver = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  const driver = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'driver'").get(req.params.id);
   if (!driver) return res.redirect('/drivers');
-  // Placeholder: in production this will send email via configured service (e.g. from Logan)
-  // For now, record the action and show confirmation
-  console.log(`Welcome email would be sent to ${driver.email} with temporary password`);
-  res.render('welcome-sent', { user: req.session.user, driver });
+  const issued = ensureDriverTempPassword(driver);
+  const welcome = buildWelcomeEmail({ name: driver.name, email: driver.email, tempPassword: issued.tempPassword });
+  let delivery = { sent: false, smtpConfigured: false, smtpError: false };
+  try {
+    delivery = await deliverWelcomeEmail(welcome);
+  } catch (err) {
+    console.error('Welcome email failed:', err.message);
+    delivery = { sent: false, smtpConfigured: true, smtpError: true };
+  }
+  res.render('welcome-sent', {
+    user: req.session.user,
+    driver,
+    welcome: Object.assign({}, welcome, delivery, { generatedNewPassword: issued.generatedNewPassword })
+  });
 });
 
 app.post('/drivers/:id/upload', requireAuth, upload.single('file'), (req, res) => {

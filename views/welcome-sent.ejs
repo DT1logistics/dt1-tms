@@ -1,8 +1,6 @@
-<%- include('partials/open', { title: 'Welcome Sent', user: user, active: 'drivers' }) %>
-<h1>Welcome Email Queued</h1>
-<div class="card">
-  <p>A Driver Portal welcome message has been prepared for <strong><%= driver.name %></strong> (<%= driver.email %>).</p>
-  <p>It will be sent from Logan, DT1 Operations Manager, and includes the username and temporary password.</p>
-  <p><a href="/drivers">Back to Drivers</a></p>
-</div>
+<%- include('partials/open', { title: 'Welcome Email', user: user, active: 'drivers' }) %>
+<h1>Welcome Email</h1>
+<p>Prepared for <strong><%= driver.name %></strong> (<%= driver.email %>).</p>
+<%- include('partials/welcome-email', { welcome: welcome }) %>
+<p><a href="/drivers/<%= driver.id %>">Back to Driver</a> · <a href="/drivers">All Drivers</a></p>
 <%- include('partials/close') %>

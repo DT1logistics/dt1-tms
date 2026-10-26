@@ -1,0 +1,45 @@
+<div class="card welcome-email">
+  <h2>Welcome Email</h2>
+  <% if (welcome.generatedNewPassword) { %>
+    <p class="muted">A new temporary password was created because the previous one was no longer on file. The driver will be asked to set their own password at sign-in.</p>
+  <% } %>
+  <p class="muted">To</p>
+  <p><strong><%= welcome.to %></strong></p>
+  <p class="muted">Subject</p>
+  <p><strong><%= welcome.subject %></strong></p>
+  <div class="welcome-body"><%- welcome.html %></div>
+  <div class="welcome-actions">
+    <button type="button" class="btn" id="copy-welcome">Copy Welcome Email</button>
+    <a class="btn btn-secondary" href="<%= welcome.mailto %>">Open in Email App</a>
+  </div>
+  <p class="field-help" id="copy-welcome-status" hidden>Welcome email copied.</p>
+  <% if (welcome.sent) { %>
+    <div class="all-clear">Welcome email sent to <%= welcome.to %>.</div>
+  <% } else if (welcome.smtpError) { %>
+    <div class="error">The email could not be sent. Copy it or open it in your email app.</div>
+  <% } else { %>
+    <p class="muted">Email delivery is not configured. Copy the welcome email or open it in your email app.</p>
+  <% } %>
+  <textarea id="welcome-source" readonly><%= welcome.copyText %></textarea>
+</div>
+<script>
+  document.getElementById('copy-welcome').addEventListener('click', function () {
+    var source = document.getElementById('welcome-source');
+    var status = document.getElementById('copy-welcome-status');
+    var text = source.value;
+    function done() { status.hidden = false; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(function () {
+        source.focus();
+        source.select();
+        document.execCommand('copy');
+        done();
+      });
+      return;
+    }
+    source.focus();
+    source.select();
+    document.execCommand('copy');
+    done();
+  });
+</script>
