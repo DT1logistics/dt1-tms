@@ -1,9 +1,11 @@
 <%- include('partials/open', { title: 'Review Load', user: user, active: 'loads', headerTitle: 'Review Load', backHref: '/loads' }) %>
 <h1>Review Load</h1>
 <p>
-  <span class="status <%= load.status %>"><%= loadStatusLabel(load.status) %></span>
-  <% if (load.status === 'approved') { %>
+  <span class="status <%= load.status %>"><%= loadStatusLabel(load.status, load.settlement_status) %></span>
+  <% if (load.status === 'approved' && load.settlement_status !== 'approved') { %>
     <span class="muted">Pending Driver Settlement Approval<%= load.load_date ? ' · ' + settlementWeekLabel(load.load_date) : '' %></span>
+  <% } else if (load.settlement_status === 'approved') { %>
+    <span class="muted">Included in the approved driver settlement<%= load.load_date ? ' · ' + settlementWeekLabel(load.load_date) : '' %></span>
   <% } %>
 </p>
 <% if (saved === 'approved') { %><div class="all-clear">Load approved. It is pending driver settlement approval<%= load.load_date ? ' for the ' + settlementWeekLabel(load.load_date) : '' %>.</div><% } %>
@@ -23,7 +25,13 @@
   <div><strong>Qty/Wet Ton</strong> <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
   <div><strong>Rate</strong> $<%= money(load.rate) %></div>
   <div><strong>Load Total</strong> $<%= money((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) %></div>
-  <div><strong>Fuel Surcharge</strong> <%= Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No' %></div>
+  <% if (load.showPay) { %>
+    <div class="pay-line"><strong>Driver Pay</strong> $<%= money(load.payInfo.pay) %></div>
+    <div class="muted">Base $<%= money(load.payInfo.base) %> (linehaul × <%= load.payInfo.percentage %>%) · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %>. Fuel surcharge is not included.</div>
+  <% } %>
+  <% if (user.role === 'admin') { %>
+    <div><strong>Fuel Surcharge</strong> <%= Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No' %></div>
+  <% } %>
   <div><strong>Drive Time</strong> <%= Number(load.has_drive_time) === 1 ? '$' + money(load.drive_time_amount) : 'No' %></div>
   <div><strong>Self Load</strong> <%= Number(load.has_self_load) === 1 ? '$' + money(load.self_load_amount) : 'No' %></div>
   <div><strong>Description</strong> <%= load.description || '—' %></div>

@@ -9,6 +9,9 @@
     <span class="badge green"><%= greenCount %> Green</span>
   </div>
   <%- include('partials/levels', { levels: levels }) %>
+  <h2>Your Loads</h2>
+  <p class="muted">Approved loads stay here until an admin approves the weekly driver settlement. Driver pay does not include fuel surcharge.</p>
+  <%- include('partials/week-summaries', { weekGroups: weekGroups, undatedLoads: undatedLoads, user: user }) %>
 <% } else { %>
   <h1>Home</h1>
   <p class="muted">Items that are yellow or red and need attention.</p>
