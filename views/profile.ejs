@@ -27,18 +27,25 @@
       <svg class="field-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.2 4.6h2.2l1.2 3-1.6 1.1a11.2 11.2 0 0 0 5.3 5.3l1.1-1.6 3 1.2v2.2c0 .8-.6 1.5-1.4 1.6A13.6 13.6 0 0 1 6.6 6c.1-.8.8-1.4 1.6-1.4z"/></svg>
       <input id="phone" type="tel" name="phone" value="<%= profile.phone || '' %>" placeholder="Phone number" autocomplete="tel">
     </div>
-    <label for="address">Your Address</label>
-    <input id="address" type="text" name="address" value="<%= profile.address || '' %>" placeholder="Street, city, state, ZIP" autocomplete="street-address">
+    <label for="address">Address</label>
+    <input id="address" type="text" name="address" value="<%= profile.address || '' %>" placeholder="Street address" autocomplete="street-address">
+    <label for="city">City</label>
+    <input id="city" type="text" name="city" value="<%= profile.city || '' %>" autocomplete="address-level2">
+    <label for="state">State</label>
+    <input id="state" type="text" name="state" value="<%= profile.state || '' %>" autocomplete="address-level1" maxlength="32">
+    <label for="zip">Zip</label>
+    <input id="zip" type="text" name="zip" value="<%= profile.zip || '' %>" autocomplete="postal-code" inputmode="numeric">
+    <% if (profile.role === 'driver') { %>
+      <label for="pay_percentage">Driver Pay (Pay %)</label>
+      <input id="pay_percentage" type="text" value="<%= profile.pay_percentage != null && profile.pay_percentage !== '' ? profile.pay_percentage + '%' : 'Not set' %>" disabled>
+      <label for="hire_date">Hire Date</label>
+      <input id="hire_date" type="text" value="<%= profile.hire_date || 'Not set' %>" disabled>
+      <p class="field-help">Only an admin can change driver pay and hire date.</p>
+    <% } %>
     <button class="save-pill" type="submit">Save Changes</button>
   </form>
   <p class="profile-signout"><a href="/logout">Sign Out</a></p>
-  <% if (profile.role === 'driver') { %>
-    <div class="card">
-      <div><strong>Pay %</strong> <%= profile.pay_percentage != null && profile.pay_percentage !== '' ? profile.pay_percentage + '%' : 'Not set' %></div>
-      <div><strong>Hire Date</strong> <%= profile.hire_date || '—' %></div>
-      <p class="muted">Pay and hire date are managed by admin. CDL and medical card status is listed above.</p>
-    </div>
-  <% } else { %>
+  <% if (profile.role !== 'driver') { %>
     <div class="card">
       <div><strong>Role</strong> <%= profile.role %></div>
     </div>

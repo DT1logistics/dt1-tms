@@ -106,6 +106,51 @@ function backfillUserNames() {
   });
 }
 
+function parseStoredAddress(value) {
+  const text = String(value || '').trim();
+  const parts = text.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length >= 3) {
+    const region = parts[parts.length - 1].match(/^([A-Za-z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/);
+    if (region) {
+      return {
+        address: parts.slice(0, -2).join(', '),
+        city: parts[parts.length - 2],
+        state: region[1].toUpperCase(),
+        zip: region[2] || ''
+      };
+    }
+  }
+  return { address: text, city: '', state: '', zip: '' };
+}
+
+function normalizeState(value) {
+  const state = String(value || '').trim();
+  return state.length === 2 ? state.toUpperCase() : state;
+}
+
+function readAddressParts(body) {
+  return {
+    address: String(body.address || '').trim(),
+    city: String(body.city || '').trim(),
+    state: normalizeState(body.state),
+    zip: String(body.zip || '').trim()
+  };
+}
+
+function backfillUserAddresses() {
+  const people = db.prepare('SELECT id, address, city, state, zip FROM users').all();
+  const fill = db.prepare('UPDATE users SET address = ?, city = ?, state = ?, zip = ? WHERE id = ?');
+  people.forEach((person) => {
+    const city = String(person.city || '').trim();
+    const state = String(person.state || '').trim();
+    const zip = String(person.zip || '').trim();
+    if (city || state || zip || !String(person.address || '').trim()) return;
+    const parsed = parseStoredAddress(person.address);
+    if (!parsed.city && !parsed.state && !parsed.zip) return;
+    fill.run(parsed.address, parsed.city, parsed.state, parsed.zip, person.id);
+  });
+}
+
 // Initialize database tables
 function initDB() {
   db.exec(`
@@ -120,6 +165,9 @@ function initDB() {
       last_name TEXT,
       phone TEXT,
       address TEXT,
+      city TEXT,
+      state TEXT,
+      zip TEXT,
       pay_percentage REAL,
       hire_date DATE,
       dob DATE,
@@ -261,6 +309,9 @@ function initDB() {
   ensureColumn('users', 'last_name', 'TEXT');
   ensureColumn('users', 'phone', 'TEXT');
   ensureColumn('users', 'address', 'TEXT');
+  ensureColumn('users', 'city', 'TEXT');
+  ensureColumn('users', 'state', 'TEXT');
+  ensureColumn('users', 'zip', 'TEXT');
   ensureColumn('users', 'hire_date', 'DATE');
   ensureColumn('users', 'dob', 'DATE');
   ensureColumn('users', 'profile_pic', 'TEXT');
@@ -293,6 +344,7 @@ function initDB() {
   }
 
   backfillUserNames();
+  backfillUserAddresses();
 }
 
 initDB();
@@ -1067,8 +1119,10 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), (req, res) => {
 // Admin: Drivers management
 app.get('/drivers', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  const drivers = db.prepare("SELECT id, name, first_name, last_name, email, phone, address, pay_percentage, status, created_at FROM users WHERE role = 'driver' ORDER BY name").all();
+  const drivers = db.prepare("SELECT id, name, first_name, last_name, email, phone, address, city, state, zip, pay_percentage, status, created_at FROM users WHERE role = 'driver' ORDER BY name").all();
   drivers.forEach((driver) => {
+    const place = [driver.city, [driver.state, driver.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+    driver.addressLine = [driver.address, place].filter(Boolean).join(', ');
     driver.levels = collectDriverLevels(driver.id, { docHref: `/drivers/${driver.id}`, loadHref: '/loads', equipHref: '/equipment' });
   });
   res.render('drivers', { user: req.session.user, drivers });
@@ -1087,15 +1141,15 @@ app.post('/drivers', requireAuth, (req, res) => {
   const lastName = String(req.body.last_name || '').trim();
   const email = String(req.body.email || '').trim().toLowerCase();
   const phone = String(req.body.phone || '').trim();
-  const address = String(req.body.address || '').trim();
+  const place = readAddressParts(req.body);
   const fullName = composeName(firstName, middleInitial, lastName);
   const tempPassword = Math.random().toString(36).slice(-8);
   const hash = bcrypt.hashSync(tempPassword, 10);
   try {
     const result = db.prepare(`
-      INSERT INTO users (email, password, role, name, first_name, middle_initial, last_name, phone, address, pay_percentage, hire_date, dob, app_language, must_change_password)
-      VALUES (?, ?, 'driver', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'English', 1)
-    `).run(email, hash, fullName, firstName, middleInitial, lastName, phone, address, req.body.pay_percentage || null, req.body.hire_date, req.body.dob);
+      INSERT INTO users (email, password, role, name, first_name, middle_initial, last_name, phone, address, city, state, zip, pay_percentage, hire_date, dob, app_language, must_change_password)
+      VALUES (?, ?, 'driver', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'English', 1)
+    `).run(email, hash, fullName, firstName, middleInitial, lastName, phone, place.address, place.city, place.state, place.zip, req.body.pay_percentage || null, req.body.hire_date, req.body.dob);
     res.render('driver-created', { user: req.session.user, email, tempPassword, name: fullName, driverId: result.lastInsertRowid });
   } catch (e) {
     res.render('driver-form', { user: req.session.user, error: 'Email already exists or invalid data' });
@@ -1154,7 +1208,7 @@ app.post('/drivers/:id', requireAuth, (req, res) => {
   const lastName = String(req.body.last_name || '').trim();
   const email = String(req.body.email || '').trim().toLowerCase();
   const phone = String(req.body.phone || '').trim();
-  const address = String(req.body.address || '').trim();
+  const place = readAddressParts(req.body);
   const payText = String(req.body.pay_percentage || '').trim();
   const payPercentage = payText === '' ? null : parseFloat(payText);
   const draft = Object.assign({}, driver, {
@@ -1164,7 +1218,10 @@ app.post('/drivers/:id', requireAuth, (req, res) => {
     name: composeName(firstName, middleInitial, lastName),
     email,
     phone,
-    address,
+    address: place.address,
+    city: place.city,
+    state: place.state,
+    zip: place.zip,
     pay_percentage: Number.isFinite(payPercentage) ? payPercentage : driver.pay_percentage,
     hire_date: blankToNull(req.body.hire_date),
     dob: blankToNull(req.body.dob)
@@ -1176,7 +1233,8 @@ app.post('/drivers/:id', requireAuth, (req, res) => {
   if (duplicate) return renderDriverEditor(req, res, draft, 400, { error: 'That email is already in use.' });
   db.prepare(`
     UPDATE users
-    SET name = ?, first_name = ?, middle_initial = ?, last_name = ?, email = ?, phone = ?, address = ?,
+    SET name = ?, first_name = ?, middle_initial = ?, last_name = ?, email = ?, phone = ?,
+        address = ?, city = ?, state = ?, zip = ?,
         pay_percentage = ?, hire_date = ?, dob = ?, app_language = 'English'
     WHERE id = ?
   `).run(
@@ -1186,7 +1244,10 @@ app.post('/drivers/:id', requireAuth, (req, res) => {
     lastName,
     email,
     phone,
-    address,
+    place.address,
+    place.city,
+    place.state,
+    place.zip,
     Number.isFinite(payPercentage) ? payPercentage : null,
     draft.hire_date,
     draft.dob,
@@ -1382,7 +1443,7 @@ app.post('/profile', requireAuth, (req, res) => {
   const firstName = String(req.body.first_name || '').trim();
   const lastName = String(req.body.last_name || '').trim();
   const phone = String(req.body.phone || '').trim();
-  const address = String(req.body.address || '').trim();
+  const place = readAddressParts(req.body);
   const email = isDriver ? current.email : String(req.body.email || '').trim().toLowerCase();
   const name = composeName(firstName, current.middle_initial, lastName);
   const draft = Object.assign({}, current, {
@@ -1391,7 +1452,10 @@ app.post('/profile', requireAuth, (req, res) => {
     name,
     email,
     phone,
-    address,
+    address: place.address,
+    city: place.city,
+    state: place.state,
+    zip: place.zip,
     app_language: 'English'
   });
   const renderForm = (status, error) => res.status(status).render('profile', {
@@ -1413,9 +1477,9 @@ app.post('/profile', requireAuth, (req, res) => {
   }
   db.prepare(`
     UPDATE users
-    SET name = ?, first_name = ?, last_name = ?, email = ?, phone = ?, address = ?, app_language = 'English'
+    SET name = ?, first_name = ?, last_name = ?, email = ?, phone = ?, address = ?, city = ?, state = ?, zip = ?, app_language = 'English'
     WHERE id = ?
-  `).run(name, firstName, lastName, email, phone, address, current.id);
+  `).run(name, firstName, lastName, email, phone, place.address, place.city, place.state, place.zip, current.id);
   req.session.user.name = name;
   req.session.user.email = email;
   res.redirect('/profile?saved=1');

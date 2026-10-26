@@ -9,7 +9,7 @@
     <a class="card driver-link" href="/drivers/<%= d.id %>">
       <strong><%= d.name || 'Unnamed' %></strong>
       <div class="muted"><%= d.email %></div>
-      <% if (d.address) { %><div class="muted"><%= d.address %></div><% } %>
+      <% if (d.addressLine) { %><div class="muted"><%= d.addressLine %></div><% } %>
       <div class="muted">Pay: <%= d.pay_percentage ? d.pay_percentage + '%' : 'Not set' %> · <%= d.status || 'active' %></div>
       <%- include('partials/levels', { levels: d.levels, linked: false }) %>
     </a>
