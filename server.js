@@ -537,6 +537,14 @@ function initDB() {
       FOREIGN KEY (receipt_id) REFERENCES receipts(id)
     );
 
+    CREATE TABLE IF NOT EXISTS password_reset_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      email TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS communications_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       driver_id INTEGER,
@@ -988,6 +996,17 @@ function collectAlerts(user) {
   });
 
   if (user.role === 'admin') {
+    db.prepare(`
+      SELECT r.email, u.id AS user_id, u.name, u.role
+      FROM password_reset_requests r
+      LEFT JOIN users u ON u.id = r.user_id
+      WHERE r.status = 'pending'
+      ORDER BY r.id DESC
+    `).all().forEach((request) => {
+      const who = request.name || request.email || 'Driver';
+      const href = request.role === 'driver' && request.user_id ? `/drivers/${request.user_id}` : '/drivers';
+      pushAlert(alerts, 'red', 'Password Reset', who, 'Requested a password reset. Email could not be sent.', href);
+    });
     db.prepare('SELECT * FROM compliance_items ORDER BY name').all().forEach((item) => {
       pushAlert(
         alerts,
@@ -1165,9 +1184,96 @@ app.post('/change-password', requireAuth, (req, res) => {
   }
   const hash = bcrypt.hashSync(password, 10);
   db.prepare('UPDATE users SET password = ?, must_change_password = 0, temp_password = NULL WHERE id = ?').run(hash, req.session.user.id);
+  clearPasswordRequests(req.session.user.id);
   req.session.user.must_change_password = 0;
   res.redirect('/');
 });
+
+app.get('/forgot-password', (req, res) => {
+  if (req.session.user) return res.redirect('/');
+  res.render('forgot-password', { sent: false, error: '' });
+});
+
+app.post('/forgot-password', async (req, res) => {
+  const email = loginEmail(req.body.email || '');
+  const user = email ? db.prepare('SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))').get(email) : null;
+  if (user) {
+    if (smtpConfigured()) {
+      const tempPassword = randomPassword();
+      applyPassword(user.id, tempPassword, true);
+      try {
+        const delivery = await emailTempPassword(user, tempPassword);
+        if (!delivery.sent) recordPasswordRequest(user);
+      } catch (err) {
+        console.error('Password reset email failed:', err.message);
+        recordPasswordRequest(user);
+      }
+    } else {
+      recordPasswordRequest(user);
+    }
+  }
+  res.render('forgot-password', { sent: true, error: '' });
+});
+
+function clearPasswordRequests(userId) {
+  db.prepare("UPDATE password_reset_requests SET status = 'cleared' WHERE user_id = ? AND status = 'pending'").run(userId);
+}
+
+function recordPasswordRequest(user) {
+  if (!user || !user.id) return;
+  const pending = db.prepare("SELECT id FROM password_reset_requests WHERE user_id = ? AND status = 'pending'").get(user.id);
+  if (pending) return;
+  db.prepare('INSERT INTO password_reset_requests (user_id, email, status) VALUES (?, ?, ?)').run(user.id, user.email || '', 'pending');
+}
+
+function randomPassword() {
+  return Math.random().toString(36).slice(-8);
+}
+
+function applyPassword(userId, password, mustChange) {
+  const hash = bcrypt.hashSync(password, 10);
+  db.prepare('UPDATE users SET password = ?, must_change_password = ?, temp_password = ? WHERE id = ?')
+    .run(hash, mustChange ? 1 : 0, mustChange ? password : null, userId);
+  clearPasswordRequests(userId);
+}
+
+function passwordResetMessage(user, tempPassword) {
+  return [
+    `Hi ${user.name || 'there'},`,
+    'Your DT1 Logistics password was reset.',
+    `App: ${APP_URL}`,
+    `Login: ${user.email}`,
+    `Temporary password: ${tempPassword}`,
+    'You will be asked to choose a new password when you sign in.'
+  ].join('\n');
+}
+
+async function emailTempPassword(user, tempPassword) {
+  const message = passwordResetMessage(user, tempPassword);
+  return deliverWelcomeEmail({
+    to: user.email,
+    subject: 'DT1 Logistics password reset',
+    text: message,
+    html: messageHtml(message)
+  });
+}
+
+function passwordShareLinks(driver, tempPassword) {
+  const message = passwordResetMessage(driver, tempPassword);
+  return {
+    mailto: `mailto:${encodeURIComponent(driver.email || '')}?subject=${encodeURIComponent('DT1 Logistics password reset')}&body=${encodeURIComponent(message)}`,
+    smsHref: smsHref(driver.phone, message)
+  };
+}
+
+function complianceSummary(levels) {
+  let worst = 'green';
+  (levels || []).forEach((item) => {
+    if (rankLevel(item.level) < rankLevel(worst)) worst = item.level;
+  });
+  const labels = { red: 'Needs attention', yellow: 'Expiring soon', green: 'Compliant' };
+  return { level: worst, label: labels[worst] || 'Compliant' };
+}
 
 // Customers and projects (admin)
 app.get('/customers', requireAdmin, (req, res) => {
@@ -1810,11 +1916,10 @@ app.post('/loads/:id/missing-info', requireAuth, (req, res) => {
 // Admin: Drivers management
 app.get('/drivers', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  const drivers = db.prepare("SELECT id, name, first_name, last_name, email, phone, address, city, state, zip, pay_percentage, status, created_at FROM users WHERE role = 'driver' ORDER BY name").all();
+  const drivers = db.prepare("SELECT id, name, first_name, last_name, email, phone, pay_percentage, status, profile_pic FROM users WHERE role = 'driver' ORDER BY name").all();
   drivers.forEach((driver) => {
-    const place = [driver.city, [driver.state, driver.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
-    driver.addressLine = [driver.address, place].filter(Boolean).join(', ');
-    driver.levels = collectDriverLevels(driver.id, { docHref: `/drivers/${driver.id}`, loadHref: '/loads', equipHref: '/equipment' });
+    const levels = collectDriverLevels(driver.id, { documentsOnly: true });
+    driver.compliance = complianceSummary(levels);
   });
   res.render('drivers', { user: req.session.user, drivers, notifications: notificationStatus() });
 });
@@ -2356,14 +2461,38 @@ app.post('/drivers/:id/upload', requireAuth, upload.single('file'), (req, res) =
 function renderDriverEditor(req, res, driver, status, extras) {
   const docs = db.prepare('SELECT * FROM driver_documents WHERE driver_id = ?').all(driver.id);
   const levels = collectDriverLevels(driver.id, { docHref: '', loadHref: '/loads', equipHref: '/equipment' });
+  const resetRequest = db.prepare(`
+    SELECT * FROM password_reset_requests WHERE user_id = ? AND status = 'pending' ORDER BY id DESC LIMIT 1
+  `).get(driver.id);
+  let resetNotice = extras && extras.resetNotice;
+  if (!resetNotice && req.session.resetNotice && String(req.session.resetNotice.driverId) === String(driver.id)) {
+    resetNotice = req.session.resetNotice;
+    delete req.session.resetNotice;
+  }
+  let passwordSent = extras && extras.passwordSent;
+  if (!passwordSent && req.session.passwordSent && String(req.session.passwordSent.driverId) === String(driver.id)) {
+    passwordSent = req.session.passwordSent;
+    delete req.session.passwordSent;
+  }
+  const sharePassword = (resetNotice && resetNotice.password) || (driver.must_change_password ? String(driver.temp_password || '').trim() : '');
+  const shareLinks = sharePassword ? passwordShareLinks(driver, sharePassword) : null;
   res.status(status).render('driver-profile', Object.assign({
     user: req.session.user,
     driver,
     docs,
     levels,
     saved: false,
-    error: ''
-  }, extras));
+    error: '',
+    resetRequest: resetRequest || null,
+    resetNotice: resetNotice || null,
+    passwordSent: passwordSent || null,
+    shareLinks
+  }, extras, {
+    resetRequest: resetRequest || null,
+    resetNotice: resetNotice || null,
+    passwordSent: passwordSent || null,
+    shareLinks
+  }));
 }
 
 app.get('/drivers/:id', requireAuth, (req, res) => {
@@ -2371,6 +2500,57 @@ app.get('/drivers/:id', requireAuth, (req, res) => {
   const driver = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(req.params.id, 'driver');
   if (!driver) return res.redirect('/drivers');
   renderDriverEditor(req, res, driver, 200, { saved: req.query.saved === '1' });
+});
+
+app.post('/drivers/:id/reset-password', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/');
+  const driver = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(req.params.id, 'driver');
+  if (!driver) return res.redirect('/drivers');
+  const mode = req.body.mode === 'set' ? 'set' : 'temp';
+  let password = mode === 'set' ? String(req.body.new_password || '') : String(req.body.temp_password || '').trim();
+  if (mode === 'temp' && !password) password = randomPassword();
+  if (password.length < 6) {
+    return renderDriverEditor(req, res, driver, 400, { error: 'Password must be at least 6 characters.' });
+  }
+  const mustChange = mode === 'temp' || req.body.must_change === '1' || req.body.must_change === 'on';
+  applyPassword(driver.id, password, mustChange);
+  logAudit(req, 'Reset password', 'user', driver.id, mustChange ? 'Temporary password set' : 'Password set directly');
+  req.session.resetNotice = { driverId: driver.id, password, mustChange };
+  res.redirect(`/drivers/${driver.id}#reset-password`);
+});
+
+app.post('/drivers/:id/send-password', requireAuth, async (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/');
+  const driver = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(req.params.id, 'driver');
+  if (!driver) return res.redirect('/drivers');
+  const tempPassword = String(driver.temp_password || '').trim();
+  if (!tempPassword) {
+    return renderDriverEditor(req, res, driver, 400, { error: 'Generate a temporary password before sending it.' });
+  }
+  const channel = req.body.channel === 'email' || req.body.channel === 'sms' ? req.body.channel : 'both';
+  const message = [
+    `Hi ${driver.name || 'there'},`,
+    'Your DT1 Logistics password was reset.',
+    `App: ${APP_URL}`,
+    `Login: ${driver.email}`,
+    `Temporary password: ${tempPassword}`,
+    driver.must_change_password ? 'You will be asked to choose a new password when you sign in.' : 'You can sign in with this password.'
+  ].join('\n');
+  const welcome = {
+    to: driver.email,
+    subject: 'DT1 Logistics password reset',
+    text: message,
+    html: messageHtml(message),
+    smsText: message
+  };
+  const delivery = await deliverWelcome(welcome, driver.phone, channel);
+  req.session.passwordSent = {
+    driverId: driver.id,
+    emailStatus: !delivery.emailAttempted ? 'Not sent' : (delivery.sent ? 'Sent' : (delivery.smtpError ? 'Could not send' : 'Not configured')),
+    smsStatus: !delivery.smsAttempted ? 'Not sent' : (delivery.smsStatus || 'Not sent')
+  };
+  logAudit(req, 'Sent password reset', 'user', driver.id, channel);
+  res.redirect(`/drivers/${driver.id}#reset-password`);
 });
 
 app.post('/drivers/:id/status', requireAuth, (req, res) => {
@@ -2657,8 +2837,26 @@ app.get('/profile', requireAuth, (req, res) => {
     user: req.session.user,
     profile,
     levels: profileLevels(profile),
-    saved: req.query.saved === '1'
+    saved: req.query.saved || ''
   });
+});
+
+app.post('/profile/password', requireAuth, (req, res) => {
+  const profile = db.prepare('SELECT * FROM users WHERE id = ?').get(req.session.user.id);
+  const password = String(req.body.new_password || '');
+  const confirm = String(req.body.confirm_password || '');
+  const renderForm = (status, error) => res.status(status).render('profile', {
+    user: req.session.user,
+    profile,
+    levels: profileLevels(profile),
+    saved: '',
+    error
+  });
+  if (password.length < 6) return renderForm(400, 'Password must be at least 6 characters.');
+  if (password !== confirm) return renderForm(400, 'New password and confirmation do not match.');
+  applyPassword(profile.id, password, false);
+  req.session.user.must_change_password = 0;
+  res.redirect('/profile?saved=password');
 });
 
 app.post('/profile', requireAuth, (req, res) => {

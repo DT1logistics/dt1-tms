@@ -1,14 +1,10 @@
 <%- include('partials/open', { title: driver.name || 'Driver', user: user, active: 'drivers', headerTitle: driver.name || 'Driver', backHref: '/drivers' }) %>
 <h1><%= driver.name %></h1>
-<h2>Status</h2>
-<p class="muted">Green, yellow, and red levels for this driver.</p>
-<%- include('partials/levels', { levels: levels, linked: false }) %>
-
 <% if (typeof saved !== 'undefined' && saved) { %><div class="all-clear">Driver saved.</div><% } %>
 <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
 
-<div class="card" style="display:flex;gap:16px;align-items:center;">
-  <img class="profile-pic" src="<%= driver.profile_pic || '/default-avatar.png' %>" alt="">
+<div class="card profile-header-card" id="profile-header">
+  <img class="profile-pic profile-pic-lg" src="<%= driver.profile_pic || '/default-avatar.svg' %>" alt="">
   <div>
     <div><strong>Name:</strong> <%= driver.first_name || '' %> <%= driver.middle_initial || '' %> <%= driver.last_name || '' %></div>
     <div><strong>Address:</strong> <%= driver.address || '—' %></div>
@@ -21,6 +17,7 @@
     <div><strong>DOB:</strong> <%= driver.dob || '—' %></div>
     <div><strong>Pay %:</strong> <%= driver.pay_percentage || 'Not set' %></div>
     <div><strong>Status:</strong> <%= (driver.status || 'active') === 'inactive' ? 'Inactive' : 'Active' %></div>
+    <p class="header-actions"><a class="btn" href="#reset-password">Reset Password</a></p>
   </div>
 </div>
 <form method="POST" action="/drivers/<%= driver.id %>/status">
@@ -28,6 +25,59 @@
   <input type="hidden" name="status" value="<%= (driver.status || 'active') === 'inactive' ? 'active' : 'inactive' %>">
   <button type="submit"><%= (driver.status || 'active') === 'inactive' ? 'Activate' : 'Deactivate' %></button>
 </form>
+
+<div class="card" id="reset-password">
+  <h2>Reset Password</h2>
+  <% if (typeof resetNotice !== 'undefined' && resetNotice) { %>
+    <p><%= resetNotice.mustChange ? 'Temporary password. The driver must choose a new password on the next sign-in.' : 'Password updated. The driver can sign in with this password.' %></p>
+    <div class="temp" id="temp-password"><%= resetNotice.password %></div>
+  <% } %>
+  <% if (typeof passwordSent !== 'undefined' && passwordSent) { %>
+    <p>Email: <strong><%= passwordSent.emailStatus %></strong></p>
+    <p>Text: <strong><%= passwordSent.smsStatus %></strong></p>
+  <% } %>
+  <% if (typeof shareLinks !== 'undefined' && shareLinks) { %>
+    <p class="welcome-actions">
+      <a class="btn btn-secondary" href="<%= shareLinks.mailto %>">Open Email</a>
+      <a class="btn btn-secondary" href="<%= shareLinks.smsHref %>">Open Text Message</a>
+    </p>
+  <% } %>
+  <% if (typeof resetRequest !== 'undefined' && resetRequest && !(typeof resetNotice !== 'undefined' && resetNotice)) { %>
+    <div class="error">This driver requested a password reset. Email could not be sent. Generate a temporary password and share it with them.</div>
+  <% } %>
+
+  <h3>Generate Temporary Password &amp; Force Reset on Next Login</h3>
+  <form method="POST" action="/drivers/<%= driver.id %>/reset-password">
+    <input type="hidden" name="mode" value="temp">
+    <label for="temp_password">Custom temporary password (optional)</label>
+    <input id="temp_password" type="text" name="temp_password" autocomplete="off" minlength="6" placeholder="Leave blank to generate one">
+    <button type="submit">Generate Temporary Password</button>
+  </form>
+
+  <% if (driver.must_change_password && driver.temp_password) { %>
+    <form class="welcome-actions" method="POST" action="/drivers/<%= driver.id %>/send-password">
+      <button type="submit" name="channel" value="both">Email &amp; Text Password</button>
+      <button type="submit" class="btn-draft" name="channel" value="email">Email Password</button>
+      <button type="submit" class="btn-draft" name="channel" value="sms">Text Password</button>
+    </form>
+  <% } %>
+
+  <h3>Set New Password Directly</h3>
+  <form method="POST" action="/drivers/<%= driver.id %>/reset-password">
+    <input type="hidden" name="mode" value="set">
+    <label for="new_password">New Password</label>
+    <input id="new_password" type="text" name="new_password" required minlength="6" autocomplete="off">
+    <label class="check-line" for="must_change">
+      <input id="must_change" type="checkbox" name="must_change" value="1">
+      Driver must change this password on next sign-in
+    </label>
+    <button type="submit">Set Password</button>
+  </form>
+</div>
+
+<h2>Status</h2>
+<p class="muted">Green, yellow, and red levels for this driver.</p>
+<%- include('partials/levels', { levels: levels, linked: false }) %>
 
 <div class="card">
   <h2>Edit Driver</h2>
