@@ -542,3 +542,104 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   border-radius: 999px;
   vertical-align: middle;
 }
+
+/* Compact Load Date + Side-by-side Load Rate & Wet Ton/Qty (4-digit + decimal) */
+.load-date-ticket-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-top: 8px;
+}
+.load-date-ticket-row label,
+.load-rate-qty-row label {
+  margin-top: 0;
+  white-space: nowrap;
+}
+.field-date-compact {
+  flex: 0 0 auto;
+}
+.input-date-compact {
+  width: 146px;
+  max-width: 146px;
+  padding: 10px 8px;
+  font-variant-numeric: tabular-nums;
+}
+.field-ticket-flex {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.load-rate-qty-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-top: 10px;
+}
+.field-num-compact {
+  flex: 0 0 auto;
+}
+.input-num-4dec {
+  width: 108px;
+  max-width: 108px;
+  padding: 10px 8px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.load-total-inline {
+  margin-left: auto;
+  padding-bottom: 10px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--navy);
+  white-space: nowrap;
+}
+.compact-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+@media (max-width: 860px) {
+  #loadForm label {
+    margin-top: 8px;
+    font-size: 14px;
+  }
+  #loadForm .load-date-ticket-row label,
+  #loadForm .load-rate-qty-row label {
+    margin-top: 0;
+  }
+  #loadForm input,
+  #loadForm select,
+  #loadForm textarea {
+    padding: 9px 10px;
+  }
+  #loadForm .input-date-compact {
+    width: 138px;
+    max-width: 138px;
+    padding: 9px 6px;
+    font-size: 14px;
+  }
+  #loadForm .input-num-4dec {
+    width: 98px;
+    max-width: 98px;
+    padding: 9px 8px;
+    font-size: 15px;
+  }
+  #loadForm .check {
+    margin-top: 8px;
+  }
+  #loadForm .ticket-block {
+    margin-top: 6px;
+  }
+  #loadForm .ticket-block p.muted {
+    margin: 4px 0;
+    font-size: 12px;
+  }
+  #loadForm .ticket-btn {
+    min-height: 40px;
+    margin-top: 4px;
+  }
+  #loadForm .load-actions {
+    margin-top: 12px;
+  }
+}
