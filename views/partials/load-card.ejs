@@ -13,10 +13,10 @@
   <% } %>
   <div>Date: <%= load.load_date || '—' %></div>
   <div>Project: <%= load.project_display || '—' %></div>
-  <% if (load.origin || load.destination) { %>
-    <div>Origin: <%= load.origin || '—' %> · Destination: <%= load.destination || '—' %></div>
+  <div>Destination: <%= load.destination || load.description || '—' %></div>
+  <% if (user.role === 'admin' && (load.admin_notes || load.notes)) { %>
+    <div><strong>Notes <span class="admin-only-badge">Admin Only</span>:</strong> <%= load.admin_notes || load.notes %></div>
   <% } %>
-  <div>Description: <%= load.description || '—' %></div>
   <div>Qty/Wet Ton: <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
   <div>Rate: $<%= money(load.rate) %></div>
   <div>Load Total: $<%= money((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) %></div>

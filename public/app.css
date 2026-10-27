@@ -529,3 +529,16 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   white-space: nowrap;
   font-weight: 700;
 }
+
+.admin-only-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #1e3a8a;
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+  border-radius: 999px;
+  vertical-align: middle;
+}
