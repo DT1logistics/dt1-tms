@@ -81,7 +81,7 @@
       <% }) %>
     </select>
   <% } %>
-  <div class="load-rate-qty-row">
+  <div class="load-rate-qty-drive-row">
     <div class="field-num-compact">
       <label for="load_rate">Load Rate ($)</label>
       <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="rate" id="load_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.rate != null && load.rate !== '' ? load.rate : '' %>" <%= user.role === 'admin' ? '' : 'readonly' %>>
@@ -89,6 +89,26 @@
     <div class="field-num-compact">
       <label for="weight_quantity">Wet Ton/Qty</label>
       <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="weight_quantity" id="weight_quantity" class="input-num-4dec" data-four-dec="1" value="<%= load.weight_quantity || '' %>">
+    </div>
+    <div class="field-drive-compact">
+      <label class="drive-check-label" for="has_drive_time">
+        <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
+        <span>Drive Time ($)</span>
+      </label>
+      <div id="drive_time_wrap" class="drive-amount-inline" style="<%= load.has_drive_time ? '' : 'display:none;' %>">
+        <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="drive_time_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.drive_time_amount != null && load.drive_time_amount !== '' ? load.drive_time_amount : '0.00' %>">
+      </div>
+    </div>
+  </div>
+  <div class="load-self-total-row">
+    <div class="self-load-group">
+      <label class="self-check-label" for="has_self_load">
+        <input type="checkbox" name="has_self_load" id="has_self_load" value="1" <%= load.has_self_load ? 'checked' : '' %>>
+        <span>Self Load</span>
+      </label>
+      <div id="self_load_wrap" class="self-amount-inline" style="<%= load.has_self_load ? '' : 'display:none;' %>">
+        <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="self_load_amount" id="self_load_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.self_load_amount != null && load.self_load_amount !== '' ? load.self_load_amount : '0.00' %>">
+      </div>
     </div>
     <div class="load-total-inline" id="load_total">Load Total: $0.00</div>
   </div>
@@ -109,22 +129,6 @@
       <label for="has_fuel_surcharge">Includes Fuel Surcharge</label>
     </div>
   <% } %>
-  <div class="check">
-    <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
-    <label for="has_drive_time">Includes Drive Time</label>
-  </div>
-  <div id="drive_time_wrap" style="<%= load.has_drive_time ? '' : 'display:none;' %>">
-    <label>Drive Time Amount ($)</label>
-    <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" name="drive_time_amount" id="drive_time_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.drive_time_amount != null && load.drive_time_amount !== '' ? load.drive_time_amount : '0.00' %>">
-  </div>
-  <div class="check">
-    <input type="checkbox" name="has_self_load" id="has_self_load" value="1" <%= load.has_self_load ? 'checked' : '' %>>
-    <label for="has_self_load">Self Load</label>
-  </div>
-  <div id="self_load_wrap" style="<%= load.has_self_load ? '' : 'display:none;' %>">
-    <label>Self Load Amount ($)</label>
-    <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" name="self_load_amount" id="self_load_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.self_load_amount != null && load.self_load_amount !== '' ? load.self_load_amount : '0.00' %>">
-  </div>
   <% if (user.role === 'admin' && drivers && drivers.length) { %>
     <label>Driver</label>
     <select name="driver_id">
@@ -196,7 +200,7 @@
   }
 
   function syncSelfWrap() {
-    selfWrap.style.display = selfInput.checked ? 'block' : 'none';
+    selfWrap.style.display = selfInput.checked ? 'inline-block' : 'none';
   }
 
   function applyProject() {

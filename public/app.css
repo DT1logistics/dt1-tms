@@ -543,16 +543,16 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   vertical-align: middle;
 }
 
-/* Compact Load Date + Side-by-side Load Rate & Wet Ton/Qty (4-digit + decimal) */
+/* Compact Load Date + Side-by-side Load Rate, Wet Ton/Qty, Drive Time & Self Load + Load Total */
 .load-date-ticket-row {
   display: flex;
   flex-wrap: nowrap;
   align-items: flex-end;
-  gap: 12px;
+  gap: 10px;
   margin-top: 8px;
 }
 .load-date-ticket-row label,
-.load-rate-qty-row label {
+.load-rate-qty-drive-row label {
   margin-top: 0;
   white-space: nowrap;
 }
@@ -569,26 +569,77 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   flex: 1 1 auto;
   min-width: 0;
 }
-.load-rate-qty-row {
+.load-rate-qty-drive-row {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
+  flex-wrap: nowrap;
+  align-items: flex-start;
   gap: 12px;
   margin-top: 10px;
 }
-.field-num-compact {
+.field-num-compact,
+.field-drive-compact {
   flex: 0 0 auto;
 }
+.drive-check-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-weight: 700;
+  color: #333;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.drive-check-label input[type="checkbox"] {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+}
+.drive-amount-inline {
+  margin-top: 4px;
+}
 .input-num-4dec {
-  width: 108px;
-  max-width: 108px;
+  width: 104px;
+  max-width: 104px;
   padding: 10px 8px;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+.load-self-total-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 6px 0 2px;
+}
+.self-load-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.self-check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-weight: 700;
+  color: #333;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.self-check-label input[type="checkbox"] {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+}
+.self-amount-inline input.input-num-4dec {
+  margin-top: 0;
+}
 .load-total-inline {
   margin-left: auto;
-  padding-bottom: 10px;
   font-size: 16px;
   font-weight: 700;
   color: var(--navy);
@@ -601,45 +652,57 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 
 @media (max-width: 860px) {
   #loadForm label {
-    margin-top: 8px;
-    font-size: 14px;
+    margin-top: 7px;
+    font-size: 13px;
   }
   #loadForm .load-date-ticket-row label,
-  #loadForm .load-rate-qty-row label {
+  #loadForm .load-rate-qty-drive-row label,
+  #loadForm .load-self-total-row label {
     margin-top: 0;
   }
   #loadForm input,
   #loadForm select,
   #loadForm textarea {
-    padding: 9px 10px;
+    padding: 8px 9px;
   }
   #loadForm .input-date-compact {
-    width: 138px;
-    max-width: 138px;
-    padding: 9px 6px;
+    width: 136px;
+    max-width: 136px;
+    padding: 8px 6px;
     font-size: 14px;
   }
+  #loadForm .load-rate-qty-drive-row {
+    gap: 8px;
+    margin-top: 8px;
+  }
   #loadForm .input-num-4dec {
-    width: 98px;
-    max-width: 98px;
-    padding: 9px 8px;
+    width: 92px;
+    max-width: 92px;
+    padding: 8px 6px;
+    font-size: 14px;
+  }
+  #loadForm .load-self-total-row {
+    margin-top: 8px;
+    padding: 4px 0 0;
+  }
+  #loadForm .load-total-inline {
     font-size: 15px;
   }
   #loadForm .check {
-    margin-top: 8px;
+    margin-top: 6px;
   }
   #loadForm .ticket-block {
     margin-top: 6px;
   }
   #loadForm .ticket-block p.muted {
-    margin: 4px 0;
+    margin: 3px 0;
     font-size: 12px;
   }
   #loadForm .ticket-btn {
-    min-height: 40px;
+    min-height: 38px;
     margin-top: 4px;
   }
   #loadForm .load-actions {
-    margin-top: 12px;
+    margin-top: 10px;
   }
 }
