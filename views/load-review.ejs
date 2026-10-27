@@ -154,15 +154,36 @@
           <% }) %>
         </select>
       <% } %>
-      <div class="load-rate-qty-row">
+      <div class="load-rate-qty-drive-row">
         <div class="field-num-compact">
           <label>Load Rate ($)</label>
-          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="rate" class="input-num-4dec" value="<%= load.rate != null && load.rate !== '' ? load.rate : '' %>">
+          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="rate" id="review_rate" class="input-num-4dec" value="<%= load.rate != null && load.rate !== '' ? load.rate : '' %>">
         </div>
         <div class="field-num-compact">
           <label>Wet Ton/Qty</label>
-          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="weight_quantity" class="input-num-4dec" value="<%= load.weight_quantity != null ? load.weight_quantity : '' %>">
+          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="weight_quantity" id="review_qty" class="input-num-4dec" value="<%= load.weight_quantity != null ? load.weight_quantity : '' %>">
         </div>
+        <div class="field-drive-compact">
+          <label class="drive-check-label" for="has_drive_time">
+            <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
+            <span>Drive Time ($)</span>
+          </label>
+          <div class="drive-amount-inline">
+            <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" class="input-num-4dec" value="<%= load.drive_time_amount != null ? load.drive_time_amount : '0.00' %>">
+          </div>
+        </div>
+      </div>
+      <div class="load-self-total-row">
+        <div class="self-load-group">
+          <label class="self-check-label" for="has_self_load">
+            <input type="checkbox" name="has_self_load" id="has_self_load" value="1" <%= load.has_self_load ? 'checked' : '' %>>
+            <span>Self Load ($)</span>
+          </label>
+          <div class="self-amount-inline">
+            <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="self_load_amount" class="input-num-4dec" value="<%= load.self_load_amount != null ? load.self_load_amount : '0.00' %>">
+          </div>
+        </div>
+        <div class="load-total-inline" id="review_load_total">Load Total: $<%= money((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) %></div>
       </div>
       <label for="driver_pay_type">Driver Pay Basis / Type</label>
       <select name="driver_pay_type" id="driver_pay_type">
@@ -171,25 +192,13 @@
       </select>
       <div id="flat_rate_wrap">
         <label for="driver_flat_rate">Driver Flat / Daily Rate ($)</label>
-        <input type="number" step="0.01" name="driver_flat_rate" id="driver_flat_rate" value="<%= load.driver_flat_rate != null && load.driver_flat_rate !== '' ? load.driver_flat_rate : '0.00' %>">
+        <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" name="driver_flat_rate" id="driver_flat_rate" class="input-num-4dec" value="<%= load.driver_flat_rate != null && load.driver_flat_rate !== '' ? load.driver_flat_rate : '0.00' %>">
       </div>
       <p class="muted" id="pay_basis_help"></p>
       <div class="check">
         <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
         <label for="has_fuel_surcharge">Includes Fuel Surcharge</label>
       </div>
-      <div class="check">
-        <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
-        <label for="has_drive_time">Includes Drive Time</label>
-      </div>
-      <label>Drive Time Amount ($)</label>
-      <input type="number" step="0.01" name="drive_time_amount" value="<%= load.drive_time_amount != null ? load.drive_time_amount : '0.00' %>">
-      <div class="check">
-        <input type="checkbox" name="has_self_load" id="has_self_load" value="1" <%= load.has_self_load ? 'checked' : '' %>>
-        <label for="has_self_load">Self Load</label>
-      </div>
-      <label>Self Load Amount ($)</label>
-      <input type="number" step="0.01" name="self_load_amount" value="<%= load.self_load_amount != null ? load.self_load_amount : '0.00' %>">
       <% if (drivers && drivers.length) { %>
         <label>Assign Driver</label>
         <select name="driver_id">
