@@ -3,6 +3,7 @@
 <a href="/loads/new" class="btn">+New Load</a>
 <% if (typeof deleted !== 'undefined' && deleted) { %><div class="all-clear">Load deleted.</div><% } %>
 <% if (user.role === 'driver') { %>
+  <%- include('partials/assigned-loads-banner', { assignedLoads: typeof assignedLoads !== 'undefined' ? assignedLoads : [] }) %>
   <p class="muted">Loads waiting for weekly settlement approval are grouped by Monday–Sunday week. Settled weeks are on Settlements.</p>
   <%- include('partials/week-summaries', { weekGroups: weekGroups, undatedLoads: undatedLoads, user: user }) %>
 <% } else if (loads.length === 0) { %>

@@ -26,6 +26,18 @@
           <span>Enter the completed load, including Ticket #, Qty/Wet Ton, and the Load Ticket/BOL, then submit or approve it.</span>
         </span>
       </label>
+      <div class="assign-sms-box" id="assign_sms_box">
+        <label class="check">
+          <input type="checkbox" name="send_assign_sms" id="send_assign_sms" value="1" checked>
+          <span><strong>Send text message (SMS) notification to driver:</strong> &ldquo;DT1 Logistics has assigned you a new Load&rdquo;</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" name="send_assign_email" id="send_assign_email" value="1" checked>
+          <span>Also send email copy to driver&rsquo;s email address</span>
+        </label>
+        <label for="assign_sms_preview" class="assign-sms-label">Text Message (SMS) Preview <span class="muted">(auto-updates with load details; editable before assigning)</span></label>
+        <textarea name="assign_sms_message" id="assign_sms_preview" rows="3" class="sms-preview-input">DT1 Logistics has assigned you a new Load. Open the DT1 TMS app to review, complete, and submit your load ticket: https://dt1-tms.onrender.com/loads</textarea>
+      </div>
     </fieldset>
   <% } %>
   <label>Load Date</label>
@@ -273,13 +285,51 @@
     syncPayType();
   }
 
+  const smsPreviewEl = document.getElementById('assign_sms_preview');
+  let smsPreviewDirty = false;
+  if (smsPreviewEl) {
+    smsPreviewEl.addEventListener('input', () => { smsPreviewDirty = true; });
+  }
+  function buildAssignSmsPreview() {
+    if (!smsPreviewEl || smsPreviewDirty) return;
+    const dateInput = document.querySelector('input[name="load_date"]');
+    const loadDate = dateInput && dateInput.value ? dateInput.value : '';
+    const projOpt = projectSelect && projectSelect.options ? projectSelect.options[projectSelect.selectedIndex] : null;
+    const projName = projOpt && projOpt.value ? projOpt.text.replace(/\s*\(\$[0-9.]+\)\s*$/, '').trim() : '';
+    const truckSelect = document.querySelector('select[name="truck_id"]');
+    const truckOpt = truckSelect && truckSelect.options ? truckSelect.options[truckSelect.selectedIndex] : null;
+    const truckText = truckOpt && truckOpt.value ? ('Truck ' + truckOpt.text.split('—')[0].trim()) : '';
+    const originInput = document.querySelector('input[name="origin"]');
+    const destInput = document.querySelector('input[name="destination"]');
+    const origin = originInput && originInput.value ? originInput.value.trim() : '';
+    const dest = destInput && destInput.value ? destInput.value.trim() : '';
+    const route = (origin || dest) ? ((origin || 'Origin TBD') + ' -> ' + (dest || 'Destination TBD')) : '';
+    const details = [];
+    if (loadDate) details.push('for ' + loadDate);
+    if (projName) details.push(projName);
+    if (truckText) details.push(truckText);
+    if (route) details.push(route);
+    const detailText = details.length ? (' (' + details.join(' — ') + ')') : '';
+    smsPreviewEl.value = 'DT1 Logistics has assigned you a new Load' + detailText + '. Open the DT1 TMS app to review, complete, and submit your load ticket: https://dt1-tms.onrender.com/loads';
+  }
+  ['input[name="load_date"]', 'select[name="project_id"]', 'select[name="truck_id"]', 'input[name="origin"]', 'input[name="destination"]'].forEach((sel) => {
+    const el = document.querySelector(sel);
+    if (el) {
+      el.addEventListener('change', buildAssignSmsPreview);
+      el.addEventListener('input', buildAssignSmsPreview);
+    }
+  });
+
   const modeRadios = document.querySelectorAll('input[name="admin_mode"]');
   function syncAdminMode() {
     const selected = document.querySelector('input[name="admin_mode"]:checked');
     const mode = selected ? selected.value : '';
+    const smsBox = document.getElementById('assign_sms_box');
+    if (smsBox) smsBox.hidden = mode !== 'assign';
     document.querySelectorAll('[data-admin-mode]').forEach((button) => {
       button.hidden = mode ? button.getAttribute('data-admin-mode') !== mode : false;
     });
+    buildAssignSmsPreview();
   }
   modeRadios.forEach((radio) => radio.addEventListener('change', syncAdminMode));
   if (modeRadios.length) syncAdminMode();
