@@ -77,7 +77,7 @@
   <div><strong>Destination</strong> <%= load.destination || load.description || '—' %></div>
   <div><strong>Qty/Wet Ton</strong> <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
   <div><strong>Rate</strong> $<%= money(load.rate) %></div>
-  <div><strong>Load Total</strong> $<%= money((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) %></div>
+  <div><strong>Load Total</strong> $<%= money(loadTotalAmount(load)) %></div>
   <% if (load.payInfo && (user.role === 'admin' || load.showPay)) { %>
     <div><strong>Driver Pay Basis</strong> <%= load.payInfo.basis %></div>
   <% } %>
@@ -156,35 +156,35 @@
       <% } %>
       <div class="load-rate-qty-drive-row">
         <div class="field-num-compact">
-          <label>Load Rate ($)</label>
-          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="rate" id="review_rate" class="input-num-4dec" value="<%= load.rate != null && load.rate !== '' ? load.rate : '' %>">
+          <label for="review_rate">Load Rate ($)</label>
+          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="rate" id="review_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.rate != null && load.rate !== '' ? Number(load.rate).toFixed(2) : '' %>">
         </div>
         <div class="field-num-compact">
-          <label>Wet Ton/Qty</label>
-          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="weight_quantity" id="review_qty" class="input-num-4dec" value="<%= load.weight_quantity != null ? load.weight_quantity : '' %>">
+          <label for="review_qty">Wet Ton/Qty</label>
+          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="weight_quantity" id="review_qty" class="input-num-4dec" data-four-dec="1" value="<%= load.weight_quantity != null ? load.weight_quantity : '' %>">
         </div>
         <div class="field-drive-compact">
           <label class="drive-check-label" for="has_drive_time">
             <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
             <span>Drive Time ($)</span>
           </label>
-          <div class="drive-amount-inline">
-            <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" class="input-num-4dec" value="<%= load.drive_time_amount != null ? load.drive_time_amount : '0.00' %>">
+          <div id="review_drive_wrap" class="drive-amount-inline" style="<%= load.has_drive_time ? '' : 'display:none;' %>">
+            <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="review_drive_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.drive_time_amount != null ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
           </div>
         </div>
       </div>
-      <div class="load-self-total-row">
+      <div class="load-self-row">
         <div class="self-load-group">
           <label class="self-check-label" for="has_self_load">
             <input type="checkbox" name="has_self_load" id="has_self_load" value="1" <%= load.has_self_load ? 'checked' : '' %>>
             <span>Self Load ($)</span>
           </label>
-          <div class="self-amount-inline">
-            <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="self_load_amount" class="input-num-4dec" value="<%= load.self_load_amount != null ? load.self_load_amount : '0.00' %>">
+          <div id="review_self_wrap" class="self-amount-inline" style="<%= load.has_self_load ? 'display:inline-flex;' : 'display:none;' %>">
+            <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="20.00" name="self_load_amount" id="review_self_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.self_load_amount != null && Number(load.self_load_amount) > 0 ? Number(load.self_load_amount).toFixed(2) : '20.00' %>">
           </div>
         </div>
-        <div class="load-total-inline" id="review_load_total">Load Total: $<%= money((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) %></div>
       </div>
+      <div class="load-total-under" id="review_load_total">Load Total: $<%= money(loadTotalAmount(load)) %></div>
       <label for="driver_pay_type">Driver Pay Basis / Type</label>
       <select name="driver_pay_type" id="driver_pay_type">
         <option value="percentage" <%= load.driver_pay_type === 'flat' ? '' : 'selected' %>>Percentage of Load (% — uses Driver's Profile Pay %)</option>
@@ -258,6 +258,77 @@
   const payType = document.getElementById('driver_pay_type');
   const flatWrap = document.getElementById('flat_rate_wrap');
   const payHelp = document.getElementById('pay_basis_help');
+  const reviewRate = document.getElementById('review_rate');
+  const reviewQty = document.getElementById('review_qty');
+  const reviewDriveCheck = document.getElementById('has_drive_time');
+  const reviewDriveWrap = document.getElementById('review_drive_wrap');
+  const reviewDriveAmount = document.getElementById('review_drive_amount');
+  const reviewSelfCheck = document.getElementById('has_self_load');
+  const reviewSelfWrap = document.getElementById('review_self_wrap');
+  const reviewSelfAmount = document.getElementById('review_self_amount');
+  const reviewFlatRate = document.getElementById('driver_flat_rate');
+  const reviewLoadTotal = document.getElementById('review_load_total');
+
+  function syncReviewLoadTotal() {
+    if (!reviewLoadTotal) return;
+    const qty = Number(reviewQty && reviewQty.value);
+    const rate = Number(reviewRate && reviewRate.value);
+    const isFlat = payType && payType.value === 'flat';
+    const baseHaul = (Number.isFinite(qty) ? qty : 0) * (Number.isFinite(rate) ? rate : 0);
+    const base = (isFlat && baseHaul === 0)
+      ? (Number.isFinite(Number(reviewFlatRate && reviewFlatRate.value)) ? Number(reviewFlatRate.value) : 0)
+      : baseHaul;
+    const drive = (reviewDriveCheck && reviewDriveCheck.checked)
+      ? (Number.isFinite(Number(reviewDriveAmount && reviewDriveAmount.value)) ? Number(reviewDriveAmount.value) : 0)
+      : 0;
+    const self = (reviewSelfCheck && reviewSelfCheck.checked)
+      ? (Number.isFinite(Number(reviewSelfAmount && reviewSelfAmount.value)) ? Number(reviewSelfAmount.value) : 0)
+      : 0;
+    reviewLoadTotal.textContent = 'Load Total: $' + (base + drive + self).toFixed(2);
+  }
+
+  function syncReviewDriveWrap() {
+    if (reviewDriveWrap && reviewDriveCheck) {
+      reviewDriveWrap.style.display = reviewDriveCheck.checked ? 'block' : 'none';
+    }
+  }
+
+  function syncReviewSelfWrap() {
+    if (reviewSelfWrap && reviewSelfCheck) {
+      if (reviewSelfCheck.checked && reviewSelfAmount && (!reviewSelfAmount.value || Number(reviewSelfAmount.value) === 0)) {
+        reviewSelfAmount.value = '20.00';
+      }
+      reviewSelfWrap.style.display = reviewSelfCheck.checked ? 'inline-flex' : 'none';
+    }
+  }
+
+  if (reviewDriveCheck) {
+    reviewDriveCheck.addEventListener('change', () => {
+      if (!reviewDriveCheck.checked && reviewDriveAmount) reviewDriveAmount.value = '0.00';
+      syncReviewDriveWrap();
+      syncReviewLoadTotal();
+    });
+  }
+  if (reviewSelfCheck) {
+    reviewSelfCheck.addEventListener('change', () => {
+      if (reviewSelfCheck.checked) {
+        if (reviewSelfAmount && (!reviewSelfAmount.value || Number(reviewSelfAmount.value) === 0)) {
+          reviewSelfAmount.value = '20.00';
+        }
+      } else if (reviewSelfAmount) {
+        reviewSelfAmount.value = '0.00';
+      }
+      syncReviewSelfWrap();
+      syncReviewLoadTotal();
+    });
+  }
+  [reviewRate, reviewQty, reviewDriveAmount, reviewSelfAmount, reviewFlatRate].forEach((el) => {
+    if (el) {
+      el.addEventListener('input', syncReviewLoadTotal);
+      el.addEventListener('change', syncReviewLoadTotal);
+    }
+  });
+
   function syncPayType() {
     if (!payType || !flatWrap) return;
     const flat = payType.value === 'flat';
@@ -267,10 +338,14 @@
         ? 'Driver Pay = Driver Flat / Daily Rate + Drive Time + Self Load. Fuel surcharge is not included.'
         : 'Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load. Fuel surcharge is not included.';
     }
+    syncReviewLoadTotal();
   }
   if (payType) {
     payType.addEventListener('change', syncPayType);
     syncPayType();
   }
+  syncReviewDriveWrap();
+  syncReviewSelfWrap();
+  syncReviewLoadTotal();
 </script>
 <%- include('partials/close') %>

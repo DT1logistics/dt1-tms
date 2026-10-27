@@ -605,17 +605,16 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
-.load-self-total-row {
+.load-self-row {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
-  margin-top: 10px;
-  padding: 6px 0 2px;
+  margin-top: 8px;
+  padding: 2px 0;
 }
 .self-load-group {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
@@ -635,11 +634,19 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   width: 16px;
   height: 16px;
 }
+.self-amount-inline {
+  display: inline-flex;
+  align-items: center;
+}
 .self-amount-inline input.input-num-4dec {
   margin-top: 0;
 }
-.load-total-inline {
-  margin-left: auto;
+.load-total-under {
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: #eef3f8;
+  border-left: 4px solid var(--navy);
+  border-radius: 6px;
   font-size: 16px;
   font-weight: 700;
   color: var(--navy);
@@ -657,7 +664,7 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   }
   #loadForm .load-date-ticket-row label,
   #loadForm .load-rate-qty-drive-row label,
-  #loadForm .load-self-total-row label {
+  #loadForm .load-self-row label {
     margin-top: 0;
   }
   #loadForm input,
@@ -681,11 +688,13 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
     padding: 8px 6px;
     font-size: 14px;
   }
-  #loadForm .load-self-total-row {
-    margin-top: 8px;
-    padding: 4px 0 0;
+  #loadForm .load-self-row {
+    margin-top: 6px;
+    padding: 2px 0 0;
   }
-  #loadForm .load-total-inline {
+  #loadForm .load-total-under {
+    margin-top: 5px;
+    padding: 5px 10px;
     font-size: 15px;
   }
   #loadForm .check {

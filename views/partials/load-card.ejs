@@ -19,7 +19,7 @@
   <% } %>
   <div>Qty/Wet Ton: <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
   <div>Rate: $<%= money(load.rate) %></div>
-  <div>Load Total: $<%= money((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) %></div>
+  <div>Load Total: $<%= money(loadTotalAmount(load)) %></div>
   <% if (user.role === 'admin') { %>
     <div>Fuel Surcharge: <%= Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No' %></div>
   <% } %>
