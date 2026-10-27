@@ -156,6 +156,14 @@ function driverWeekGroups(driverId) {
   };
 }
 
+function driverAssignedDraftLoads(driverId) {
+  if (!driverId) return [];
+  return db.prepare(loadQuery + `
+    WHERE l.driver_id = ? AND l.status = 'draft' AND l.entry_mode = 'assigned'
+    ORDER BY l.load_date DESC, l.id DESC
+  `).all(driverId);
+}
+
 function ticketFileKind(name) {
   const ext = path.extname(String(name || '')).toLowerCase();
   if (['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'].includes(ext)) return 'image';
@@ -1112,7 +1120,8 @@ function renderDashboard(req, res) {
       yellowCount: levels.filter((item) => item.level === 'yellow').length,
       greenCount: levels.filter((item) => item.level === 'green').length,
       weekGroups: grouped.weeks,
-      undatedLoads: grouped.undated
+      undatedLoads: grouped.undated,
+      assignedLoads: driverAssignedDraftLoads(req.session.user.id)
     });
   }
   const attention = collectAlerts(req.session.user);
@@ -1517,6 +1526,7 @@ app.get('/loads', requireAuth, (req, res) => {
       loads: [],
       weekGroups: grouped.weeks,
       undatedLoads: grouped.undated,
+      assignedLoads: driverAssignedDraftLoads(req.session.user.id),
       deleted: req.query.deleted === '1'
     });
   }
@@ -1753,6 +1763,109 @@ app.get('/loads/:id/edit', requireAuth, (req, res) => {
   res.render('load-form', { user: req.session.user, load, tickets: ticketRows(existing.id), ...form });
 });
 
+function buildAssignedLoadSms(load, customMessage) {
+  const loadLink = `${APP_URL}/loads/${load.id}/edit`;
+  const trimmedCustom = String(customMessage || '').trim();
+  const defaultGeneric = `DT1 Logistics has assigned you a new Load. Open the DT1 TMS app to review, complete, and submit your load ticket: ${APP_URL}/loads`;
+  if (trimmedCustom && trimmedCustom !== defaultGeneric) {
+    return trimmedCustom
+      .replace('DT1 Logistics has assigned you a new Load (for ', `DT1 Logistics has assigned you a new Load (#${load.id} for `)
+      .replace('DT1 Logistics has assigned you a new Load (', `DT1 Logistics has assigned you a new Load (#${load.id} — `)
+      .replace(`(#${load.id} — #`, '(#')
+      .replace(`${APP_URL}/loads`, loadLink);
+  }
+  const parts = [`#${load.id}`];
+  if (load.load_date) parts[0] += ` for ${load.load_date}`;
+  if (load.project_display) parts.push(load.project_display);
+  if (load.truck_number) parts.push(`Truck ${load.truck_number}`);
+  if (load.origin || load.destination) {
+    parts.push(`${load.origin || 'Origin TBD'} -> ${load.destination || 'Destination TBD'}`);
+  }
+  const detailText = parts.length ? ` (${parts.join(' — ')})` : '';
+  return `DT1 Logistics has assigned you a new Load${detailText}. Open the DT1 TMS app to review, complete, and submit your load ticket: ${loadLink}`;
+}
+
+async function notifyAssignedLoadDriver(req, loadId) {
+  const load = db.prepare(loadQuery + ' WHERE l.id = ?').get(loadId);
+  if (!load || !load.driver_id) return null;
+  const driver = db.prepare('SELECT * FROM users WHERE id = ?').get(load.driver_id);
+  if (!driver) return null;
+
+  const formSubmitted = bodyHas(req.body, 'assign_sms_message') || bodyHas(req.body, 'admin_mode');
+  const sendSms = formSubmitted
+    ? (req.body.send_assign_sms === '1' || req.body.send_assign_sms === 'on')
+    : true;
+  const sendEmail = formSubmitted
+    ? (req.body.send_assign_email === '1' || req.body.send_assign_email === 'on')
+    : false;
+
+  const rawText = buildAssignedLoadSms(load, req.body ? req.body.assign_sms_message : '');
+  const smsText = personalizeMessage(rawText, driver);
+  const subject = 'DT1 Logistics has assigned you a new Load';
+
+  let smsStatus = 'Not selected';
+  if (sendSms) {
+    const smsRes = await deliverWelcomeSms({ smsText, phone: driver.phone }, driver.phone);
+    smsStatus = smsRes.smsStatus || (smsRes.smsSent ? 'Sent' : 'Ready — tap Open Text Message below');
+    if (smsStatus === 'Not configured') {
+      smsStatus = driver.phone ? 'Logged (Tap Open Text Message below to send from phone)' : 'No phone number on file';
+    }
+  }
+
+  let emailStatus = 'Not selected';
+  if (sendEmail) {
+    if (!driver.email) {
+      emailStatus = 'No email on file';
+    } else {
+      const emailRes = await deliverWelcomeEmail({
+        to: driver.email,
+        subject,
+        text: smsText,
+        html: messageHtml(smsText)
+      });
+      emailStatus = emailRes.sent ? 'Sent' : (emailRes.smtpError ? 'Could not send' : 'Not configured');
+    }
+  }
+
+  const channels = sendSms && sendEmail ? 'Email + Text (Assigned Load)' : (sendSms ? 'Text (Assigned Load)' : (sendEmail ? 'Email (Assigned Load)' : 'Assigned Load'));
+  if (sendSms || sendEmail) {
+    db.prepare(`
+      INSERT INTO communications_log (
+        driver_id, driver_name, driver_email, driver_phone, channels, subject, message_body,
+        email_status, sms_status, sent_by, sent_by_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      driver.id,
+      driver.name || 'Unnamed',
+      driver.email || '',
+      driver.phone || '',
+      channels,
+      subject,
+      smsText,
+      emailStatus,
+      smsStatus,
+      req.session.user ? req.session.user.id : null,
+      actorName(req)
+    );
+    logAudit(req, 'Sent load assignment notification', 'load', load.id, `To ${driver.name || driver.email}: "DT1 Logistics has assigned you a new Load" (${smsStatus})`);
+  }
+
+  const notice = {
+    loadId: load.id,
+    driverId: driver.id,
+    driverName: driver.name || driver.email,
+    driverPhone: driver.phone || '',
+    driverEmail: driver.email || '',
+    smsText,
+    smsStatus,
+    emailStatus,
+    smsHref: smsHref(driver.phone, smsText),
+    mailto: `mailto:${encodeURIComponent(driver.email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(smsText)}`
+  };
+  req.session.assignedLoadNotice = notice;
+  return notice;
+}
+
 app.get('/loads/:id', requireAuth, (req, res) => {
   const existing = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!canViewLoad(req, existing)) return res.redirect('/loads');
@@ -1762,12 +1875,40 @@ app.get('/loads/:id', requireAuth, (req, res) => {
     const current = db.prepare('SELECT * FROM projects WHERE id = ?').get(load.project_id);
     if (current) form.projects = [current].concat(form.projects);
   }
+  let assignedLoadNotice = null;
+  if (req.session.assignedLoadNotice && String(req.session.assignedLoadNotice.loadId) === String(load.id)) {
+    assignedLoadNotice = req.session.assignedLoadNotice;
+    delete req.session.assignedLoadNotice;
+  } else if (req.session.user.role === 'admin' && load.entry_mode === 'assigned' && load.driver_id) {
+    const driver = db.prepare('SELECT * FROM users WHERE id = ?').get(load.driver_id);
+    if (driver) {
+      const smsText = buildAssignedLoadSms(load, '');
+      const lastComm = db.prepare(`
+        SELECT * FROM communications_log
+        WHERE driver_id = ? AND subject = 'DT1 Logistics has assigned you a new Load'
+        ORDER BY id DESC LIMIT 1
+      `).get(driver.id);
+      assignedLoadNotice = {
+        loadId: load.id,
+        driverId: driver.id,
+        driverName: driver.name || driver.email,
+        driverPhone: driver.phone || '',
+        driverEmail: driver.email || '',
+        smsText: lastComm ? lastComm.message_body : smsText,
+        smsStatus: lastComm ? lastComm.sms_status : 'Ready',
+        emailStatus: lastComm ? lastComm.email_status : 'Not selected',
+        smsHref: smsHref(driver.phone, lastComm ? lastComm.message_body : smsText),
+        mailto: `mailto:${encodeURIComponent(driver.email || '')}?subject=${encodeURIComponent('DT1 Logistics has assigned you a new Load')}&body=${encodeURIComponent(lastComm ? lastComm.message_body : smsText)}`
+      };
+    }
+  }
   res.render('load-review', {
     user: req.session.user,
     load,
     tickets: ticketRows(load.id),
     audit: loadAudit(load.id),
     saved: req.query.saved || '',
+    assignedLoadNotice,
     ...form
   });
 });
@@ -1793,7 +1934,7 @@ function stampLoadApproval(loadId, req, entry) {
   `).run(req.session.user.id, actorName(req), loadId);
 }
 
-app.post('/loads', requireAuth, upload.array('tickets', 10), (req, res) => {
+app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) => {
   const isAdmin = req.session.user.role === 'admin';
   const entry = resolveLoadEntry(req, null);
   const project = findActiveProject(req.body.project_id);
@@ -1839,10 +1980,14 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), (req, res) => {
   stampLoadApproval(result.lastInsertRowid, req, entry);
   saveTicketFiles(result.lastInsertRowid, req.files, req.session.user.id);
   logAudit(req, entry.auditAction, 'load', result.lastInsertRowid, entry.auditDetail);
+  if (isAdmin && entry.entryMode === 'assigned' && values.driver_id) {
+    await notifyAssignedLoadDriver(req, result.lastInsertRowid);
+    return res.redirect(`/loads/${result.lastInsertRowid}?saved=assigned`);
+  }
   res.redirect(isAdmin ? `/loads/${result.lastInsertRowid}` : '/loads');
 });
 
-app.post('/loads/:id', requireAuth, upload.array('tickets', 10), (req, res) => {
+app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res) => {
   const existing = editableLoad(req, req.params.id);
   if (!existing) return res.redirect('/loads');
   const isAdmin = req.session.user.role === 'admin';
@@ -1896,6 +2041,10 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), (req, res) => {
   removeSelectedTickets(existing.id, req.body);
   saveTicketFiles(existing.id, req.files, req.session.user.id);
   logAudit(req, entry.auditAction, 'load', existing.id, entry.auditDetail);
+  if (isAdmin && entry.entryMode === 'assigned' && entry.status === 'draft' && values.driver_id && req.body.send_assign_sms) {
+    await notifyAssignedLoadDriver(req, existing.id);
+    return res.redirect(`/loads/${existing.id}?saved=assigned`);
+  }
   res.redirect(isAdmin ? `/loads/${existing.id}?saved=edited` : '/loads');
 });
 

@@ -1,0 +1,26 @@
+<% if (typeof assignedLoads !== 'undefined' && assignedLoads && assignedLoads.length) { %>
+  <div class="card assigned-load-banner" id="assigned-loads-banner">
+    <div class="assigned-load-banner-head">
+      <span class="assigned-load-icon">📲</span>
+      <div>
+        <strong>DT1 Logistics has assigned you a new Load</strong>
+        <div class="muted"><%= assignedLoads.length === 1 ? 'Tap below to review, fill in your ticket details, and submit.' : ('You have ' + assignedLoads.length + ' assigned loads waiting in your Drafts.') %></div>
+      </div>
+    </div>
+    <div class="assigned-load-list">
+      <% assignedLoads.forEach(function(load) { %>
+        <div class="assigned-load-item">
+          <div class="assigned-load-info">
+            <strong>Load #<%= load.id %><%= load.project_display ? ' — ' + load.project_display : '' %></strong>
+            <div class="muted">
+              Date: <%= load.load_date || 'TBD' %>
+              <% if (load.truck_number) { %> · Truck: <%= load.truck_number %><% } %>
+              <% if (load.origin || load.destination) { %> · <%= load.origin || 'Origin TBD' %> &rarr; <%= load.destination || 'Destination TBD' %><% } %>
+            </div>
+          </div>
+          <a href="/loads/<%= load.id %>/edit" class="btn assigned-load-cta">Complete Assigned Load &rarr;</a>
+        </div>
+      <% }) %>
+    </div>
+  </div>
+<% } %>
