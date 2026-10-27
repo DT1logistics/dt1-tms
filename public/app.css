@@ -609,20 +609,21 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-  padding: 2px 0;
+  gap: 14px;
+  margin-top: 12px;
+  margin-bottom: 16px;
+  padding: 4px 0;
 }
 .self-load-group {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 14px;
   flex: 0 0 auto;
 }
 .self-check-label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   margin: 0;
   font-weight: 700;
   color: #333;
@@ -642,8 +643,9 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   margin-top: 0;
 }
 .load-total-under {
-  margin-top: 6px;
-  padding: 6px 10px;
+  margin-top: 4px;
+  margin-bottom: 20px;
+  padding: 10px 14px;
   background: #eef3f8;
   border-left: 4px solid var(--navy);
   border-radius: 6px;
@@ -653,7 +655,7 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   white-space: nowrap;
 }
 .compact-hint {
-  margin: 4px 0 0;
+  margin: 0 0 14px;
   font-size: 12px;
 }
 
@@ -689,12 +691,14 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
     font-size: 14px;
   }
   #loadForm .load-self-row {
-    margin-top: 6px;
-    padding: 2px 0 0;
+    margin-top: 10px;
+    margin-bottom: 14px;
+    padding: 4px 0;
   }
   #loadForm .load-total-under {
-    margin-top: 5px;
-    padding: 5px 10px;
+    margin-top: 4px;
+    margin-bottom: 18px;
+    padding: 10px 14px;
     font-size: 15px;
   }
   #loadForm .check {
