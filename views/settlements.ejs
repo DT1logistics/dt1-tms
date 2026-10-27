@@ -83,7 +83,7 @@
             <tr>
               <th>Date</th>
               <th>Ticket #</th>
-              <th>Description</th>
+              <th>Destination</th>
               <th class="num">Qty</th>
               <th class="num">Rate</th>
               <th class="num">Price</th>
@@ -97,7 +97,7 @@
               <tr>
                 <td><%= load.load_date || '—' %></td>
                 <td><%= load.ticket_number || '—' %></td>
-                <td><%= load.description || '—' %></td>
+                <td><%= load.destination || load.description || '—' %></td>
                 <td class="num"><%= load.weight_quantity != null ? load.weight_quantity : '—' %></td>
                 <td class="num">$<%= money(load.rate) %></td>
                 <td class="num">$<%= money(load.hauling) %></td>

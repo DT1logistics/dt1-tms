@@ -410,6 +410,7 @@ function initDB() {
       origin TEXT,
       destination TEXT,
       notes TEXT,
+      admin_notes TEXT,
       rejection_reason TEXT,
       weight_quantity REAL,
       rate REAL DEFAULT 0,
@@ -595,6 +596,7 @@ function initDB() {
   ensureColumn('loads', 'origin', 'TEXT');
   ensureColumn('loads', 'destination', 'TEXT');
   ensureColumn('loads', 'notes', 'TEXT');
+  ensureColumn('loads', 'admin_notes', 'TEXT');
   ensureColumn('loads', 'rejection_reason', 'TEXT');
   ensureColumn('loads', 'settlement_status', 'TEXT');
   ensureColumn('loads', 'approved_by_name', 'TEXT');
@@ -673,6 +675,19 @@ function initDB() {
     UPDATE loads
     SET approved_by_name = (SELECT name FROM users WHERE users.id = loads.approved_by)
     WHERE approved_by IS NOT NULL AND (approved_by_name IS NULL OR approved_by_name = '')
+  `).run();
+
+  db.prepare(`
+    UPDATE loads
+    SET destination = description
+    WHERE (destination IS NULL OR TRIM(destination) = '')
+      AND description IS NOT NULL AND TRIM(description) != ''
+  `).run();
+  db.prepare(`
+    UPDATE loads
+    SET admin_notes = notes
+    WHERE (admin_notes IS NULL OR TRIM(admin_notes) = '')
+      AND notes IS NOT NULL AND TRIM(notes) != ''
   `).run();
 
   backfillUserNames();
@@ -855,11 +870,13 @@ function resolveLoadEntry(req, existing) {
 
 const loadQuery = `
   SELECT l.*, u.name as driver_name, u.pay_percentage,
+         e.number as truck_number,
          p.display_name as project_display, p.project_name as project_short_name,
          c.name as customer_name, c.address_line1, c.address_line2,
          c.poc_name, c.poc_phone, c.poc_email, c.terms
   FROM loads l
   LEFT JOIN users u ON l.driver_id = u.id
+  LEFT JOIN equipment e ON l.truck_id = e.id
   LEFT JOIN projects p ON l.project_id = p.id
   LEFT JOIN customers c ON c.id = p.customer_id
 `;
@@ -1681,16 +1698,29 @@ function buildLoadValues(req, project, existing) {
     else if (!(existing && String(existing.project_id) === String(body.project_id))) projectId = null;
   }
 
+  const destinationVal = bodyHas(body, 'destination')
+    ? blankToNull(body.destination)
+    : (existing ? (existing.destination || existing.description || null) : null);
+  const descriptionVal = bodyHas(body, 'description')
+    ? blankToNull(body.description)
+    : destinationVal;
+  let adminNotesVal = existing ? (existing.admin_notes || existing.notes || null) : null;
+  if (!isDriver && (bodyHas(body, 'admin_notes') || bodyHas(body, 'notes'))) {
+    const rawNotes = bodyHas(body, 'admin_notes') ? body.admin_notes : body.notes;
+    adminNotesVal = blankToNull(rawNotes);
+  }
+
   return {
     ticket_number: keptText(body, 'ticket_number', existing),
     load_date: keptText(body, 'load_date', existing),
     driver_id: driverId || null,
     truck_id: truckId,
     project_id: projectId,
-    description: keptText(body, 'description', existing),
+    description: descriptionVal,
     origin: keptText(body, 'origin', existing),
-    destination: keptText(body, 'destination', existing),
-    notes: keptText(body, 'notes', existing),
+    destination: destinationVal,
+    notes: adminNotesVal,
+    admin_notes: adminNotesVal,
     weight: weight == null || weight === '' ? null : weight,
     rate,
     hasFuel,
@@ -1759,6 +1789,10 @@ app.get('/loads/:id/edit', requireAuth, (req, res) => {
   const existing = editableLoad(req, req.params.id);
   if (!existing) return res.redirect('/loads');
   const load = db.prepare(loadQuery + ' WHERE l.id = ?').get(existing.id);
+  if (req.session.user.role !== 'admin' && load) {
+    delete load.admin_notes;
+    delete load.notes;
+  }
   const form = loadFormData(req.session.user, load);
   res.render('load-form', { user: req.session.user, load, tickets: ticketRows(existing.id), ...form });
 });
@@ -1778,8 +1812,13 @@ function buildAssignedLoadSms(load, customMessage) {
   if (load.load_date) parts[0] += ` for ${load.load_date}`;
   if (load.project_display) parts.push(load.project_display);
   if (load.truck_number) parts.push(`Truck ${load.truck_number}`);
-  if (load.origin || load.destination) {
-    parts.push(`${load.origin || 'Origin TBD'} -> ${load.destination || 'Destination TBD'}`);
+  const destText = load.destination || load.description || '';
+  if (load.origin && destText) {
+    parts.push(`${load.origin} -> ${destText}`);
+  } else if (destText) {
+    parts.push(`Destination: ${destText}`);
+  } else if (load.origin) {
+    parts.push(`Origin: ${load.origin}`);
   }
   const detailText = parts.length ? ` (${parts.join(' — ')})` : '';
   return `DT1 Logistics has assigned you a new Load${detailText}. Open the DT1 TMS app to review, complete, and submit your load ticket: ${loadLink}`;
@@ -1870,6 +1909,10 @@ app.get('/loads/:id', requireAuth, (req, res) => {
   const existing = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!canViewLoad(req, existing)) return res.redirect('/loads');
   const load = annotatePay(db.prepare(loadQuery + ' WHERE l.id = ?').get(existing.id));
+  if (req.session.user.role !== 'admin' && load) {
+    delete load.admin_notes;
+    delete load.notes;
+  }
   const form = loadFormData(req.session.user, load);
   if (load.project_id && !form.projects.some((project) => String(project.id) === String(load.project_id))) {
     const current = db.prepare('SELECT * FROM projects WHERE id = ?').get(load.project_id);
@@ -1948,11 +1991,11 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
   }
   const result = db.prepare(`
     INSERT INTO loads (
-      ticket_number, load_date, driver_id, truck_id, project_id, description, origin, destination, notes, weight_quantity,
+      ticket_number, load_date, driver_id, truck_id, project_id, description, origin, destination, notes, admin_notes, weight_quantity,
       rate, has_fuel_surcharge, has_drive_time, drive_time_amount, has_self_load, self_load_amount,
       driver_pay_type, driver_flat_rate,
       status, submitted_by, created_by_role, entry_mode
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     values.ticket_number,
     values.load_date,
@@ -1963,6 +2006,7 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
     values.origin,
     values.destination,
     values.notes,
+    values.admin_notes,
     values.weight,
     values.rate,
     values.hasFuel,
@@ -2004,7 +2048,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
   db.prepare(`
     UPDATE loads
     SET ticket_number = ?, load_date = ?, driver_id = ?, truck_id = ?, project_id = ?, description = ?,
-        origin = ?, destination = ?, notes = ?,
+        origin = ?, destination = ?, notes = ?, admin_notes = ?,
         weight_quantity = ?, rate = ?, has_fuel_surcharge = ?, has_drive_time = ?, drive_time_amount = ?,
         has_self_load = ?, self_load_amount = ?, driver_pay_type = ?, driver_flat_rate = ?, status = ?, rejection_reason = ?,
         created_by_role = ?, entry_mode = ?,
@@ -2020,6 +2064,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     values.origin,
     values.destination,
     values.notes,
+    values.admin_notes,
     values.weight,
     values.rate,
     values.hasFuel,

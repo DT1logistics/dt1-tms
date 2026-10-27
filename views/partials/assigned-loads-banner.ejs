@@ -15,7 +15,7 @@
             <div class="muted">
               Date: <%= load.load_date || 'TBD' %>
               <% if (load.truck_number) { %> · Truck: <%= load.truck_number %><% } %>
-              <% if (load.origin || load.destination) { %> · <%= load.origin || 'Origin TBD' %> &rarr; <%= load.destination || 'Destination TBD' %><% } %>
+              <% if (load.destination || load.description) { %> · Destination: <%= load.destination || load.description %><% } %>
             </div>
           </div>
           <a href="/loads/<%= load.id %>/edit" class="btn assigned-load-cta">Complete Assigned Load &rarr;</a>

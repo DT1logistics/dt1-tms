@@ -60,14 +60,12 @@
       </option>
     <% }) %>
   </select>
-  <label>Origin</label>
-  <input type="text" name="origin" value="<%= load.origin || '' %>">
-  <label>Destination</label>
-  <input type="text" name="destination" value="<%= load.destination || '' %>">
-  <label>Description</label>
-  <textarea name="description" rows="3"><%= load.description || '' %></textarea>
-  <label>Notes</label>
-  <textarea name="notes" rows="3"><%= load.notes || '' %></textarea>
+  <label for="destination">Destination</label>
+  <input type="text" name="destination" id="destination" value="<%= load.destination || load.description || '' %>" placeholder="Delivery location / jobsite destination">
+  <% if (user.role === 'admin') { %>
+    <label for="admin_notes">Notes <span class="admin-only-badge">Admin Only — Not visible to driver</span></label>
+    <textarea name="admin_notes" id="admin_notes" rows="3" placeholder="Internal admin notes for this load (visible to Admin only)"><%= load.admin_notes || load.notes || '' %></textarea>
+  <% } %>
   <% if (trucks && trucks.length) { %>
     <label>Truck</label>
     <select name="truck_id">
@@ -299,20 +297,17 @@
     const truckSelect = document.querySelector('select[name="truck_id"]');
     const truckOpt = truckSelect && truckSelect.options ? truckSelect.options[truckSelect.selectedIndex] : null;
     const truckText = truckOpt && truckOpt.value ? ('Truck ' + truckOpt.text.split('—')[0].trim()) : '';
-    const originInput = document.querySelector('input[name="origin"]');
     const destInput = document.querySelector('input[name="destination"]');
-    const origin = originInput && originInput.value ? originInput.value.trim() : '';
     const dest = destInput && destInput.value ? destInput.value.trim() : '';
-    const route = (origin || dest) ? ((origin || 'Origin TBD') + ' -> ' + (dest || 'Destination TBD')) : '';
     const details = [];
     if (loadDate) details.push('for ' + loadDate);
     if (projName) details.push(projName);
     if (truckText) details.push(truckText);
-    if (route) details.push(route);
+    if (dest) details.push('Destination: ' + dest);
     const detailText = details.length ? (' (' + details.join(' — ') + ')') : '';
     smsPreviewEl.value = 'DT1 Logistics has assigned you a new Load' + detailText + '. Open the DT1 TMS app to review, complete, and submit your load ticket: https://dt1-tms.onrender.com/loads';
   }
-  ['input[name="load_date"]', 'select[name="project_id"]', 'select[name="truck_id"]', 'input[name="origin"]', 'input[name="destination"]'].forEach((sel) => {
+  ['input[name="load_date"]', 'select[name="project_id"]', 'select[name="truck_id"]', 'input[name="destination"]'].forEach((sel) => {
     const el = document.querySelector(sel);
     if (el) {
       el.addEventListener('change', buildAssignSmsPreview);
