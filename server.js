@@ -99,6 +99,18 @@ function settlementWeekLabel(dateStr) {
   return week ? `week of ${week.range}` : '';
 }
 
+function loadTotalAmount(load) {
+  if (!load) return 0;
+  const qty = Number(load.weight_quantity) || 0;
+  const rate = Number(load.rate) || 0;
+  const linehaul = qty * rate;
+  const isFlat = load.driver_pay_type === 'flat';
+  const base = (isFlat && linehaul === 0) ? (Number(load.driver_flat_rate) || 0) : linehaul;
+  const drive = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
+  const self = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
+  return base + drive + self;
+}
+
 function calcDriverPay(load) {
   const qty = Number(load.weight_quantity) || 0;
   const rate = Number(load.rate) || 0;
@@ -218,6 +230,7 @@ function loadAudit(loadId) {
   `).all(loadId);
 }
 
+app.locals.loadTotalAmount = loadTotalAmount;
 app.locals.loadStatusLabel = loadStatusLabel;
 app.locals.loadOriginLabel = loadOriginLabel;
 app.locals.settlementWeekLabel = settlementWeekLabel;
