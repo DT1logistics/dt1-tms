@@ -171,6 +171,34 @@ form > button[type="submit"] { width: 100%; margin-top: 16px; }
 .mode-option strong { display: block; color: var(--navy); }
 .mode-option span span { color: var(--muted); font-size: 13px; }
 .origin-badge { display: inline-block; margin-left: 8px; background: #e8eef6; color: var(--navy); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 700; vertical-align: middle; }
+.driver-list { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 20px; }
+.driver-list-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  text-decoration: none;
+  color: inherit;
+}
+.driver-list-row:hover { border-color: var(--navy); }
+.driver-list-main strong { display: block; color: var(--navy); }
+.driver-list-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.open-label { color: var(--navy); font-weight: 700; font-size: 13px; white-space: nowrap; }
+.inactive-drivers { margin: 8px 0 28px; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.inactive-drivers summary { cursor: pointer; font-weight: 700; color: var(--navy); }
+.profile-header-card, .profile-hero { display: flex; gap: 16px; align-items: center; }
+.profile-pic-lg { width: 72px; height: 72px; }
+.header-actions { margin: 10px 0 0; }
+.header-actions .btn { width: auto; }
+.check-line { display: flex; gap: 8px; align-items: center; font-weight: 600; margin-top: 12px; }
+.check-line input { width: auto; margin: 0; }
+#reset-password, #change-password { scroll-margin-top: 72px; }
+#reset-password h3 { margin-top: 22px; }
+.forgot-link { text-align: center; margin-top: 16px; }
 .driver-row .row-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .driver-row .row-actions form { margin: 0; }
 .driver-row .row-actions button, .driver-row .row-actions .btn { width: auto; margin: 0; }
@@ -359,6 +387,9 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 .profile-signout a { color: #111827; font-weight: 600; text-decoration: none; }
 
 @media (max-width: 860px) {
+  .driver-list-row { grid-template-columns: 48px minmax(0, 1fr); }
+  .driver-list-side { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: center; }
+  .profile-header-card, .profile-hero { align-items: flex-start; }
   body { background: #f3f4f6; }
   .sidebar { display: none; }
   .mobile-bar {

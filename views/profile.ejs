@@ -1,5 +1,27 @@
 <%- include('partials/open', { title: 'Your Profile', user: user, active: 'profile', headerTitle: 'Your Profile', backHref: '/' }) %>
 <div class="profile-page">
+  <div class="card profile-hero" id="profile-header">
+    <img class="profile-pic profile-pic-lg" src="<%= profile.profile_pic || '/default-avatar.svg' %>" alt="">
+    <div>
+      <strong><%= profile.name || 'Your Profile' %></strong>
+      <div class="muted"><%= profile.email %></div>
+      <p class="header-actions"><a class="btn" href="#change-password">Reset Password</a></p>
+    </div>
+  </div>
+  <% if (typeof saved !== 'undefined' && saved === 'password') { %><div class="all-clear">Password updated.</div><% } %>
+  <% if (typeof saved !== 'undefined' && saved && saved !== 'password') { %><div class="all-clear">Changes saved.</div><% } %>
+  <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
+  <div class="card" id="change-password">
+    <h2>Reset / Change Password</h2>
+    <p class="muted">Choose a new password. It takes effect the next time you sign in.</p>
+    <form method="POST" action="/profile/password">
+      <label for="new_password">New Password</label>
+      <input id="new_password" type="password" name="new_password" autocomplete="new-password" required minlength="6">
+      <label for="confirm_password">Confirm New Password</label>
+      <input id="confirm_password" type="password" name="confirm_password" autocomplete="new-password" required minlength="6">
+      <button type="submit">Update Password</button>
+    </form>
+  </div>
   <% if (profile.role === 'driver' && levels && levels.length) { %>
     <h2>Your Status</h2>
     <p class="muted">Green, yellow, and red levels stay visible here.</p>
@@ -7,8 +29,6 @@
   <% } %>
   <h1>Your Profile</h1>
   <p class="profile-lead"><%= profile.role === 'driver' ? 'Update your name, phone number, or address.' : 'Update your name, email, phone number, or address.' %></p>
-  <% if (typeof saved !== 'undefined' && saved) { %><div class="all-clear">Changes saved.</div><% } %>
-  <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
   <form class="profile-form" method="POST" action="/profile">
     <label for="first_name">First Name</label>
     <input id="first_name" type="text" name="first_name" value="<%= profile.first_name || '' %>" autocomplete="given-name" required>
