@@ -95,10 +95,21 @@
         <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
         <span>Drive Time ($)</span>
       </label>
-      <div id="drive_time_wrap" class="drive-amount-inline" style="<%= load.has_drive_time ? '' : 'display:none;' %>">
-        <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="drive_time_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.drive_time_amount != null && load.drive_time_amount !== '' ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
+      <div id="drive_time_wrap" class="drive-amount-inline" style="<%= (user.role === 'admin' || load.has_drive_time) ? '' : 'display:none;' %>">
+        <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="drive_time_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null && load.drive_time_amount !== '' ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
       </div>
     </div>
+    <% if (user.role === 'admin') { %>
+    <div class="field-fuel-compact">
+      <label class="drive-check-label" for="has_fuel_surcharge">
+        <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" data-fsc-percent="<%= typeof surchargePercent !== 'undefined' ? surchargePercent : 0 %>" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
+        <span>Fuel Surcharge ($)</span>
+      </label>
+      <div id="fuel_surcharge_wrap" class="drive-amount-inline">
+        <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="fuel_surcharge_amount" id="fuel_surcharge_amount" class="input-num-4dec" data-four-dec="1" value="<%= Number(load.has_fuel_surcharge) ? (((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) * ((Number(typeof surchargePercent !== 'undefined' ? surchargePercent : 0)) / 100)).toFixed(2) : '0.00' %>" readonly title="Calculated at <%= Number(typeof surchargePercent !== 'undefined' ? surchargePercent : 0).toFixed(2) %>% EIA Fuel Surcharge">
+      </div>
+    </div>
+    <% } %>
   </div>
   <div class="load-self-row">
     <div class="self-load-group">
@@ -124,10 +135,6 @@
       <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" name="driver_flat_rate" id="driver_flat_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.driver_flat_rate != null && load.driver_flat_rate !== '' ? load.driver_flat_rate : '0.00' %>">
     </div>
     <p class="muted" id="pay_basis_help">Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load. Fuel surcharge is not included.</p>
-    <div class="check">
-      <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
-      <label for="has_fuel_surcharge">Includes Fuel Surcharge</label>
-    </div>
   <% } %>
   <% if (user.role === 'admin' && drivers && drivers.length) { %>
     <label>Driver</label>
@@ -182,7 +189,10 @@
 <script>
   const projectSelect = document.getElementById('project_select');
   const rateInput = document.querySelector('input[name="rate"]');
+  const isAdminForm = <%= user.role === 'admin' ? 'true' : 'false' %>;
   const fscInput = document.querySelector('input[name="has_fuel_surcharge"]');
+  const fscAmount = document.getElementById('fuel_surcharge_amount');
+  const fscPercent = fscInput ? (Number(fscInput.getAttribute('data-fsc-percent')) || 0) : 0;
   const driveInput = document.querySelector('input[name="has_drive_time"]');
   const driveAmount = document.querySelector('input[name="drive_time_amount"]');
   const driveWrap = document.getElementById('drive_time_wrap');
@@ -196,7 +206,25 @@
   }
 
   function syncDriveWrap() {
-    driveWrap.style.display = driveInput.checked ? 'block' : 'none';
+    driveWrap.style.display = (isAdminForm || driveInput.checked) ? 'block' : 'none';
+  }
+
+  function syncFuelAmount() {
+    if (!fscAmount || !fscInput) return;
+    if (!fscInput.checked) {
+      fscAmount.value = '0.00';
+      return;
+    }
+    const qty = Number(qtyInput && qtyInput.value);
+    const rate = Number(rateInput && rateInput.value);
+    const payTypeEl = document.getElementById('driver_pay_type');
+    const flatRateEl = document.getElementById('driver_flat_rate');
+    const isFlat = payTypeEl && payTypeEl.value === 'flat';
+    const baseHaul = (Number.isFinite(qty) ? qty : 0) * (Number.isFinite(rate) ? rate : 0);
+    const base = (isFlat && baseHaul === 0)
+      ? (Number.isFinite(Number(flatRateEl && flatRateEl.value)) ? Number(flatRateEl.value) : 0)
+      : baseHaul;
+    fscAmount.value = money(base * (fscPercent / 100));
   }
 
   function syncSelfWrap() {
@@ -245,6 +273,7 @@
       : 0;
     const total = base + drive + self;
     loadTotal.textContent = 'Load Total: $' + total.toFixed(2);
+    syncFuelAmount();
   }
 
   projectSelect.addEventListener('change', applyProject);
@@ -274,8 +303,20 @@
   qtyInput.addEventListener('change', syncLoadTotal);
   rateInput.addEventListener('input', syncLoadTotal);
   rateInput.addEventListener('change', syncLoadTotal);
-  driveAmount.addEventListener('input', syncLoadTotal);
+  driveAmount.addEventListener('input', () => {
+    if (Number(driveAmount.value) > 0 && !driveInput.checked) {
+      driveInput.checked = true;
+      syncDriveWrap();
+    }
+    syncLoadTotal();
+  });
   driveAmount.addEventListener('change', syncLoadTotal);
+  if (fscInput) {
+    fscInput.addEventListener('change', () => {
+      syncFuelAmount();
+      syncLoadTotal();
+    });
+  }
   selfAmount.addEventListener('input', syncLoadTotal);
   selfAmount.addEventListener('change', syncLoadTotal);
 

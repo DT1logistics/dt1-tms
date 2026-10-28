@@ -577,7 +577,8 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   margin-top: 10px;
 }
 .field-num-compact,
-.field-drive-compact {
+.field-drive-compact,
+.field-fuel-compact {
   flex: 0 0 auto;
 }
 .drive-check-label {
