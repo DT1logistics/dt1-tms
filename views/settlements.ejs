@@ -62,8 +62,11 @@
   <h2>Weekly Customer Invoices</h2>
   <p class="muted">
     Approved loads grouped by customer and project.
-    Current EIA surcharge: <%= money(surchargePercent) %>%<% if (!fuelRate) { %> (no fuel rate saved yet)<% } %>.
-    Fuel surcharge applies only to hauling on loads marked Includes Fuel Surcharge.
+    Latest EIA surcharge: <%= money(surchargePercent) %>%<% if (fuelRate) { %> (effective <%= fuelRate.effective_date %>)<% } else { %> (no fuel rate saved yet)<% } %>.
+    Fuel surcharge applies only to loads marked Includes Fuel Surcharge, and each load uses the fuel rate for its own week
+    (the latest Fuel Rate effective on or before the Load Date): FSC % = (Weekly Diesel − $4.00) ÷ 10,
+    Surcharge/Ton = Load Rate × FSC %, Total Fuel Surcharge = Surcharge/Ton × Wet Tons (flat-rate loads: Flat Amount × FSC %).
+    Loads whose week has no fuel rate yet show “Rate pending” at $0.00. Fuel surcharge is a separate invoice line and is not in Load Total or Driver Pay.
   </p>
   <% if (customerInvoices && customerInvoices.length) { %>
     <% customerInvoices.forEach(function (invoice) { %>
@@ -101,7 +104,7 @@
                 <td class="num"><%= load.weight_quantity != null ? load.weight_quantity : '—' %></td>
                 <td class="num">$<%= money(load.rate) %></td>
                 <td class="num">$<%= money(load.hauling) %></td>
-                <td class="num"><%= Number(load.has_fuel_surcharge) === 1 ? '$' + money(load.lineFsc) : '—' %></td>
+                <td class="num"><% if (Number(load.has_fuel_surcharge) === 1 && load.fscPending) { %>$0.00<div class="muted" style="font-size:11px;">Rate pending</div><% } else if (Number(load.has_fuel_surcharge) === 1) { %>$<%= money(load.lineFsc) %><div class="muted" style="font-size:11px;"><%= Number(load.fscPercent).toFixed(2) %>% · <%= load.fscFlat ? 'flat amount' : '$' + Number(load.fscPerTon).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') + '/ton' %></div><% } else { %>—<% } %></td>
                 <td class="num">$<%= money(load.selfLoad) %></td>
                 <td class="num">$<%= money(load.travelTime) %></td>
               </tr>
@@ -110,7 +113,7 @@
         </table>
         <div class="totals">
           <div><span>Hauling</span><span>$<%= money(invoice.hauling) %></span></div>
-          <div><span>Fuel Surcharge</span><span>$<%= money(invoice.fuelSurcharge) %></span></div>
+          <div><span>Fuel Surcharge<% const pcts = invoice.fscPercents || []; %><% if (pcts.length === 1) { %> (<%= Number(pcts[0]).toFixed(2) %>%)<% } else if (pcts.length > 1) { %> (weekly rates: <%= pcts.map(function (x) { return Number(x).toFixed(2) + '%'; }).join(', ') %>)<% } %><% if (invoice.fscPendingCount) { %> · <%= invoice.fscPendingCount %> load<%= invoice.fscPendingCount === 1 ? '' : 's' %> rate pending<% } %></span><span>$<%= money(invoice.fuelSurcharge) %></span></div>
           <div><span>Travel Time</span><span>$<%= money(invoice.travelTime) %></span></div>
           <div><span>Self Load</span><span>$<%= money(invoice.selfLoad) %></span></div>
           <div class="grand"><span>TOTAL</span><span>$<%= money(invoice.total) %></span></div>
