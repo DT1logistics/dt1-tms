@@ -86,7 +86,7 @@
     <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %>. Fuel surcharge is not included.</div>
   <% } %>
   <% if (user.role === 'admin') { %>
-    <div><strong>Fuel Surcharge</strong> <%= Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No' %></div>
+    <div><strong>Fuel Surcharge</strong> <%= Number(load.has_fuel_surcharge) === 1 ? ('Yes ($' + money(((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) * ((Number(typeof surchargePercent !== 'undefined' ? surchargePercent : 0)) / 100)) + ')') : 'No' %></div>
   <% } %>
   <div><strong>Drive Time</strong> <%= Number(load.has_drive_time) === 1 ? '$' + money(load.drive_time_amount) : 'No' %></div>
   <div><strong>Self Load</strong> <%= Number(load.has_self_load) === 1 ? '$' + money(load.self_load_amount) : 'No' %></div>
@@ -135,10 +135,17 @@
         </div>
       </div>
       <label>Project</label>
-      <select name="project_id">
+      <select name="project_id" id="review_project_select">
         <option value="">-- Select Project --</option>
         <% (projects || []).forEach(function (project) { %>
-          <option value="<%= project.id %>" <%= String(load.project_id) === String(project.id) ? 'selected' : '' %>><%= project.display_name %></option>
+          <option value="<%= project.id %>"
+            data-rate="<%= project.default_rate %>"
+            data-fsc="<%= project.has_fuel_surcharge ? 1 : 0 %>"
+            data-drivetime="<%= project.has_drive_time ? 1 : 0 %>"
+            data-drivetime-amount="<%= project.default_drive_time_amount %>"
+            data-pay-type="<%= project.default_driver_pay_type || 'percentage' %>"
+            data-flat-rate="<%= project.default_driver_flat_rate || 0 %>"
+            <%= String(load.project_id) === String(project.id) ? 'selected' : '' %>><%= project.display_name %></option>
         <% }) %>
       </select>
       <label for="edit_destination">Destination</label>
@@ -168,8 +175,17 @@
             <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
             <span>Drive Time ($)</span>
           </label>
-          <div id="review_drive_wrap" class="drive-amount-inline" style="<%= load.has_drive_time ? '' : 'display:none;' %>">
-            <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="review_drive_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.drive_time_amount != null ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
+          <div id="review_drive_wrap" class="drive-amount-inline">
+            <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="review_drive_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
+          </div>
+        </div>
+        <div class="field-fuel-compact">
+          <label class="drive-check-label" for="has_fuel_surcharge">
+            <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" data-fsc-percent="<%= typeof surchargePercent !== 'undefined' ? surchargePercent : 0 %>" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
+            <span>Fuel Surcharge ($)</span>
+          </label>
+          <div id="review_fuel_wrap" class="drive-amount-inline">
+            <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="fuel_surcharge_amount" id="review_fuel_amount" class="input-num-4dec" data-four-dec="1" value="<%= Number(load.has_fuel_surcharge) ? (((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) * ((Number(typeof surchargePercent !== 'undefined' ? surchargePercent : 0)) / 100)).toFixed(2) : '0.00' %>" readonly title="Calculated at <%= Number(typeof surchargePercent !== 'undefined' ? surchargePercent : 0).toFixed(2) %>% EIA Fuel Surcharge">
           </div>
         </div>
       </div>
@@ -195,10 +211,6 @@
         <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" name="driver_flat_rate" id="driver_flat_rate" class="input-num-4dec" value="<%= load.driver_flat_rate != null && load.driver_flat_rate !== '' ? load.driver_flat_rate : '0.00' %>">
       </div>
       <p class="muted" id="pay_basis_help"></p>
-      <div class="check">
-        <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
-        <label for="has_fuel_surcharge">Includes Fuel Surcharge</label>
-      </div>
       <% if (drivers && drivers.length) { %>
         <label>Assign Driver</label>
         <select name="driver_id">
@@ -268,6 +280,26 @@
   const reviewSelfAmount = document.getElementById('review_self_amount');
   const reviewFlatRate = document.getElementById('driver_flat_rate');
   const reviewLoadTotal = document.getElementById('review_load_total');
+  const reviewFuelCheck = document.getElementById('has_fuel_surcharge');
+  const reviewFuelAmount = document.getElementById('review_fuel_amount');
+  const reviewFuelPercent = reviewFuelCheck ? (Number(reviewFuelCheck.getAttribute('data-fsc-percent')) || 0) : 0;
+  const reviewProjectSelect = document.getElementById('review_project_select');
+
+  function syncReviewFuelAmount() {
+    if (!reviewFuelAmount || !reviewFuelCheck) return;
+    if (!reviewFuelCheck.checked) {
+      reviewFuelAmount.value = '0.00';
+      return;
+    }
+    const qty = Number(reviewQty && reviewQty.value);
+    const rate = Number(reviewRate && reviewRate.value);
+    const isFlat = payType && payType.value === 'flat';
+    const baseHaul = (Number.isFinite(qty) ? qty : 0) * (Number.isFinite(rate) ? rate : 0);
+    const base = (isFlat && baseHaul === 0)
+      ? (Number.isFinite(Number(reviewFlatRate && reviewFlatRate.value)) ? Number(reviewFlatRate.value) : 0)
+      : baseHaul;
+    reviewFuelAmount.value = (base * (reviewFuelPercent / 100)).toFixed(2);
+  }
 
   function syncReviewLoadTotal() {
     if (!reviewLoadTotal) return;
@@ -285,11 +317,12 @@
       ? (Number.isFinite(Number(reviewSelfAmount && reviewSelfAmount.value)) ? Number(reviewSelfAmount.value) : 0)
       : 0;
     reviewLoadTotal.textContent = 'Load Total: $' + (base + drive + self).toFixed(2);
+    syncReviewFuelAmount();
   }
 
   function syncReviewDriveWrap() {
-    if (reviewDriveWrap && reviewDriveCheck) {
-      reviewDriveWrap.style.display = reviewDriveCheck.checked ? 'block' : 'none';
+    if (reviewDriveWrap) {
+      reviewDriveWrap.style.display = 'block';
     }
   }
 
@@ -304,7 +337,40 @@
 
   if (reviewDriveCheck) {
     reviewDriveCheck.addEventListener('change', () => {
-      if (!reviewDriveCheck.checked && reviewDriveAmount) reviewDriveAmount.value = '0.00';
+      if (reviewDriveCheck.checked) {
+        const opt = reviewProjectSelect && reviewProjectSelect.options ? reviewProjectSelect.options[reviewProjectSelect.selectedIndex] : null;
+        if (reviewDriveAmount && (!reviewDriveAmount.value || Number(reviewDriveAmount.value) === 0)) {
+          reviewDriveAmount.value = (Number(opt ? opt.getAttribute('data-drivetime-amount') : 0) || 0).toFixed(2);
+        }
+      } else if (reviewDriveAmount) {
+        reviewDriveAmount.value = '0.00';
+      }
+      syncReviewDriveWrap();
+      syncReviewLoadTotal();
+    });
+  }
+  if (reviewDriveAmount && reviewDriveCheck) {
+    reviewDriveAmount.addEventListener('input', () => {
+      if (Number(reviewDriveAmount.value) > 0 && !reviewDriveCheck.checked) {
+        reviewDriveCheck.checked = true;
+      }
+    });
+  }
+  if (reviewFuelCheck) {
+    reviewFuelCheck.addEventListener('change', () => {
+      syncReviewFuelAmount();
+      syncReviewLoadTotal();
+    });
+  }
+  if (reviewProjectSelect) {
+    reviewProjectSelect.addEventListener('change', () => {
+      const opt = reviewProjectSelect.options[reviewProjectSelect.selectedIndex];
+      if (!opt || !opt.value) return;
+      if (reviewRate) reviewRate.value = (Number(opt.getAttribute('data-rate')) || 0).toFixed(2);
+      if (reviewFuelCheck) reviewFuelCheck.checked = opt.getAttribute('data-fsc') === '1';
+      const hasDrive = opt.getAttribute('data-drivetime') === '1';
+      if (reviewDriveCheck) reviewDriveCheck.checked = hasDrive;
+      if (reviewDriveAmount) reviewDriveAmount.value = hasDrive ? (Number(opt.getAttribute('data-drivetime-amount')) || 0).toFixed(2) : '0.00';
       syncReviewDriveWrap();
       syncReviewLoadTotal();
     });

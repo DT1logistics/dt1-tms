@@ -809,7 +809,18 @@ function loadFormData(user, load) {
     const current = db.prepare("SELECT id, number, description, status FROM equipment WHERE id = ? AND type = 'truck'").get(load.truck_id);
     if (current) trucks.unshift(current);
   }
-  return { drivers, projects: activeProjects(), trucks };
+  let latestFuel = null;
+  let surchargePercent = 0;
+  if (user.role === 'admin') {
+    latestFuel = db.prepare(`
+      SELECT * FROM fuel_rates
+      WHERE central_atlantic_rate IS NOT NULL AND surcharge_percent IS NOT NULL
+      ORDER BY effective_date DESC, id DESC
+      LIMIT 1
+    `).get() || null;
+    surchargePercent = latestFuel && latestFuel.surcharge_percent != null ? Number(latestFuel.surcharge_percent) : 0;
+  }
+  return { drivers, projects: activeProjects(), trucks, latestFuel, surchargePercent };
 }
 
 function submittedLoadGaps(load, hasFile) {
