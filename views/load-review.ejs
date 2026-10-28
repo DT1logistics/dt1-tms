@@ -170,15 +170,6 @@
           <label for="review_qty">Wet Ton/Qty</label>
           <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="weight_quantity" id="review_qty" class="input-num-4dec" data-four-dec="1" value="<%= load.weight_quantity != null ? load.weight_quantity : '' %>">
         </div>
-        <div class="field-fuel-compact">
-          <label class="drive-check-label" for="has_fuel_surcharge">
-            <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" data-fsc-percent="<%= typeof surchargePercent !== 'undefined' ? surchargePercent : 0 %>" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
-            <span>Fuel Surcharge ($)</span>
-          </label>
-          <div id="review_fuel_wrap" class="drive-amount-inline">
-            <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="fuel_surcharge_amount" id="review_fuel_amount" class="input-num-4dec" data-four-dec="1" value="<%= Number(load.has_fuel_surcharge) ? (((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) * ((Number(typeof surchargePercent !== 'undefined' ? surchargePercent : 0)) / 100)).toFixed(2) : '0.00' %>" readonly title="Calculated at <%= Number(typeof surchargePercent !== 'undefined' ? surchargePercent : 0).toFixed(2) %>% EIA Fuel Surcharge">
-          </div>
-        </div>
       </div>
       <div class="load-self-row">
         <div class="self-load-group">
@@ -199,8 +190,18 @@
             <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="review_drive_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
           </div>
         </div>
+        <div class="self-load-group fuel-surcharge-group">
+          <label class="self-check-label" for="has_fuel_surcharge">
+            <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" data-fsc-percent="<%= typeof surchargePercent !== 'undefined' ? surchargePercent : 0 %>" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
+            <span>Fuel Surcharge</span>
+          </label>
+          <input type="hidden" name="fuel_surcharge_amount" id="review_fuel_amount" value="<%= Number(load.has_fuel_surcharge) ? (((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) * ((Number(typeof surchargePercent !== 'undefined' ? surchargePercent : 0)) / 100)).toFixed(2) : '0.00' %>">
+        </div>
       </div>
-      <div class="load-total-under" id="review_load_total">Load Total: $<%= money(loadTotalAmount(load)) %></div>
+      <div class="load-totals-row">
+        <div class="load-total-under" id="review_load_total">Load Total: $<%= money(loadTotalAmount(load)) %></div>
+        <div class="load-total-under fuel-total-under" id="review_fuel_total" title="Calculated at <%= Number(typeof surchargePercent !== 'undefined' ? surchargePercent : 0).toFixed(2) %>% EIA Fuel Surcharge">Fuel Surcharge Total: $<%= Number(load.has_fuel_surcharge) ? (((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) * ((Number(typeof surchargePercent !== 'undefined' ? surchargePercent : 0)) / 100)).toFixed(2) : '0.00' %></div>
+      </div>
       <label for="driver_pay_type">Driver Pay Basis / Type</label>
       <select name="driver_pay_type" id="driver_pay_type">
         <option value="percentage" <%= load.driver_pay_type === 'flat' ? '' : 'selected' %>>Percentage of Load (% — uses Driver's Profile Pay %)</option>
@@ -282,13 +283,15 @@
   const reviewLoadTotal = document.getElementById('review_load_total');
   const reviewFuelCheck = document.getElementById('has_fuel_surcharge');
   const reviewFuelAmount = document.getElementById('review_fuel_amount');
+  const reviewFuelTotal = document.getElementById('review_fuel_total');
   const reviewFuelPercent = reviewFuelCheck ? (Number(reviewFuelCheck.getAttribute('data-fsc-percent')) || 0) : 0;
   const reviewProjectSelect = document.getElementById('review_project_select');
 
   function syncReviewFuelAmount() {
-    if (!reviewFuelAmount || !reviewFuelCheck) return;
+    if (!reviewFuelCheck) return;
     if (!reviewFuelCheck.checked) {
-      reviewFuelAmount.value = '0.00';
+      if (reviewFuelAmount) reviewFuelAmount.value = '0.00';
+      if (reviewFuelTotal) reviewFuelTotal.textContent = 'Fuel Surcharge Total: $0.00';
       return;
     }
     const qty = Number(reviewQty && reviewQty.value);
@@ -298,7 +301,9 @@
     const base = (isFlat && baseHaul === 0)
       ? (Number.isFinite(Number(reviewFlatRate && reviewFlatRate.value)) ? Number(reviewFlatRate.value) : 0)
       : baseHaul;
-    reviewFuelAmount.value = (base * (reviewFuelPercent / 100)).toFixed(2);
+    const calc = (base * (reviewFuelPercent / 100)).toFixed(2);
+    if (reviewFuelAmount) reviewFuelAmount.value = calc;
+    if (reviewFuelTotal) reviewFuelTotal.textContent = 'Fuel Surcharge Total: $' + calc;
   }
 
   function syncReviewLoadTotal() {

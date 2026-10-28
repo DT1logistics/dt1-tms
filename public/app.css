@@ -643,9 +643,17 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 .self-amount-inline input.input-num-4dec {
   margin-top: 0;
 }
-.load-total-under {
+.load-totals-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 14px;
   margin-top: 4px;
   margin-bottom: 20px;
+}
+.load-total-under {
+  flex: 1 1 220px;
+  margin: 0;
   padding: 10px 14px;
   background: #eef3f8;
   border-left: 4px solid var(--navy);
@@ -710,9 +718,13 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
     padding: 7px 5px;
     font-size: 13px;
   }
-  #loadForm .load-total-under {
+  #loadForm .load-totals-row {
+    gap: 10px;
     margin-top: 4px;
     margin-bottom: 18px;
+  }
+  #loadForm .load-total-under {
+    margin: 0;
     padding: 10px 14px;
     font-size: 15px;
   }
