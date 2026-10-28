@@ -692,9 +692,23 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
     font-size: 14px;
   }
   #loadForm .load-self-row {
+    gap: 8px;
     margin-top: 10px;
     margin-bottom: 14px;
     padding: 4px 0;
+  }
+  #loadForm .self-load-group {
+    gap: 5px;
+  }
+  #loadForm .self-check-label {
+    gap: 4px;
+    font-size: 12px;
+  }
+  #loadForm .load-self-row .input-num-4dec {
+    width: 68px;
+    max-width: 68px;
+    padding: 7px 5px;
+    font-size: 13px;
   }
   #loadForm .load-total-under {
     margin-top: 4px;
