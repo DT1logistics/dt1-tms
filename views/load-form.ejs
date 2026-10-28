@@ -113,17 +113,17 @@
     <% if (user.role === 'admin') { %>
     <div class="self-load-group fuel-surcharge-group">
       <label class="self-check-label" for="has_fuel_surcharge">
-        <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" data-fsc-percent="<%= typeof surchargePercent !== 'undefined' ? surchargePercent : 0 %>" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
+        <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" data-fsc-rates="<%= JSON.stringify(typeof fuelRates !== 'undefined' ? fuelRates : []) %>" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
         <span>Fuel Surcharge</span>
       </label>
-      <input type="hidden" name="fuel_surcharge_amount" id="fuel_surcharge_amount" value="<%= Number(load.has_fuel_surcharge) ? (((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) * ((Number(typeof surchargePercent !== 'undefined' ? surchargePercent : 0)) / 100)).toFixed(2) : '0.00' %>">
+      <input type="hidden" name="fuel_surcharge_amount" id="fuel_surcharge_amount" value="<%= Number(load.has_fuel_surcharge) ? money(loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []).total) : '0.00' %>">
     </div>
     <% } %>
   </div>
   <div class="load-totals-row">
     <div class="load-total-under" id="load_total">Load Total: $0.00</div>
     <% if (user.role === 'admin') { %>
-    <div class="load-total-under fuel-total-under" id="fuel_surcharge_total" title="Calculated at <%= Number(typeof surchargePercent !== 'undefined' ? surchargePercent : 0).toFixed(2) %>% EIA Fuel Surcharge">Fuel Surcharge Total: $<%= Number(load.has_fuel_surcharge) ? (((Number(load.weight_quantity) || 0) * (Number(load.rate) || 0)) * ((Number(typeof surchargePercent !== 'undefined' ? surchargePercent : 0)) / 100)).toFixed(2) : '0.00' %></div>
+    <div class="load-total-under fuel-total-under" id="fuel_surcharge_total" title="Uses the fuel rate for the Load Date's week: Load Rate × FSC % × Wet Tons"><% const fscNow = loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []); %><%= !Number(load.has_fuel_surcharge) ? 'Fuel Surcharge Total: $0.00' : (fscNow.pending ? 'Fuel Surcharge Total: Rate pending ($0.00)' : 'Fuel Surcharge Total: $' + money(fscNow.total) + ' @ ' + Number(fscNow.percent).toFixed(2) + '%') %></div>
     <% } %>
   </div>
   <% if (user.role !== 'admin') { %><p class="muted compact-hint">Rate comes from the project. An admin can change it.</p><% } %>
@@ -189,6 +189,7 @@
     <% } %>
   </div>
 </form>
+<script src="/js/fuel-surcharge.js"></script>
 <script>
   const projectSelect = document.getElementById('project_select');
   const rateInput = document.querySelector('input[name="rate"]');
@@ -196,7 +197,8 @@
   const fscInput = document.querySelector('input[name="has_fuel_surcharge"]');
   const fscAmount = document.getElementById('fuel_surcharge_amount');
   const fscTotal = document.getElementById('fuel_surcharge_total');
-  const fscPercent = fscInput ? (Number(fscInput.getAttribute('data-fsc-percent')) || 0) : 0;
+  const fscRates = fscInput ? (function () { try { return JSON.parse(fscInput.getAttribute('data-fsc-rates') || '[]'); } catch (e) { return []; } })() : [];
+  const fscDateInput = document.querySelector('input[name="load_date"]');
   const driveInput = document.querySelector('input[name="has_drive_time"]');
   const driveAmount = document.querySelector('input[name="drive_time_amount"]');
   const driveWrap = document.getElementById('drive_time_wrap');
@@ -225,13 +227,26 @@
     const payTypeEl = document.getElementById('driver_pay_type');
     const flatRateEl = document.getElementById('driver_flat_rate');
     const isFlat = payTypeEl && payTypeEl.value === 'flat';
-    const baseHaul = (Number.isFinite(qty) ? qty : 0) * (Number.isFinite(rate) ? rate : 0);
-    const base = (isFlat && baseHaul === 0)
-      ? (Number.isFinite(Number(flatRateEl && flatRateEl.value)) ? Number(flatRateEl.value) : 0)
-      : baseHaul;
-    const calc = money(base * (fscPercent / 100));
+    // Surcharge/Ton = Load Rate x FSC decimal; Total = Surcharge/Ton x Wet Tons (flat loads: Flat Amount x FSC decimal)
+    const fsc = window.DT1Fuel.loadFuelSurchargeForDate({
+      history: fscRates,
+      loadDate: fscDateInput ? fscDateInput.value : '',
+      rate: Number.isFinite(rate) ? rate : 0,
+      tons: Number.isFinite(qty) ? qty : 0,
+      isFlat,
+      flatAmount: Number(flatRateEl && flatRateEl.value) || 0
+    });
+    const calc = fsc.total.toFixed(2);
     if (fscAmount) fscAmount.value = calc;
-    if (fscTotal) fscTotal.textContent = 'Fuel Surcharge Total: $' + calc;
+    if (fscTotal) {
+      fscTotal.textContent = fsc.pending
+        ? 'Fuel Surcharge Total: Rate pending ($0.00)'
+        : 'Fuel Surcharge Total: $' + calc + ' @ ' + fsc.percent.toFixed(2) + '%';
+      fscTotal.title = fsc.pending
+        ? 'No fuel rate posted yet for this Load Date\'s week; $0.00 until it is posted.'
+        : 'Week rate $' + fsc.dieselRate.toFixed(3) + ' effective ' + fsc.effectiveDate + ': Load Rate × ' + fsc.decimal + ' × Wet Tons';
+    }
+    return;
   }
 
   function syncSelfWrap() {
@@ -318,6 +333,10 @@
     syncLoadTotal();
   });
   driveAmount.addEventListener('change', syncLoadTotal);
+  if (fscDateInput) {
+    fscDateInput.addEventListener('change', syncFuelAmount);
+    fscDateInput.addEventListener('input', syncFuelAmount);
+  }
   if (fscInput) {
     fscInput.addEventListener('change', () => {
       syncFuelAmount();

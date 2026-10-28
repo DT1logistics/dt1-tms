@@ -7,6 +7,13 @@
     <p><strong>Current Rate:</strong> $<%= Number(latest.central_atlantic_rate || 0).toFixed(3) %></p>
     <p><strong>Base:</strong> $4.00</p>
     <p><strong>Surcharge %:</strong> <%= Number(latest.surcharge_percent || 0).toFixed(2) %>%</p>
+    <p style="font-size:13px;color:#666;">
+      Fuel Surcharge % = (Weekly Diesel Rate − $4.00) ÷ 10 → ($<%= Number(latest.central_atlantic_rate || 0).toFixed(3) %> − $4.00) ÷ 10 = <%= (Number(latest.surcharge_percent || 0) / 100).toFixed(4) %> (<%= Number(latest.surcharge_percent || 0).toFixed(2) %>%).<br>
+      Surcharge/Ton = Load Rate × Surcharge % · Total Fuel Surcharge = Surcharge/Ton × Wet Tons (flat-rate loads: Flat Amount × Surcharge %).<br>
+      Example: $6.485 diesel → 24.85%; $12.65/ton × 0.2485 = $3.143525/ton × 24.16 wet tons = $75.95.
+      Each load uses the rate for its own week: the latest row here effective on or before the Load Date (Rate pending until that week is posted).<br>
+      Fuel surcharge is billed as its own invoice line and is not part of Load Total or Driver Pay.
+    </p>
     <p><strong>Updated by:</strong> <%= latest.updated_by || 'Not recorded' %><% if (latest.updated_at) { %> on <%= auditStamp(latest.updated_at) %><% } %></p>
     <p style="font-size:13px;color:#666;">Updated every Tuesday from EIA Central Atlantic (PADD 1B).</p>
   </div>

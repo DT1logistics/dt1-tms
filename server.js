@@ -7,6 +7,7 @@ const tls = require('tls');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
+const fuelCalc = require('./lib/fuel-surcharge');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -25,6 +26,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/js/fuel-surcharge.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'fuel-surcharge.js')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
@@ -231,6 +233,25 @@ function loadAudit(loadId) {
 }
 
 app.locals.loadTotalAmount = loadTotalAmount;
+// Fuel surcharge for a load using the fuel rate for that load's week (latest /fuel-rate row effective
+// on or before the Load Date). pending=true and $0 until that week's rate is posted.
+// Never part of Load Total or Driver Pay.
+function loadFuelSurcharge(load, fuelRates) {
+  const history = Array.isArray(fuelRates) ? fuelRates : validFuelRates();
+  const result = fuelCalc.loadFuelSurchargeForDate({
+    history,
+    loadDate: load && load.load_date,
+    rate: load && load.rate,
+    tons: load.weight_quantity,
+    isFlat: load.driver_pay_type === 'flat',
+    flatAmount: load && load.driver_flat_rate
+  });
+  if (!load || Number(load.has_fuel_surcharge) !== 1) {
+    return { ...result, applies: false, perTon: 0, baseHauling: 0, total: 0 };
+  }
+  return { ...result, applies: true };
+}
+app.locals.loadFuelSurcharge = loadFuelSurcharge;
 app.locals.loadStatusLabel = loadStatusLabel;
 app.locals.loadOriginLabel = loadOriginLabel;
 app.locals.settlementWeekLabel = settlementWeekLabel;
@@ -680,9 +701,16 @@ function initDB() {
     db.prepare(`
       INSERT INTO fuel_rates (
         effective_date, central_atlantic_rate, base_rate, surcharge_percent, updated_by, updated_at
-      ) VALUES ('2026-10-19', 6.508, 4.00, 2.508, 'Logan (Operations Manager)', CURRENT_TIMESTAMP)
+      ) VALUES ('2026-10-19', 6.508, 4.00, 25.08, 'Logan (Operations Manager)', CURRENT_TIMESTAMP)
     `).run();
   }
+  // Recompute every stored Surcharge % from its diesel price with the current formula
+  // ((rate - 4.00) / 10, shown as a percent): e.g. $6.508 -> 25.08%, $6.496 -> 24.96%.
+  const updatePercent = db.prepare('UPDATE fuel_rates SET surcharge_percent = ? WHERE id = ?');
+  db.prepare('SELECT id, central_atlantic_rate, surcharge_percent FROM fuel_rates').all().forEach((row) => {
+    const percent = calculateSurchargePercent(row.central_atlantic_rate);
+    if (Number(row.surcharge_percent) !== percent) updatePercent.run(percent, row.id);
+  });
 
   db.prepare(`
     UPDATE loads
@@ -809,18 +837,19 @@ function loadFormData(user, load) {
     const current = db.prepare("SELECT id, number, description, status FROM equipment WHERE id = ? AND type = 'truck'").get(load.truck_id);
     if (current) trucks.unshift(current);
   }
+  // Admin only: full fuel-rate history so the form can look up the rate for the Load Date's week.
+  let fuelRates = [];
   let latestFuel = null;
-  let surchargePercent = 0;
   if (user.role === 'admin') {
-    latestFuel = db.prepare(`
-      SELECT * FROM fuel_rates
-      WHERE central_atlantic_rate IS NOT NULL AND surcharge_percent IS NOT NULL
-      ORDER BY effective_date DESC, id DESC
-      LIMIT 1
-    `).get() || null;
-    surchargePercent = latestFuel && latestFuel.surcharge_percent != null ? Number(latestFuel.surcharge_percent) : 0;
+    fuelRates = validFuelRates().map((row) => ({
+      id: row.id,
+      effective_date: row.effective_date,
+      central_atlantic_rate: row.central_atlantic_rate,
+      surcharge_percent: row.surcharge_percent
+    }));
+    latestFuel = fuelRates[0] || null;
   }
-  return { drivers, projects: activeProjects(), trucks, latestFuel, surchargePercent };
+  return { drivers, projects: activeProjects(), trucks, latestFuel, fuelRates };
 }
 
 function submittedLoadGaps(load, hasFile) {
@@ -2988,9 +3017,9 @@ app.post('/equipment/:id', requireAuth, (req, res) => {
 });
 
 // Fuel rate
+// Fuel Surcharge % = (Weekly Diesel Rate - 4.00) / 10, shown as a percent ($6.485 -> 24.85%).
 function calculateSurchargePercent(currentRate) {
-  const percent = Math.max(0, ((Number(currentRate) - 4.00) / 0.10) * 0.1);
-  return Math.round(percent * 1000) / 1000;
+  return fuelCalc.fscPercent(currentRate);
 }
 
 function fuelRateValue(body) {
@@ -3006,7 +3035,7 @@ function validFuelRates() {
     SELECT * FROM fuel_rates
     WHERE central_atlantic_rate IS NOT NULL AND surcharge_percent IS NOT NULL
     ORDER BY effective_date DESC, id DESC
-  `).all();
+  `).all().map((row) => ({ ...row, surcharge_percent: calculateSurchargePercent(row.central_atlantic_rate) }));
 }
 
 app.get('/fuel-rate', requireAuth, (req, res) => {
@@ -3038,7 +3067,8 @@ app.post('/fuel-rate', requireAuth, (req, res) => {
 
 // Fuel
 app.get('/fuel', requireAuth, (req, res) => {
-  const rates = db.prepare('SELECT * FROM fuel_rates ORDER BY effective_date DESC').all();
+  const rates = db.prepare('SELECT * FROM fuel_rates ORDER BY effective_date DESC').all()
+    .map((row) => ({ ...row, surcharge_percent: calculateSurchargePercent(row.central_atlantic_rate) }));
   const current = rates[0] || null;
   res.render('fuel', { user: req.session.user, current, rates });
 });
@@ -3194,8 +3224,9 @@ function approvedSettlementWeeks(driverId) {
 
 app.get('/settlements', requireAuth, (req, res) => {
   const isAdmin = req.session.user.role === 'admin';
-  const latestFuel = db.prepare('SELECT * FROM fuel_rates ORDER BY effective_date DESC, id DESC LIMIT 1').get();
-  const surchargePercent = latestFuel && latestFuel.surcharge_percent != null ? Number(latestFuel.surcharge_percent) : 0;
+  const fuelRates = validFuelRates();
+  const latestFuel = fuelRates[0] || null;
+  const surchargePercent = latestFuel ? latestFuel.surcharge_percent : 0;
   const approvedWeeks = approvedSettlementWeeks(isAdmin ? null : req.session.user.id);
   let customerInvoices = [];
   if (isAdmin) {
@@ -3227,16 +3258,30 @@ app.get('/settlements', requireAuth, (req, res) => {
     const hauling = qty * rate;
     const travelTime = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
     const selfLoad = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
-    const lineFsc = Number(load.has_fuel_surcharge) === 1 ? hauling * (surchargePercent / 100) : 0;
-    byProject[key].loads.push({ ...load, hauling, travelTime, selfLoad, lineFsc });
+    // Each load uses its own week's fuel rate, so an invoice spanning weeks can mix percents.
+    const fsc = loadFuelSurcharge(load, fuelRates);
+    const lineFsc = fsc.total;
+    byProject[key].loads.push({
+      ...load, hauling, travelTime, selfLoad, lineFsc,
+      fscPerTon: fsc.perTon, fscFlat: fsc.flat, fscPercent: fsc.percent, fscPending: fsc.pending,
+      fscDiesel: fsc.dieselRate, fscEffective: fsc.effectiveDate
+    });
+    if (Number(load.has_fuel_surcharge) === 1) {
+      byProject[key].fscPercents = byProject[key].fscPercents || [];
+      if (!fsc.pending && !byProject[key].fscPercents.includes(fsc.percent)) byProject[key].fscPercents.push(fsc.percent);
+      if (fsc.pending) byProject[key].fscPendingCount = (byProject[key].fscPendingCount || 0) + 1;
+    }
     byProject[key].hauling += hauling;
-    if (Number(load.has_fuel_surcharge) === 1) byProject[key].fscBase += hauling;
+    if (Number(load.has_fuel_surcharge) === 1) {
+      byProject[key].fscBase += fsc.baseHauling;
+      byProject[key].fuelSurcharge += lineFsc;
+    }
     byProject[key].travelTime += travelTime;
     byProject[key].selfLoad += selfLoad;
   });
 
     customerInvoices = Object.values(byProject).map((invoice) => {
-      invoice.fuelSurcharge = invoice.fscBase * (surchargePercent / 100);
+      invoice.fuelSurcharge = fuelCalc.round(invoice.fuelSurcharge, 2);
       invoice.total = invoice.hauling + invoice.fuelSurcharge + invoice.travelTime + invoice.selfLoad;
       return invoice;
     });
