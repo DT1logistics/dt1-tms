@@ -170,15 +170,6 @@
           <label for="review_qty">Wet Ton/Qty</label>
           <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="weight_quantity" id="review_qty" class="input-num-4dec" data-four-dec="1" value="<%= load.weight_quantity != null ? load.weight_quantity : '' %>">
         </div>
-        <div class="field-drive-compact">
-          <label class="drive-check-label" for="has_drive_time">
-            <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
-            <span>Drive Time ($)</span>
-          </label>
-          <div id="review_drive_wrap" class="drive-amount-inline">
-            <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="review_drive_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
-          </div>
-        </div>
         <div class="field-fuel-compact">
           <label class="drive-check-label" for="has_fuel_surcharge">
             <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" data-fsc-percent="<%= typeof surchargePercent !== 'undefined' ? surchargePercent : 0 %>" <%= load.has_fuel_surcharge ? 'checked' : '' %>>
@@ -197,6 +188,15 @@
           </label>
           <div id="review_self_wrap" class="self-amount-inline" style="<%= load.has_self_load ? 'display:inline-flex;' : 'display:none;' %>">
             <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="20.00" name="self_load_amount" id="review_self_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.self_load_amount != null && Number(load.self_load_amount) > 0 ? Number(load.self_load_amount).toFixed(2) : '20.00' %>">
+          </div>
+        </div>
+        <div class="self-load-group drive-time-group">
+          <label class="self-check-label" for="has_drive_time">
+            <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
+            <span>Drive Time ($)</span>
+          </label>
+          <div id="review_drive_wrap" class="self-amount-inline" style="<%= load.has_drive_time ? 'display:inline-flex;' : 'display:none;' %>">
+            <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="review_drive_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
           </div>
         </div>
       </div>
@@ -321,8 +321,8 @@
   }
 
   function syncReviewDriveWrap() {
-    if (reviewDriveWrap) {
-      reviewDriveWrap.style.display = 'block';
+    if (reviewDriveWrap && reviewDriveCheck) {
+      reviewDriveWrap.style.display = reviewDriveCheck.checked ? 'inline-flex' : 'none';
     }
   }
 
