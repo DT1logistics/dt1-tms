@@ -14,8 +14,8 @@
   <div>Date: <%= load.load_date || '—' %></div>
   <div>Project: <%= load.project_display || '—' %></div>
   <div>Destination: <%= load.destination || load.description || '—' %></div>
-  <% if (user.role === 'admin' && (load.admin_notes || load.notes)) { %>
-    <div><strong>Notes <span class="admin-only-badge">Admin Only</span>:</strong> <%= load.admin_notes || load.notes %></div>
+  <% if (load.notes || load.admin_notes) { %>
+    <div class="load-notes-card"><strong>Notes:</strong> <span class="load-notes-text"><%= load.notes || load.admin_notes %></span></div>
   <% } %>
   <div>Qty/Wet Ton: <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
   <div>Rate: $<%= money(load.rate) %></div>

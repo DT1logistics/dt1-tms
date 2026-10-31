@@ -90,9 +90,9 @@
   <% } %>
   <div><strong>Drive Time</strong> <%= Number(load.has_drive_time) === 1 ? '$' + money(load.drive_time_amount) : 'No' %></div>
   <div><strong>Self Load</strong> <%= Number(load.has_self_load) === 1 ? '$' + money(load.self_load_amount) : 'No' %></div>
-  <% if (user.role === 'admin') { %>
-    <div><strong>Notes <span class="admin-only-badge">Admin Only</span></strong> <%= load.admin_notes || load.notes || '—' %></div>
-  <% } %>
+  <div class="load-notes-view"><strong>Notes</strong> <span class="shared-notes-badge">Visible to Admin &amp; Driver</span>
+    <div class="load-notes-text"><%= load.notes || load.admin_notes || '—' %></div>
+  </div>
 </div>
 
 <div class="card">
@@ -150,8 +150,8 @@
       </select>
       <label for="edit_destination">Destination</label>
       <input type="text" name="destination" id="edit_destination" value="<%= load.destination || load.description || '' %>" placeholder="Delivery location / jobsite destination">
-      <label for="edit_admin_notes">Notes <span class="admin-only-badge">Admin Only — Not visible to driver</span></label>
-      <textarea name="admin_notes" id="edit_admin_notes" rows="3" placeholder="Internal admin notes for this load (visible to Admin only)"><%= load.admin_notes || load.notes || '' %></textarea>
+      <label for="edit_load_notes">Notes <span class="shared-notes-badge">Visible to Admin &amp; Driver</span></label>
+      <textarea name="notes" id="edit_load_notes" class="load-notes-input" rows="3" maxlength="2000" placeholder="Notes for this load (Admin and Driver can both see these)"><%= load.notes || load.admin_notes || '' %></textarea>
       <% if (trucks && trucks.length) { %>
         <label>Truck</label>
         <select name="truck_id">
