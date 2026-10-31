@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node test/fuel-surcharge.test.js"
+    "test": "node test/fuel-surcharge.test.js && node test/equipment-expenses.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

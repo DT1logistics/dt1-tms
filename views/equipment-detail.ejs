@@ -1,0 +1,132 @@
+<%- include('partials/open', { title: (equipment.type === 'trailer' ? 'Trailer ' : 'Truck ') + (equipment.number || ''), user: user, active: 'equipment' }) %>
+<p><a href="/equipment">&larr; Equipment</a></p>
+<h1><%= equipment.type === 'trailer' ? 'Trailer' : 'Truck' %> <%= equipment.number || 'Unnumbered' %></h1>
+
+<div class="card">
+  <div class="counts">
+    <% if (equipment.maintenance_status === 'out_of_service') { %><span class="badge red">Out of service</span>
+    <% } else if (equipment.maintenance_status === 'maintenance') { %><span class="badge yellow">In maintenance</span>
+    <% } else { %><span class="badge green">Active</span><% } %>
+  </div>
+  <div class="equip-meta"><strong>VIN#:</strong> <%= equipment.vin || '—' %></div>
+  <div class="equip-meta"><strong>Year / Make / Model:</strong> <%= [equipment.year, equipment.make, equipment.model].filter(Boolean).join(' ') || '—' %></div>
+  <div class="equip-meta"><strong>Description:</strong> <%= equipment.description || '—' %></div>
+  <div class="muted">Status: <%= equipment.status === 'inactive' ? 'Inactive' : 'Active' %> · <%= equipment.ownership || 'Ownership not set' %></div>
+  <p><a href="/equipment/<%= equipment.id %>/edit">Edit unit details</a></p>
+</div>
+
+<div class="card expense-log" id="expenses">
+  <h2>Expenses / Maintenance Log</h2>
+  <% if (saved) { %><div class="notice">Expense <%= saved === 'deleted' ? 'deleted' : (saved === 'logged' ? 'logged from receipt' : (saved === 'updated' ? 'updated' : 'added')) %>.</div><% } %>
+  <% if (errors && errors.length) { %><div class="reject-note"><% errors.forEach(function (e) { %><div><%= e %></div><% }) %></div><% } %>
+
+  <div class="expense-summary">
+    <div><span class="muted">YTD <%= year %></span><strong>$<%= money(summary.ytdTotal) %></strong></div>
+    <div><span class="muted">All-time</span><strong>$<%= money(summary.allTimeTotal) %></strong></div>
+    <div><span class="muted">Line items</span><strong><%= summary.count %></strong></div>
+  </div>
+
+  <% function expenseFields(item, prefix, isEdit) { const v = item || {}; %>
+    <div class="expense-form-grid">
+      <div><label for="<%= prefix %>_date">Date</label><input type="date" id="<%= prefix %>_date" name="expense_date" max="9999-12-31" required value="<%= v.expense_date || (isEdit ? '' : today) %>"></div>
+      <div><label for="<%= prefix %>_category">Category</label>
+        <select id="<%= prefix %>_category" name="category">
+          <% categories.forEach(function (c) { %><option value="<%= c %>" <%= (v.category || 'Repair') === c ? 'selected' : '' %>><%= c %></option><% }) %>
+        </select></div>
+      <div><label for="<%= prefix %>_vendor">Vendor</label><input type="text" id="<%= prefix %>_vendor" name="vendor" maxlength="200" value="<%= v.vendor || '' %>" placeholder="Shop / supplier"></div>
+      <div><label for="<%= prefix %>_amount">Amount ($)</label><input type="number" id="<%= prefix %>_amount" name="amount" step="0.01" min="0" inputmode="decimal" required value="<%= v.amount != null && v.amount !== '' ? Number(v.amount).toFixed(2) : '' %>"></div>
+      <div><label for="<%= prefix %>_odometer">Odometer (optional)</label><input type="number" id="<%= prefix %>_odometer" name="odometer" step="1" min="0" inputmode="numeric" value="<%= v.odometer != null ? v.odometer : '' %>"></div>
+    </div>
+    <label for="<%= prefix %>_description">Description <span class="muted">(required)</span></label>
+    <textarea id="<%= prefix %>_description" name="description" rows="2" maxlength="2000" required placeholder="What was done / purchased"><%= v.description || '' %></textarea>
+  <% } %>
+
+  <% if (editing) { %>
+    <% const ed = draft ? Object.assign({}, editing, draft) : editing; %>
+    <form class="expense-form editing" method="POST" action="/equipment/<%= equipment.id %>/expenses/<%= editing.id %>" enctype="multipart/form-data">
+      <h3>Edit line item</h3>
+      <% expenseFields(ed, 'edit', true) %>
+      <label for="edit_receipt">Receipt (image or PDF)</label>
+      <% if (editing.filename) { %>
+        <div class="muted">Current: <a href="/equipment/<%= equipment.id %>/expenses/<%= editing.id %>/file" target="_blank" rel="noopener"><%= editing.original_name || 'Receipt' %></a>
+          <label class="inline-check"><input type="checkbox" name="remove_file" value="1"> Remove</label></div>
+      <% } %>
+      <input type="file" id="edit_receipt" name="receipt_file" accept="image/*,.pdf,application/pdf">
+      <div class="header-actions"><button type="submit">Save Changes</button> <a class="btn btn-secondary" href="/equipment/<%= equipment.id %>#expenses">Cancel</a></div>
+    </form>
+  <% } else { %>
+    <details class="expense-add" <%= (errors && errors.length && draft) ? 'open' : '' %>>
+      <summary><strong>+ Add line item</strong></summary>
+      <form class="expense-form" method="POST" action="/equipment/<%= equipment.id %>/expenses" enctype="multipart/form-data">
+        <% expenseFields(draft, 'new', false) %>
+        <label for="new_receipt">Receipt (image or PDF)</label>
+        <input type="file" id="new_receipt" name="receipt_file" accept="image/*,.pdf,application/pdf">
+        <button type="submit">Add Expense</button>
+      </form>
+    </details>
+
+    <% const allCandidates = candidates.matched.concat(candidates.other); %>
+    <% if (allCandidates.length) { %>
+      <details class="expense-add" <%= candidates.matched.length ? 'open' : '' %>>
+        <summary><strong>Log to Equipment from a receipt</strong> <span class="muted">(<%= candidates.matched.length %> tagged to this unit)</span></summary>
+        <form class="expense-form" method="POST" action="/equipment/<%= equipment.id %>/expenses-from-receipt">
+          <label for="receipt_line_id">Receipt line (from Receipts / Fuel Log)</label>
+          <select id="receipt_line_id" name="receipt_line_id" required>
+            <% function candOption(c) { %><option value="<%= c.line_id %>"><%= c.expense_date || 'No date' %> — <%= c.tag || 'untagged' %> — <%= c.description %> — $<%= money(c.amount) %><%= c.uploader_name ? ' (' + c.uploader_name + ')' : '' %><%= c.filename ? '' : ' [no file]' %></option><% } %>
+            <% if (candidates.matched.length) { %><optgroup label="Tagged to <%= equipment.number %>"><% candidates.matched.forEach(candOption) %></optgroup><% } %>
+            <% if (candidates.other.length) { %><optgroup label="Other unlogged receipt lines"><% candidates.other.forEach(candOption) %></optgroup><% } %>
+          </select>
+          <div class="expense-form-grid">
+            <div><label for="rc_category">Category</label><select id="rc_category" name="category"><% categories.forEach(function (c) { %><option value="<%= c %>"><%= c %></option><% }) %></select></div>
+            <div><label for="rc_vendor">Vendor</label><input type="text" id="rc_vendor" name="vendor" maxlength="200"></div>
+            <div><label for="rc_odometer">Odometer (optional)</label><input type="number" id="rc_odometer" name="odometer" step="1" min="0"></div>
+          </div>
+          <p class="muted">Date, description, amount and the receipt file are copied from the receipt; edit the line item afterwards if needed.</p>
+          <button type="submit">Log to Equipment</button>
+        </form>
+      </details>
+    <% } %>
+  <% } %>
+
+  <% if (!summary.months.length) { %>
+    <p class="muted">No expenses logged for this unit yet.</p>
+  <% } else { %>
+    <div class="table-wrap">
+      <table class="expense-table">
+        <thead><tr><th>Date</th><th>Category</th><th>Vendor</th><th>Description</th><th class="num">Odometer</th><th class="num">Amount</th><th class="num">YTD <%= year %></th><th>Receipt</th><th></th></tr></thead>
+        <% summary.months.forEach(function (m) { %>
+          <tbody>
+            <tr class="expense-month"><th colspan="5"><%= m.label %> <span class="muted">(<%= m.count %>)</span></th><th class="num">$<%= money(m.total) %></th><th colspan="3"></th></tr>
+            <% m.items.forEach(function (e) { %>
+              <% const fileUrl = '/equipment/' + equipment.id + '/expenses/' + e.id + '/file'; const kind = e.filename ? ticketFileKind(e.original_name || e.filename) : ''; %>
+              <tr<%= editing && String(editing.id) === String(e.id) ? ' class=expense-editing' : '' %>>
+                <td><%= e.expense_date || '—' %></td>
+                <td><%= e.category || 'Other' %><% if (e.source_receipt_id) { %><div class="muted">from receipt #<%= e.source_receipt_id %></div><% } %></td>
+                <td><%= e.vendor || '—' %></td>
+                <td class="load-notes-text"><%= e.description %></td>
+                <td class="num"><%= e.odometer != null ? Number(e.odometer).toLocaleString('en-US') : '—' %></td>
+                <td class="num">$<%= money(e.amount) %></td>
+                <td class="num"><%= e.ytdRunning != null ? '$' + money(e.ytdRunning) : '—' %></td>
+                <td class="expense-receipt">
+                  <% if (e.filename) { %>
+                    <% if (kind === 'image') { %><a href="<%= fileUrl %>" target="_blank" rel="noopener"><img src="<%= fileUrl %>" alt="Receipt" loading="lazy"></a><% } %>
+                    <a href="<%= fileUrl %>" target="_blank" rel="noopener">View</a> · <a href="<%= fileUrl %>?download=1">Download</a>
+                  <% } else { %>—<% } %>
+                </td>
+                <td class="expense-actions">
+                  <a href="/equipment/<%= equipment.id %>?edit=<%= e.id %>#expenses">Edit</a>
+                  <form method="POST" action="/equipment/<%= equipment.id %>/expenses/<%= e.id %>/delete" onsubmit="return confirm('Delete this expense line item?');"><button type="submit" class="danger link-danger">Delete</button></form>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        <% }) %>
+        <tfoot>
+          <tr class="grand"><th colspan="5">YTD <%= year %> total</th><th class="num">$<%= money(summary.ytdTotal) %></th><th colspan="3"></th></tr>
+          <tr><th colspan="5">All-time total</th><th class="num">$<%= money(summary.allTimeTotal) %></th><th colspan="3"></th></tr>
+        </tfoot>
+      </table>
+    </div>
+  <% } %>
+</div>
+<%- include('partials/close') %>
