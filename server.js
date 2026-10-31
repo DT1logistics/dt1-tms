@@ -730,6 +730,13 @@ function initDB() {
     WHERE (admin_notes IS NULL OR TRIM(admin_notes) = '')
       AND notes IS NOT NULL AND TRIM(notes) != ''
   `).run();
+  // Shared Load Notes live in loads.notes; carry over any admin_notes-only text (safe for existing rows).
+  db.prepare(`
+    UPDATE loads
+    SET notes = admin_notes
+    WHERE (notes IS NULL OR TRIM(notes) = '')
+      AND admin_notes IS NOT NULL AND TRIM(admin_notes) != ''
+  `).run();
 
   backfillUserNames();
   backfillUserAddresses();
@@ -1757,10 +1764,13 @@ function buildLoadValues(req, project, existing) {
   const descriptionVal = bodyHas(body, 'description')
     ? blankToNull(body.description)
     : destinationVal;
-  let adminNotesVal = existing ? (existing.admin_notes || existing.notes || null) : null;
-  if (!isDriver && (bodyHas(body, 'admin_notes') || bodyHas(body, 'notes'))) {
-    const rawNotes = bodyHas(body, 'admin_notes') ? body.admin_notes : body.notes;
-    adminNotesVal = blankToNull(rawNotes);
+  // Load Notes (restored shared field): one Notes box per load that both the Admin and the assigned
+  // Driver can read. Admin may edit at any status; a Driver only reaches this while the load is a
+  // Draft (editableLoad). Kept separate from rejection_reason. admin_notes is mirrored for older code.
+  let notesVal = existing ? (existing.notes || existing.admin_notes || null) : null;
+  if (bodyHas(body, 'notes') || (!isDriver && bodyHas(body, 'admin_notes'))) {
+    const rawNotes = bodyHas(body, 'notes') ? body.notes : body.admin_notes;
+    notesVal = blankToNull(rawNotes == null ? rawNotes : String(rawNotes).slice(0, 2000));
   }
 
   return {
@@ -1772,8 +1782,8 @@ function buildLoadValues(req, project, existing) {
     description: descriptionVal,
     origin: keptText(body, 'origin', existing),
     destination: destinationVal,
-    notes: adminNotesVal,
-    admin_notes: adminNotesVal,
+    notes: notesVal,
+    admin_notes: notesVal,
     weight: weight == null || weight === '' ? null : weight,
     rate,
     hasFuel,
@@ -1842,10 +1852,6 @@ app.get('/loads/:id/edit', requireAuth, (req, res) => {
   const existing = editableLoad(req, req.params.id);
   if (!existing) return res.redirect('/loads');
   const load = db.prepare(loadQuery + ' WHERE l.id = ?').get(existing.id);
-  if (req.session.user.role !== 'admin' && load) {
-    delete load.admin_notes;
-    delete load.notes;
-  }
   const form = loadFormData(req.session.user, load);
   res.render('load-form', { user: req.session.user, load, tickets: ticketRows(existing.id), ...form });
 });
@@ -1962,10 +1968,6 @@ app.get('/loads/:id', requireAuth, (req, res) => {
   const existing = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!canViewLoad(req, existing)) return res.redirect('/loads');
   const load = annotatePay(db.prepare(loadQuery + ' WHERE l.id = ?').get(existing.id));
-  if (req.session.user.role !== 'admin' && load) {
-    delete load.admin_notes;
-    delete load.notes;
-  }
   const form = loadFormData(req.session.user, load);
   if (load.project_id && !form.projects.some((project) => String(project.id) === String(load.project_id))) {
     const current = db.prepare('SELECT * FROM projects WHERE id = ?').get(load.project_id);

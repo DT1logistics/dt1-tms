@@ -68,10 +68,8 @@
   </select>
   <label for="destination">Destination</label>
   <input type="text" name="destination" id="destination" value="<%= load.destination || load.description || '' %>" placeholder="Delivery location / jobsite destination">
-  <% if (user.role === 'admin') { %>
-    <label for="admin_notes">Notes <span class="admin-only-badge">Admin Only — Not visible to driver</span></label>
-    <textarea name="admin_notes" id="admin_notes" rows="3" placeholder="Internal admin notes for this load (visible to Admin only)"><%= load.admin_notes || load.notes || '' %></textarea>
-  <% } %>
+  <label for="load_notes">Notes <span class="shared-notes-badge">Visible to Admin &amp; Driver</span></label>
+  <textarea name="notes" id="load_notes" class="load-notes-input" rows="3" maxlength="2000" placeholder="Notes for this load (Admin and Driver can both see these)"><%= load.notes || load.admin_notes || '' %></textarea>
   <% if (trucks && trucks.length) { %>
     <label>Truck</label>
     <select name="truck_id">

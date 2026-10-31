@@ -746,3 +746,19 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
     margin-top: 10px;
   }
 }
+
+/* Shared Load Notes (visible to Admin & Driver) */
+.shared-notes-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #065f46;
+  background: #d1fae5;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+.load-notes-input { min-height: 72px; resize: vertical; }
+.load-notes-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.load-notes-view .load-notes-text { margin-top: 4px; }
