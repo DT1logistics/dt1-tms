@@ -13,8 +13,10 @@
             <div class="receipt-lines">
               <% r.lines.forEach(line => { %>
                 <div class="receipt-line">
-                  <div><strong><%= line.equipment_type || 'No truck/trailer tag' %></strong> — <%= line.description %> — $<%= money(line.amount) %></div>
-                  <% if (line.logged_equipment_id) { %>
+                  <div><strong><%= line.equipment_type || 'No truck/trailer tag' %></strong><% if (line.is_general) { %> <span class="badge">General</span><% } %> — <%= line.description %> — $<%= money(line.amount) %></div>
+                  <% if (line.is_general) { %>
+                    <div class="muted">Shop supplies and business expenses stay off the equipment log.</div>
+                  <% } else if (line.logged_equipment_id) { %>
                     <div class="muted">Logged to <a href="/equipment/<%= line.logged_equipment_id %>#expenses"><%= line.logged_equipment_type === 'trailer' ? 'Trailer' : 'Truck' %> <%= line.logged_equipment_number %></a></div>
                   <% } else if (equipmentList.length) { %>
                     <form method="POST" action="/receipts/lines/<%= line.id %>/log-equipment" class="log-equipment-form">

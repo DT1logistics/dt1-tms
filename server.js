@@ -2937,7 +2937,8 @@ app.get('/receipts', requireAuth, (req, res) => {
       r.lines = byReceipt[r.id] || [];
       r.lines.forEach((line) => {
         const match = equipmentList.find((eq) => equipExpenses.receiptTagMatches(line.equipment_type, eq.number));
-        line.suggested_equipment_id = match ? match.id : null;
+        line.is_general = isGeneralReceiptTag(line.equipment_type);
+        line.suggested_equipment_id = line.is_general || !match ? null : match.id;
       });
     });
   }
@@ -2965,6 +2966,12 @@ function equipmentUnitTag(eq) {
   return `${kind} ${number.startsWith('#') ? number : '#' + number}`;
 }
 
+const GENERAL_RECEIPT_TAG = 'General / Shop Supplies & Business Expense';
+
+function isGeneralReceiptTag(tag) {
+  return String(tag || '').trim().toLowerCase() === GENERAL_RECEIPT_TAG.toLowerCase();
+}
+
 function receiptLinesFromBody(body) {
   if (Array.isArray(body.lines)) return body.lines.filter(Boolean);
   const lines = [];
@@ -2980,6 +2987,7 @@ function receiptLinesFromBody(body) {
 
 function receiptLineEquipmentText(line) {
   const picked = String(line.equipment_id || '').trim();
+  if (picked === 'general') return GENERAL_RECEIPT_TAG;
   if (picked && picked !== 'other') {
     const id = parseInt(picked, 10);
     if (Number.isInteger(id)) {
@@ -2993,11 +3001,39 @@ function receiptLineEquipmentText(line) {
   return String(line.equipment || '').trim();
 }
 
+function normalizeReceiptLines(body) {
+  const lines = [];
+  const errors = [];
+  receiptLinesFromBody(body).forEach((line, index) => {
+    const description = String(line.description || '').trim();
+    const amountText = String(line.amount == null ? '' : line.amount).trim();
+    const equipmentId = String(line.equipment_id || '').trim();
+    const equipmentText = String(line.equipment || '').trim();
+    if (!description && !amountText && !equipmentId && !equipmentText) return;
+    const label = `Line ${index + 1}`;
+    if (!description) errors.push(`${label} needs a description.`);
+    const amount = parseFloat(amountText);
+    if (!amountText || !Number.isFinite(amount)) errors.push(`${label} needs an amount.`);
+    lines.push(Object.assign({}, line, { description, amount }));
+  });
+  if (!lines.length && !errors.length) errors.push('Add at least one receipt line with a description.');
+  return { lines, errors };
+}
+
 app.get('/receipts/new', requireAuth, (req, res) => {
-  res.render('receipt-form', { user: req.session.user, equipmentUnits: activeEquipmentUnits() });
+  res.render('receipt-form', { user: req.session.user, equipmentUnits: activeEquipmentUnits(), error: '' });
 });
 
 app.post('/receipts', requireAuth, upload.single('receipt_file'), (req, res) => {
+  const parsed = normalizeReceiptLines(req.body);
+  if (parsed.errors.length) {
+    discardUpload(req.file);
+    return res.status(400).render('receipt-form', {
+      user: req.session.user,
+      equipmentUnits: activeEquipmentUnits(),
+      error: parsed.errors.join(' ')
+    });
+  }
   const { expense_date } = req.body;
   const result = db.prepare(`
     INSERT INTO receipts (expense_date, uploaded_by, filename, original_name, status)
@@ -3008,10 +3044,8 @@ app.post('/receipts', requireAuth, upload.single('receipt_file'), (req, res) => 
     INSERT INTO receipt_lines (receipt_id, equipment_type, description, amount)
     VALUES (?, ?, ?, ?)
   `);
-  receiptLinesFromBody(req.body).forEach((line) => {
-    if (line.description && line.amount) {
-      insertLine.run(receiptId, receiptLineEquipmentText(line), line.description, parseFloat(line.amount) || 0);
-    }
+  parsed.lines.forEach((line) => {
+    insertLine.run(receiptId, receiptLineEquipmentText(line), line.description, line.amount);
   });
   res.redirect('/receipts');
 });
@@ -3160,8 +3194,9 @@ function receiptLineCandidates(equipment) {
     WHERE NOT EXISTS (SELECT 1 FROM equipment_expenses e WHERE e.source_receipt_line_id = rl.id)
     ORDER BY r.expense_date DESC, rl.id DESC
   `).all();
-  rows.forEach((row) => { row.matches = equipment ? equipExpenses.receiptTagMatches(row.tag, equipment.number) : false; });
-  return { matched: rows.filter((r) => r.matches), other: rows.filter((r) => !r.matches) };
+  const loggable = rows.filter((row) => !isGeneralReceiptTag(row.tag));
+  loggable.forEach((row) => { row.matches = equipment ? equipExpenses.receiptTagMatches(row.tag, equipment.number) : false; });
+  return { matched: loggable.filter((r) => r.matches), other: loggable.filter((r) => !r.matches) };
 }
 
 function storedFileBytes(filename) {
@@ -3316,6 +3351,7 @@ function logReceiptLineToEquipment(req, lineId, equipment) {
     WHERE rl.id = ?
   `).get(lineId);
   if (!line) return { error: 'That receipt line no longer exists.' };
+  if (isGeneralReceiptTag(line.equipment_type)) return { error: 'General shop and business expenses are not logged to a truck or trailer.' };
   const already = db.prepare('SELECT equipment_id FROM equipment_expenses WHERE source_receipt_line_id = ?').get(line.id);
   if (already) return { error: 'That receipt line is already logged to equipment.', equipmentId: already.equipment_id };
   const parsed = equipExpenses.parseExpenseInput({
