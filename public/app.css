@@ -762,3 +762,27 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 .load-notes-input { min-height: 72px; resize: vertical; }
 .load-notes-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .load-notes-view .load-notes-text { margin-top: 4px; }
+
+/* Equipment Expenses / Maintenance Log */
+.expense-summary { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0 12px; }
+.expense-summary > div { flex: 1 1 140px; background: #f4f6fa; border-radius: 8px; padding: 8px 12px; display: flex; flex-direction: column; }
+.expense-summary strong { font-size: 1.2rem; color: var(--navy); }
+.expense-add { margin: 8px 0 12px; }
+.expense-add > summary { cursor: pointer; padding: 6px 0; }
+.expense-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0 12px; }
+.expense-form.editing { border: 2px solid var(--navy); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+.expense-table .expense-month th { background: #eef2f8; }
+.expense-table tr.expense-editing td { background: #fff8e1; }
+.expense-receipt img { display: block; max-width: 80px; max-height: 80px; margin-bottom: 4px; border-radius: 4px; }
+.expense-actions form { display: inline; margin: 0; }
+.expense-actions button.link-danger { width: auto; padding: 2px 8px; margin: 0 0 0 6px; font-size: 13px; }
+.inline-check { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-weight: normal; }
+.inline-check input { width: auto; }
+.equip-cost { margin-top: 6px; }
+.equip-other[hidden] { display: none !important; }
+.receipt-lines { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
+.receipt-line { padding: 4px 0; }
+.log-equipment-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+.log-equipment-form select { width: auto; margin: 0; }
+.log-equipment-form button { width: auto; margin: 0; padding: 6px 10px; }
+.expense-log .notice { background: #d1fae5; color: #065f46; padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; font-weight: 600; }

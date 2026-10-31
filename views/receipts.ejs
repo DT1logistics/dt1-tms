@@ -1,12 +1,37 @@
 <%- include('partials/open', { title: `Receipts`, user: user, active: 'receipts' }) %>
 <h1>Receipts</h1>
+<% if (typeof logError !== 'undefined' && logError) { %><div class="reject-note"><%= logError %></div><% } %>
 <a href="/receipts/new" style="display:inline-block;background:#1B365D;color:white;padding:10px 16px;border-radius:8px;text-decoration:none;margin-bottom:16px;">+ New Receipt</a>
     <% if (receipts && receipts.length) { %>
       <% receipts.forEach(r => { %>
         <div style="background:white;padding:16px;border-radius:10px;margin-bottom:12px;">
-          <strong><%= r.expense_date %></strong> — <%= r.original_name || 'No file' %><br>
+          <strong><%= r.expense_date %></strong> — <%= r.original_name || 'No file' %>
+          <% if (r.filename) { %> · <a href="/uploads/<%= encodeURIComponent(r.filename) %>" target="_blank" rel="noopener">View file</a><% } %><br>
           Status: <span style="font-weight:bold;"><%= r.status %></span><br>
           Uploaded by: <%= r.uploader_name || 'Unknown' %>
+          <% if (user.role === 'admin' && r.lines && r.lines.length) { %>
+            <div class="receipt-lines">
+              <% r.lines.forEach(line => { %>
+                <div class="receipt-line">
+                  <div><strong><%= line.equipment_type || 'No truck/trailer tag' %></strong><% if (line.is_general) { %> <span class="badge">General</span><% } %> — <%= line.description %> — $<%= money(line.amount) %></div>
+                  <% if (line.is_general) { %>
+                    <div class="muted">Shop supplies and business expenses stay off the equipment log.</div>
+                  <% } else if (line.logged_equipment_id) { %>
+                    <div class="muted">Logged to <a href="/equipment/<%= line.logged_equipment_id %>#expenses"><%= line.logged_equipment_type === 'trailer' ? 'Trailer' : 'Truck' %> <%= line.logged_equipment_number %></a></div>
+                  <% } else if (equipmentList.length) { %>
+                    <form method="POST" action="/receipts/lines/<%= line.id %>/log-equipment" class="log-equipment-form">
+                      <select name="equipment_id" required aria-label="Truck or trailer">
+                        <option value="">Truck / Trailer…</option>
+                        <% equipmentList.forEach(eq => { %><option value="<%= eq.id %>" <%= String(line.suggested_equipment_id) === String(eq.id) ? 'selected' : '' %>><%= eq.type === 'trailer' ? 'Trailer' : 'Truck' %> <%= eq.number %></option><% }) %>
+                      </select>
+                      <select name="category" aria-label="Category"><% categories.forEach(c => { %><option value="<%= c %>"><%= c %></option><% }) %></select>
+                      <button type="submit" class="secondary">Log to Equipment</button>
+                    </form>
+                  <% } %>
+                </div>
+              <% }) %>
+            </div>
+          <% } %>
           <% if (user.role === 'admin' && r.status === 'pending') { %>
             <form method="POST" action="/receipts/<%= r.id %>/approve" style="margin-top:8px;">
               <button type="submit" style="background:#155724;color:white;border:none;padding:6px 12px;border-radius:6px;">Approve</button>

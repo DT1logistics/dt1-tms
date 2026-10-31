@@ -1,5 +1,6 @@
 <%- include('partials/open', { title: `New Receipt`, user: user, active: 'receipts' }) %>
 <h1>New Receipt</h1>
+<% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
 <form method="POST" action="/receipts" enctype="multipart/form-data" id="receiptForm">
       <label>Expense Date</label>
       <input type="date" name="expense_date" required>
@@ -9,7 +10,15 @@
       <div id="lines">
         <div class="line">
           <label>Truck / Trailer</label>
-          <input type="text" name="lines[0][equipment]" placeholder="e.g. Truck #1002 or Trailer #5">
+          <select name="lines[0][equipment_id]" class="equip-unit" onchange="syncEquipOther(this)">
+            <option value="">Select a unit…</option>
+            <% (equipmentUnits || []).forEach(function (eq) { %>
+              <option value="<%= eq.id %>"><%= eq.type === 'trailer' ? 'Trailer' : 'Truck' %> <%= eq.number || 'Unnumbered' %></option>
+            <% }) %>
+            <option value="general">General / Shop Supplies &amp; Business Expense</option>
+            <option value="other">Other — type it in</option>
+          </select>
+          <input type="text" name="lines[0][equipment]" class="equip-other" placeholder="e.g. Truck #1002 or Trailer #5" hidden>
           <label>Description</label>
           <input type="text" name="lines[0][description]" required>
           <label>Amount</label>
@@ -21,12 +30,23 @@
     </form>
 <script>
     let lineCount = 1;
+    function syncEquipOther(select) {
+      const input = select.parentElement.querySelector('.equip-other');
+      if (!input) return;
+      const other = select.value === 'other';
+      input.hidden = !other;
+      if (!other) input.value = '';
+    }
     function addLine() {
+      const first = document.querySelector('#lines .equip-unit');
       const div = document.createElement('div');
       div.className = 'line';
       div.innerHTML = `
         <label>Truck / Trailer</label>
-        <input type="text" name="lines[${lineCount}][equipment]" placeholder="e.g. Truck #1002 or Trailer #5">
+        <select name="lines[${lineCount}][equipment_id]" class="equip-unit" onchange="syncEquipOther(this)">
+          ${first ? first.innerHTML : '<option value="">Select a unit…</option><option value="general">General / Shop Supplies &amp; Business Expense</option><option value="other">Other — type it in</option>'}
+        </select>
+        <input type="text" name="lines[${lineCount}][equipment]" class="equip-other" placeholder="e.g. Truck #1002 or Trailer #5" hidden>
         <label>Description</label>
         <input type="text" name="lines[${lineCount}][description]" required>
         <label>Amount</label>

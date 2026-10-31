@@ -8,6 +8,7 @@ const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 const fuelCalc = require('./lib/fuel-surcharge');
+const equipExpenses = require('./lib/equipment-expenses');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -27,7 +28,6 @@ app.use((req, res, next) => {
 });
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/js/fuel-surcharge.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'fuel-surcharge.js')));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.locals.money = (n) => (Number(n) || 0).toFixed(2);
@@ -272,6 +272,18 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname.replace(/\s+/g, '_'))
 });
 const upload = multer({ storage });
+// Equipment expense receipts: same disk storage as load tickets/BOLs (plus a DB blob copy, like
+// documents.file_blob), limited to images and PDFs.
+const expenseUpload = multer({
+  storage,
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const kind = ticketFileKind(file.originalname);
+    if (kind === 'image' || kind === 'pdf') return cb(null, true);
+    req.expenseFileRejected = true;
+    return cb(null, false);
+  }
+});
 
 app.use(session({
   secret: process.env.SESSION_SECRET || 'dt1-logistics-secret-change-in-production',
@@ -279,6 +291,9 @@ app.use(session({
   saveUninitialized: false,
   cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 }
 }));
+// Ticket, BOL, and receipt files live here. The same URLs stay usable for a logged-in
+// driver or admin; anonymous requests are sent to sign in instead of the file.
+app.use('/uploads', requireAuth, express.static(uploadDir));
 
 function ensureColumn(table, column, definition) {
   try {
@@ -648,6 +663,32 @@ function initDB() {
   ensureColumn('projects', 'default_driver_pay_type', "TEXT DEFAULT 'percentage'");
   ensureColumn('projects', 'default_driver_flat_rate', 'REAL DEFAULT 0');
   ensureColumn('documents', 'file_blob', 'BLOB');
+  // Equipment Expenses / Maintenance Log (new table; existing equipment rows are untouched).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS equipment_expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      equipment_id INTEGER NOT NULL,
+      expense_date DATE,
+      category TEXT DEFAULT 'Other',
+      vendor TEXT,
+      description TEXT NOT NULL,
+      amount REAL DEFAULT 0,
+      odometer INTEGER,
+      filename TEXT,
+      original_name TEXT,
+      file_blob BLOB,
+      source_receipt_id INTEGER,
+      source_receipt_line_id INTEGER,
+      created_by INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME,
+      FOREIGN KEY (equipment_id) REFERENCES equipment(id),
+      FOREIGN KEY (source_receipt_id) REFERENCES receipts(id),
+      FOREIGN KEY (source_receipt_line_id) REFERENCES receipt_lines(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_equipment_expenses_equipment ON equipment_expenses(equipment_id, expense_date);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_equipment_expenses_receipt_line ON equipment_expenses(source_receipt_line_id) WHERE source_receipt_line_id IS NOT NULL;
+  `);
   ensureColumn('equipment', 'vin', 'TEXT');
   ensureColumn('equipment', 'year', 'TEXT');
   ensureColumn('equipment', 'make', 'TEXT');
@@ -2879,31 +2920,133 @@ app.get('/receipts', requireAuth, (req, res) => {
     LEFT JOIN users u ON r.uploaded_by = u.id
     ORDER BY r.created_at DESC
   `).all();
-  res.render('receipts', { user: req.session.user, receipts });
+  const isAdmin = req.session.user.role === 'admin';
+  let equipmentList = [];
+  if (isAdmin) {
+    const lines = db.prepare(`
+      SELECT rl.*, e.equipment_id AS logged_equipment_id, eq.number AS logged_equipment_number, eq.type AS logged_equipment_type
+      FROM receipt_lines rl
+      LEFT JOIN equipment_expenses e ON e.source_receipt_line_id = rl.id
+      LEFT JOIN equipment eq ON eq.id = e.equipment_id
+      ORDER BY rl.id
+    `).all();
+    const byReceipt = {};
+    lines.forEach((line) => { (byReceipt[line.receipt_id] = byReceipt[line.receipt_id] || []).push(line); });
+    equipmentList = db.prepare("SELECT id, type, number FROM equipment ORDER BY type DESC, number").all();
+    receipts.forEach((r) => {
+      r.lines = byReceipt[r.id] || [];
+      r.lines.forEach((line) => {
+        const match = equipmentList.find((eq) => equipExpenses.receiptTagMatches(line.equipment_type, eq.number));
+        line.is_general = isGeneralReceiptTag(line.equipment_type);
+        line.suggested_equipment_id = line.is_general || !match ? null : match.id;
+      });
+    });
+  }
+  res.render('receipts', {
+    user: req.session.user,
+    receipts,
+    equipmentList,
+    categories: equipExpenses.CATEGORIES,
+    logError: isAdmin ? String(req.query.log_error || '') : ''
+  });
 });
 
+function activeEquipmentUnits() {
+  return db.prepare(`
+    SELECT id, type, number, description FROM equipment
+    WHERE status IS NULL OR status = 'active'
+    ORDER BY CASE type WHEN 'truck' THEN 0 ELSE 1 END, number
+  `).all();
+}
+
+function equipmentUnitTag(eq) {
+  const kind = eq.type === 'trailer' ? 'Trailer' : 'Truck';
+  const number = String(eq.number || '').trim();
+  if (!number) return kind;
+  return `${kind} ${number.startsWith('#') ? number : '#' + number}`;
+}
+
+const GENERAL_RECEIPT_TAG = 'General / Shop Supplies & Business Expense';
+
+function isGeneralReceiptTag(tag) {
+  return String(tag || '').trim().toLowerCase() === GENERAL_RECEIPT_TAG.toLowerCase();
+}
+
+function receiptLinesFromBody(body) {
+  if (Array.isArray(body.lines)) return body.lines.filter(Boolean);
+  const lines = [];
+  Object.keys(body || {}).forEach((key) => {
+    const match = /^lines\[(\d+)\]\[([A-Za-z0-9_]+)\]$/.exec(key);
+    if (!match) return;
+    const idx = Number(match[1]);
+    lines[idx] = lines[idx] || {};
+    lines[idx][match[2]] = body[key];
+  });
+  return lines.filter(Boolean);
+}
+
+function receiptLineEquipmentText(line) {
+  const picked = String(line.equipment_id || '').trim();
+  if (picked === 'general') return GENERAL_RECEIPT_TAG;
+  if (picked && picked !== 'other') {
+    const id = parseInt(picked, 10);
+    if (Number.isInteger(id)) {
+      const eq = db.prepare(`
+        SELECT id, type, number FROM equipment
+        WHERE id = ? AND (status IS NULL OR status = 'active')
+      `).get(id);
+      if (eq) return equipmentUnitTag(eq);
+    }
+  }
+  return String(line.equipment || '').trim();
+}
+
+function normalizeReceiptLines(body) {
+  const lines = [];
+  const errors = [];
+  receiptLinesFromBody(body).forEach((line, index) => {
+    const description = String(line.description || '').trim();
+    const amountText = String(line.amount == null ? '' : line.amount).trim();
+    const equipmentId = String(line.equipment_id || '').trim();
+    const equipmentText = String(line.equipment || '').trim();
+    if (!description && !amountText && !equipmentId && !equipmentText) return;
+    const label = `Line ${index + 1}`;
+    if (!description) errors.push(`${label} needs a description.`);
+    const amount = parseFloat(amountText);
+    if (!amountText || !Number.isFinite(amount)) errors.push(`${label} needs an amount.`);
+    lines.push(Object.assign({}, line, { description, amount }));
+  });
+  if (!lines.length && !errors.length) errors.push('Add at least one receipt line with a description.');
+  return { lines, errors };
+}
+
 app.get('/receipts/new', requireAuth, (req, res) => {
-  res.render('receipt-form', { user: req.session.user });
+  res.render('receipt-form', { user: req.session.user, equipmentUnits: activeEquipmentUnits(), error: '' });
 });
 
 app.post('/receipts', requireAuth, upload.single('receipt_file'), (req, res) => {
-  const { expense_date, lines } = req.body;
+  const parsed = normalizeReceiptLines(req.body);
+  if (parsed.errors.length) {
+    discardUpload(req.file);
+    return res.status(400).render('receipt-form', {
+      user: req.session.user,
+      equipmentUnits: activeEquipmentUnits(),
+      error: parsed.errors.join(' ')
+    });
+  }
+  const { expense_date } = req.body;
   const result = db.prepare(`
     INSERT INTO receipts (expense_date, uploaded_by, filename, original_name, status)
     VALUES (?, ?, ?, ?, 'pending')
   `).run(expense_date, req.session.user.id, req.file ? req.file.filename : null, req.file ? req.file.originalname : null);
   const receiptId = result.lastInsertRowid;
-  if (lines && Array.isArray(lines)) {
-    const insertLine = db.prepare(`
-      INSERT INTO receipt_lines (receipt_id, equipment_type, description, amount)
-      VALUES (?, ?, ?, ?)
-    `);
-    lines.forEach(line => {
-      if (line.description && line.amount) {
-        insertLine.run(receiptId, line.equipment || '', line.description, parseFloat(line.amount) || 0);
-      }
-    });
-  }
+  const insertLine = db.prepare(`
+    INSERT INTO receipt_lines (receipt_id, equipment_type, description, amount)
+    VALUES (?, ?, ?, ?)
+  `);
+  parsed.lines.forEach((line) => {
+    insertLine.run(receiptId, receiptLineEquipmentText(line), line.description, line.amount);
+  });
   res.redirect('/receipts');
 });
 
@@ -2978,7 +3121,10 @@ app.get('/equipment', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
   const trucks = db.prepare("SELECT * FROM equipment WHERE type = 'truck' ORDER BY number").all();
   const trailers = db.prepare("SELECT * FROM equipment WHERE type = 'trailer' ORDER BY number").all();
-  res.render('equipment', { user: req.session.user, trucks, trailers });
+  const expenseYear = expenseReportYear(req);
+  const expenseTotals = equipExpenses.totalsByEquipment(
+    db.prepare('SELECT equipment_id, expense_date, amount FROM equipment_expenses').all(), expenseYear);
+  res.render('equipment', { user: req.session.user, trucks, trailers, expenseTotals, expenseYear });
 });
 
 app.get('/equipment/new', requireAuth, (req, res) => {
@@ -3016,6 +3162,233 @@ app.post('/equipment/:id', requireAuth, (req, res) => {
     WHERE id = ?
   `).run(item.type, item.number, item.description, item.vin, item.year, item.make, item.model, item.status, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status, req.params.id);
   res.redirect('/equipment');
+});
+
+// Equipment Expenses / Maintenance Log (Admin only)
+function expenseReportYear(req) {
+  const y = parseInt(req && req.query ? req.query.year : '', 10);
+  return Number.isInteger(y) && y >= 2000 && y <= 2100 ? y : new Date().getFullYear();
+}
+
+function equipmentExpenseRows(equipmentId) {
+  return db.prepare(`
+    SELECT e.id, e.equipment_id, e.expense_date, e.category, e.vendor, e.description, e.amount, e.odometer,
+           e.filename, e.original_name, e.source_receipt_id, e.source_receipt_line_id, e.created_at, e.updated_at,
+           u.name AS created_by_name
+    FROM equipment_expenses e
+    LEFT JOIN users u ON u.id = e.created_by
+    WHERE e.equipment_id = ?
+    ORDER BY e.expense_date DESC, e.id DESC
+  `).all(equipmentId);
+}
+
+// Receipt lines (Receipts / Fuel Log) not yet logged to any equipment; lines whose Truck/Trailer
+// tag matches this unit's number are flagged so they are listed first.
+function receiptLineCandidates(equipment) {
+  const rows = db.prepare(`
+    SELECT rl.id AS line_id, rl.receipt_id, rl.equipment_type AS tag, rl.description, rl.amount,
+           r.expense_date, r.filename, r.original_name, r.status, u.name AS uploader_name
+    FROM receipt_lines rl
+    JOIN receipts r ON r.id = rl.receipt_id
+    LEFT JOIN users u ON u.id = r.uploaded_by
+    WHERE NOT EXISTS (SELECT 1 FROM equipment_expenses e WHERE e.source_receipt_line_id = rl.id)
+    ORDER BY r.expense_date DESC, rl.id DESC
+  `).all();
+  const loggable = rows.filter((row) => !isGeneralReceiptTag(row.tag));
+  loggable.forEach((row) => { row.matches = equipment ? equipExpenses.receiptTagMatches(row.tag, equipment.number) : false; });
+  return { matched: loggable.filter((r) => r.matches), other: loggable.filter((r) => !r.matches) };
+}
+
+function storedFileBytes(filename) {
+  const full = storedTicketPath({ filename });
+  return full && fs.existsSync(full) ? fs.readFileSync(full) : null;
+}
+
+// Only remove the disk file when nothing else (a receipt, a load ticket or another expense) uses it.
+function releaseExpenseFile(expense) {
+  if (!expense || !expense.filename) return;
+  const name = expense.filename;
+  const inUse = db.prepare('SELECT 1 FROM receipts WHERE filename = ? LIMIT 1').get(name)
+    || db.prepare('SELECT 1 FROM documents WHERE filename = ? LIMIT 1').get(name)
+    || db.prepare('SELECT 1 FROM equipment_expenses WHERE filename = ? AND id != ? LIMIT 1').get(name, expense.id);
+  if (inUse) return;
+  const full = storedTicketPath({ filename: name });
+  if (full && fs.existsSync(full)) fs.unlinkSync(full);
+}
+
+function discardUpload(file) {
+  if (!file || !file.filename) return;
+  const full = storedTicketPath({ filename: file.filename });
+  if (full && fs.existsSync(full)) fs.unlinkSync(full);
+}
+
+function expenseFileMiddleware(req, res, next) {
+  expenseUpload.single('receipt_file')(req, res, (err) => {
+    if (err) req.expenseUploadError = err.code === 'LIMIT_FILE_SIZE' ? 'Receipt file is too large (max 25 MB).' : 'Receipt upload failed — please try again.';
+    next();
+  });
+}
+
+function fileProblems(req) {
+  const out = [];
+  if (req.expenseFileRejected) out.push('Receipt must be an image or PDF.');
+  if (req.expenseUploadError) out.push(req.expenseUploadError);
+  return out;
+}
+
+function adminEquipment(req, res) {
+  if (req.session.user.role !== 'admin') { res.redirect('/'); return null; }
+  const equipment = db.prepare('SELECT * FROM equipment WHERE id = ?').get(req.params.id);
+  if (!equipment) { res.redirect('/equipment'); return null; }
+  return equipment;
+}
+
+function renderEquipmentDetail(req, res, equipment, opts = {}) {
+  const year = expenseReportYear(req);
+  const expenses = equipmentExpenseRows(equipment.id);
+  const editId = opts.editId != null ? String(opts.editId) : (req.query.edit ? String(req.query.edit) : '');
+  const editing = editId ? expenses.find((e) => String(e.id) === editId) || null : null;
+  res.status(opts.status || 200).render('equipment-detail', {
+    user: req.session.user,
+    equipment,
+    year,
+    summary: equipExpenses.summarize(expenses, year),
+    categories: equipExpenses.CATEGORIES,
+    editing,
+    draft: opts.draft || null,
+    errors: opts.errors || [],
+    saved: req.query.saved || '',
+    candidates: receiptLineCandidates(equipment),
+    today: new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+  });
+}
+
+app.get('/equipment/:id', requireAuth, (req, res) => {
+  const equipment = adminEquipment(req, res);
+  if (!equipment) return;
+  renderEquipmentDetail(req, res, equipment);
+});
+
+app.post('/equipment/:id/expenses', requireAuth, expenseFileMiddleware, (req, res) => {
+  const equipment = adminEquipment(req, res);
+  if (!equipment) return discardUpload(req.file);
+  const parsed = equipExpenses.parseExpenseInput(req.body);
+  parsed.errors.push(...fileProblems(req));
+  if (parsed.errors.length) {
+    discardUpload(req.file);
+    return renderEquipmentDetail(req, res, equipment, { status: 400, errors: parsed.errors, draft: req.body });
+  }
+  const v = parsed.value;
+  const result = db.prepare(`
+    INSERT INTO equipment_expenses (equipment_id, expense_date, category, vendor, description, amount, odometer, filename, original_name, file_blob, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(equipment.id, v.expense_date, v.category, v.vendor, v.description, v.amount, v.odometer,
+    req.file ? req.file.filename : null, req.file ? req.file.originalname : null,
+    req.file ? storedFileBytes(req.file.filename) : null, req.session.user.id);
+  logAudit(req, 'expense_created', 'equipment', equipment.id, `Expense #${result.lastInsertRowid}: ${v.category} $${v.amount.toFixed(2)} — ${v.description}`);
+  res.redirect(`/equipment/${equipment.id}?saved=added#expenses`);
+});
+
+app.post('/equipment/:id/expenses/:expenseId', requireAuth, expenseFileMiddleware, (req, res) => {
+  const equipment = adminEquipment(req, res);
+  if (!equipment) return discardUpload(req.file);
+  const existing = db.prepare('SELECT * FROM equipment_expenses WHERE id = ? AND equipment_id = ?').get(req.params.expenseId, equipment.id);
+  if (!existing) { discardUpload(req.file); return res.redirect(`/equipment/${equipment.id}#expenses`); }
+  const parsed = equipExpenses.parseExpenseInput(req.body);
+  parsed.errors.push(...fileProblems(req));
+  if (parsed.errors.length) {
+    discardUpload(req.file);
+    return renderEquipmentDetail(req, res, equipment, { status: 400, errors: parsed.errors, draft: req.body, editId: existing.id });
+  }
+  const v = parsed.value;
+  let file = { filename: existing.filename, original_name: existing.original_name, file_blob: existing.file_blob };
+  const replacing = !!req.file;
+  const removing = !replacing && req.body.remove_file === '1';
+  if (replacing) file = { filename: req.file.filename, original_name: req.file.originalname, file_blob: storedFileBytes(req.file.filename) };
+  if (removing) file = { filename: null, original_name: null, file_blob: null };
+  db.prepare(`
+    UPDATE equipment_expenses
+    SET expense_date = ?, category = ?, vendor = ?, description = ?, amount = ?, odometer = ?,
+        filename = ?, original_name = ?, file_blob = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(v.expense_date, v.category, v.vendor, v.description, v.amount, v.odometer, file.filename, file.original_name, file.file_blob, existing.id);
+  if ((replacing || removing) && existing.filename && existing.filename !== file.filename) releaseExpenseFile(existing);
+  logAudit(req, 'expense_updated', 'equipment', equipment.id, `Expense #${existing.id}: ${v.category} $${v.amount.toFixed(2)} — ${v.description}`);
+  res.redirect(`/equipment/${equipment.id}?saved=updated#expenses`);
+});
+
+app.post('/equipment/:id/expenses/:expenseId/delete', requireAuth, (req, res) => {
+  const equipment = adminEquipment(req, res);
+  if (!equipment) return;
+  const existing = db.prepare('SELECT * FROM equipment_expenses WHERE id = ? AND equipment_id = ?').get(req.params.expenseId, equipment.id);
+  if (existing) {
+    db.prepare('DELETE FROM equipment_expenses WHERE id = ?').run(existing.id);
+    releaseExpenseFile(existing);
+    logAudit(req, 'expense_deleted', 'equipment', equipment.id, `Expense #${existing.id}: ${existing.category} $${Number(existing.amount || 0).toFixed(2)} — ${existing.description}`);
+  }
+  res.redirect(`/equipment/${equipment.id}?saved=deleted#expenses`);
+});
+
+app.get('/equipment/:id/expenses/:expenseId/file', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.status(404).send('Not found');
+  const file = db.prepare('SELECT * FROM equipment_expenses WHERE id = ? AND equipment_id = ?').get(req.params.expenseId, req.params.id);
+  if (!file || !file.filename) return res.status(404).send('Not found');
+  const name = file.original_name || file.filename;
+  const download = req.query.download === '1' || ticketFileKind(name) === 'file';
+  res.setHeader('Content-Type', fileContentType(name));
+  res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${safeDownloadName(name)}"`);
+  const full = storedTicketPath(file);
+  if (full && fs.existsSync(full)) return res.sendFile(full);
+  if (file.file_blob) return res.send(Buffer.isBuffer(file.file_blob) ? file.file_blob : Buffer.from(file.file_blob));
+  return res.status(404).send('Not found');
+});
+
+// "Log to Equipment": create a line item from an existing Receipts / Fuel Log line, reusing its file.
+function logReceiptLineToEquipment(req, lineId, equipment) {
+  const line = db.prepare(`
+    SELECT rl.*, r.expense_date AS receipt_date, r.filename, r.original_name
+    FROM receipt_lines rl JOIN receipts r ON r.id = rl.receipt_id
+    WHERE rl.id = ?
+  `).get(lineId);
+  if (!line) return { error: 'That receipt line no longer exists.' };
+  if (isGeneralReceiptTag(line.equipment_type)) return { error: 'General shop and business expenses are not logged to a truck or trailer.' };
+  const already = db.prepare('SELECT equipment_id FROM equipment_expenses WHERE source_receipt_line_id = ?').get(line.id);
+  if (already) return { error: 'That receipt line is already logged to equipment.', equipmentId: already.equipment_id };
+  const parsed = equipExpenses.parseExpenseInput({
+    expense_date: req.body.expense_date || line.receipt_date,
+    category: req.body.category,
+    vendor: req.body.vendor,
+    description: String(req.body.description || '').trim() || line.description,
+    amount: String(req.body.amount == null ? '' : req.body.amount).trim() !== '' ? req.body.amount : line.amount,
+    odometer: req.body.odometer
+  });
+  if (parsed.errors.length) return { error: parsed.errors.join(' ') };
+  const v = parsed.value;
+  const result = db.prepare(`
+    INSERT INTO equipment_expenses (equipment_id, expense_date, category, vendor, description, amount, odometer, filename, original_name, file_blob, source_receipt_id, source_receipt_line_id, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(equipment.id, v.expense_date, v.category, v.vendor, v.description, v.amount, v.odometer,
+    line.filename || null, line.original_name || null, line.filename ? storedFileBytes(line.filename) : null,
+    line.receipt_id, line.id, req.session.user.id);
+  logAudit(req, 'expense_logged_from_receipt', 'equipment', equipment.id, `Expense #${result.lastInsertRowid} from receipt #${line.receipt_id} line #${line.id}: ${v.category} $${v.amount.toFixed(2)}`);
+  return { ok: true };
+}
+
+app.post('/equipment/:id/expenses-from-receipt', requireAuth, (req, res) => {
+  const equipment = adminEquipment(req, res);
+  if (!equipment) return;
+  const out = logReceiptLineToEquipment(req, req.body.receipt_line_id, equipment);
+  if (out.error) return renderEquipmentDetail(req, res, equipment, { status: 400, errors: [out.error] });
+  res.redirect(`/equipment/${equipment.id}?saved=logged#expenses`);
+});
+
+app.post('/receipts/lines/:lineId/log-equipment', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/receipts');
+  const equipment = db.prepare('SELECT * FROM equipment WHERE id = ?').get(req.body.equipment_id);
+  if (!equipment) return res.redirect('/receipts?log_error=' + encodeURIComponent('Choose a truck or trailer.'));
+  const out = logReceiptLineToEquipment(req, req.params.lineId, equipment);
+  if (out.error) return res.redirect('/receipts?log_error=' + encodeURIComponent(out.error));
+  res.redirect(`/equipment/${equipment.id}?saved=logged#expenses`);
 });
 
 // Fuel rate

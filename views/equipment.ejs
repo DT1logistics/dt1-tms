@@ -5,7 +5,7 @@
 <% function equipmentCard(item) { %>
   <div class="card">
     <div class="counts">
-      <strong><%= item.number || 'Unnumbered' %></strong>
+      <strong><a href="/equipment/<%= item.id %>"><%= item.number || 'Unnumbered' %></a></strong>
       <% if (item.maintenance_status === 'out_of_service') { %>
         <span class="badge red">Out of service</span>
       <% } else if (item.maintenance_status === 'maintenance') { %>
@@ -35,7 +35,9 @@
         <%= item.inspection_expiration %>
       <% } else { %>—<% } %>
     </div>
-    <p><a href="/equipment/<%= item.id %>/edit">Edit</a></p>
+    <% const cost = (typeof expenseTotals !== 'undefined' && expenseTotals[String(item.id)]) || { ytd: 0, allTime: 0, count: 0 }; %>
+    <div class="equip-cost"><strong>Maintenance Cost:</strong> YTD <%= expenseYear %> $<%= money(cost.ytd) %> · All-time $<%= money(cost.allTime) %> <span class="muted">(<%= cost.count %> item<%= cost.count === 1 ? '' : 's' %>)</span></div>
+    <p><a href="/equipment/<%= item.id %>#expenses">Expenses / Maintenance Log</a> · <a href="/equipment/<%= item.id %>/edit">Edit</a></p>
   </div>
 <% } %>
 
