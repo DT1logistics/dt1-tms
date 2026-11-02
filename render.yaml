@@ -2,11 +2,22 @@ services:
   - type: web
     name: dt1-tms
     runtime: node
-    plan: free
+    plan: starter
+    region: virginia
     buildCommand: npm install
     startCommand: npm start
+    # SQLite database + uploads live on this persistent disk (DATA_DIR). Render snapshots it daily.
+    disk:
+      name: dt1-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: SESSION_SECRET
         generateValue: true
+      - key: DATA_DIR
+        value: /var/data
+      # Shared secret for GET /admin/backup (nightly OneDrive backup). Set in the dashboard.
+      - key: BACKUP_TOKEN
+        sync: false

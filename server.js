@@ -9,10 +9,17 @@ const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 const fuelCalc = require('./lib/fuel-surcharge');
 const equipExpenses = require('./lib/equipment-expenses');
+const backup = require('./lib/backup');
+const dataStore = require('./lib/data-store');
+const SqliteSessionStore = require('./lib/sqlite-session-store');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const dbPath = path.join(__dirname, 'dt1.db');
+// DATA_DIR = Render persistent disk mount (e.g. /var/data). Unset = the repo folder, as before.
+const LEGACY_DATA_DIR = __dirname;
+const DATA_DIR = dataStore.resolveDataDir(process.env, LEGACY_DATA_DIR);
+fs.mkdirSync(DATA_DIR, { recursive: true });
+const dbPath = path.join(DATA_DIR, 'dt1.db');
 const SNAPSHOT_KEY = 'dt1:sqlite:snapshot:v1';
 let db;
 
@@ -265,7 +272,7 @@ app.use((req, res, next) => {
 });
 
 // File upload setup
-const uploadDir = path.join(__dirname, 'uploads');
+const uploadDir = path.join(DATA_DIR, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -285,7 +292,36 @@ const expenseUpload = multer({
   }
 });
 
+// Nightly backup download: GET /admin/backup with header "X-Backup-Token: <BACKUP_TOKEN>"
+// (or "Authorization: Bearer <BACKUP_TOKEN>"). 404 when BACKUP_TOKEN isn't configured, 401 on a bad token.
+// Streams a .zip with a consistent SQLite snapshot (dt1.db), the uploads folder and manifest.json.
+app.get('/admin/backup', async (req, res) => {
+  const expected = process.env.BACKUP_TOKEN;
+  res.setHeader('Cache-Control', 'no-store');
+  if (!backup.backupEnabled(expected)) return res.status(404).send('Not found');
+  if (!backup.tokenMatches(backup.tokenFromRequest(req), expected)) return res.status(401).send('Unauthorized');
+  try {
+    const { buffer, manifest } = await backup.buildBackupArchive({
+      db,
+      Database,
+      uploadDir,
+      meta: { data_dir_is_persistent: DATA_DIR !== path.resolve(LEGACY_DATA_DIR), commit: process.env.RENDER_GIT_COMMIT || null }
+    });
+    const stamp = manifest.created_at.slice(0, 10);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Length', buffer.length);
+    res.setHeader('Content-Disposition', `attachment; filename="dt1-tms-backup-${stamp}.zip"`);
+    console.log(`Backup served: ${buffer.length} bytes, ${manifest.upload_files} upload files`);
+    return res.end(buffer);
+  } catch (err) {
+    console.error('Backup failed:', err.message);
+    return res.status(500).send('Backup failed');
+  }
+});
+
+const sessionStore = new SqliteSessionStore(() => db, { ttlMs: 7 * 24 * 60 * 60 * 1000 });
 app.use(session({
+  store: sessionStore,
   secret: process.env.SESSION_SECRET || 'dt1-logistics-secret-change-in-production',
   resave: false,
   saveUninitialized: false,
@@ -3899,13 +3935,20 @@ function persistDatabaseSnapshot() {
 }
 
 async function boot() {
-  if (process.env.REDIS_URL) {
+  console.log(`Data directory: ${DATA_DIR}`);
+  // A database already on the persistent disk is the source of truth; never overwrite it from Redis.
+  if (!fs.existsSync(dbPath) && process.env.REDIS_URL) {
     try {
       const restored = await restoreDatabaseSnapshot();
       console.log(restored ? 'Restored SQLite snapshot from Redis' : 'No Redis snapshot yet');
     } catch (err) {
       console.error('Redis restore skipped:', err.message);
     }
+  }
+  // First boot on a new DATA_DIR: bring over the old dt1.db (if Redis had nothing) and any uploads.
+  const migrated = dataStore.migrateLegacyData({ dataDir: DATA_DIR, legacyDir: LEGACY_DATA_DIR, dbName: 'dt1.db', uploadsName: 'uploads' });
+  if (migrated.database || migrated.uploads) {
+    console.log(`Migrated legacy data into ${DATA_DIR}: database=${migrated.database}, upload files=${migrated.uploads}`);
   }
   db = new Database(dbPath);
   db.pragma('foreign_keys = ON');
@@ -3918,6 +3961,8 @@ async function boot() {
       console.error('Initial Redis snapshot skipped:', err.message);
     }
   }
+  sessionStore.prune();
+  setInterval(() => sessionStore.prune(), 60 * 60 * 1000).unref();
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`DT1 TMS running on port ${PORT}`);
   });
