@@ -189,6 +189,22 @@
 </form>
 <script src="/js/fuel-surcharge.js"></script>
 <script>
+  // Prevent duplicate loads from repeated clicks while the server is still saving.
+  (function () {
+    const form = document.getElementById('loadForm');
+    if (!form) return;
+    form.addEventListener('submit', function (event) {
+      if (event.defaultPrevented) return;
+      if (form.dataset.submitting === '1') { event.preventDefault(); return; }
+      form.dataset.submitting = '1';
+      const clicked = event.submitter;
+      if (clicked) {
+        clicked.dataset.label = clicked.textContent;
+        clicked.textContent = 'Saving…';
+      }
+      form.querySelectorAll('button[type="submit"]').forEach(function (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6'; });
+    });
+  })();
   const projectSelect = document.getElementById('project_select');
   const rateInput = document.querySelector('input[name="rate"]');
   const isAdminForm = <%= user.role === 'admin' ? 'true' : 'false' %>;
