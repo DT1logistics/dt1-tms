@@ -1956,13 +1956,18 @@ async function notifyAssignedLoadDriver(req, loadId) {
     if (!driver.email) {
       emailStatus = 'No email on file';
     } else {
-      const emailRes = await deliverWelcomeEmail({
-        to: driver.email,
-        subject,
-        text: smsText,
-        html: messageHtml(smsText)
-      });
-      emailStatus = emailRes.sent ? 'Sent' : (emailRes.smtpError ? 'Could not send' : 'Not configured');
+      try {
+        const emailRes = await deliverWelcomeEmail({
+          to: driver.email,
+          subject,
+          text: smsText,
+          html: messageHtml(smsText)
+        });
+        emailStatus = emailRes.sent ? 'Sent' : (emailRes.smtpError ? 'Could not send' : 'Not configured');
+      } catch (err) {
+        console.error('Assigned load email failed:', err.message);
+        emailStatus = 'Could not send';
+      }
     }
   }
 
@@ -2364,19 +2369,29 @@ function notificationStatus() {
   };
 }
 
+// SMTP transport with short timeouts. nodemailer's defaults wait up to 2 minutes
+// for a connection, which hung (and then crashed) load assignment when the SMTP
+// server could not be reached (Render Free blocks outbound SMTP ports 465/587).
+function createMailTransport() {
+  const nodemailer = require('nodemailer');
+  const port = Number(process.env.SMTP_PORT || 587);
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port,
+    secure: process.env.SMTP_SECURE === 'true' || port === 465,
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT_MS || 5000),
+    greetingTimeout: 5000,
+    socketTimeout: 10000
+  });
+}
+
 async function deliverWelcomeEmail(welcome) {
   const host = process.env.SMTP_HOST;
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
   if (!host || !user || !pass) return { sent: false, smtpConfigured: false, smtpError: false };
-  const nodemailer = require('nodemailer');
-  const port = Number(process.env.SMTP_PORT || 587);
-  const transporter = nodemailer.createTransport({
-    host,
-    port,
-    secure: process.env.SMTP_SECURE === 'true' || port === 465,
-    auth: { user, pass }
-  });
+  const transporter = createMailTransport();
   await transporter.sendMail({
     from: process.env.SMTP_FROM || user,
     to: welcome.to,
@@ -2398,14 +2413,7 @@ async function deliverSmsGateway(phone, body) {
   if (!domain || !smtpConfigured()) return { attempted: false, sent: false };
   const local = gatewayPhone(phone);
   if (!local) return { attempted: true, sent: false };
-  const nodemailer = require('nodemailer');
-  const port = Number(process.env.SMTP_PORT || 587);
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port,
-    secure: process.env.SMTP_SECURE === 'true' || port === 465,
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-  });
+  const transporter = createMailTransport();
   await transporter.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to: `${local}@${domain}`,
@@ -3927,6 +3935,10 @@ async function boot() {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 }
+
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled promise rejection:', err && err.stack ? err.stack : err);
+});
 
 boot().catch((err) => {
   console.error('Startup failed:', err);
