@@ -14,6 +14,7 @@ const dataStore = require('./lib/data-store');
 const SqliteSessionStore = require('./lib/sqlite-session-store');
 const equipmentPlate = require('./lib/equipment-plate');
 const equipImport = require('./lib/equipment-import');
+const accountSecurity = require('./lib/account-security');
 const crypto = require('crypto');
 
 const app = express();
@@ -220,6 +221,11 @@ function loginEmail(email) {
   return LOGIN_ALIASES[trimmed.toLowerCase()] || trimmed;
 }
 
+function clientIp(req) {
+  const forwarded = String((req.headers && req.headers['x-forwarded-for']) || '').split(',')[0].trim();
+  return forwarded || req.ip || 'unknown';
+}
+
 function actorName(req) {
   return (req.session.user && req.session.user.name) || 'Unknown';
 }
@@ -336,6 +342,13 @@ app.use(session({
   saveUninitialized: false,
   cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 }
 }));
+// A temporary password is only a way back in. Until it is replaced, block every other page.
+app.use((req, res, next) => {
+  const current = req.session && req.session.user;
+  if (!current || !Number(current.must_change_password)) return next();
+  if (req.path === '/change-password' || req.path === '/logout') return next();
+  return res.redirect('/change-password');
+});
 // Ticket, BOL, and receipt files live here. The same URLs stay usable for a logged-in
 // driver or admin; anonymous requests are sent to sign in instead of the file.
 app.use('/uploads', requireAuth, express.static(uploadDir));
@@ -756,30 +769,55 @@ function initDB() {
     ['FMCSA', 'HVUT', 'UCR', 'IFTA', 'Insurance'].forEach((name) => insertCompliance.run(name));
   }
 
+  accountSecurity.ensureAuthTables(db);
+
   // Seed admin accounts if they do not exist yet. Matching is case-insensitive.
-  const adminPassword = bcrypt.hashSync('changeme123', 10);
-  const findAdmin = db.prepare('SELECT id FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))');
+  // Never invent a password that ships in source. An env value is used only when the
+  // account has no password yet. Otherwise the password is random, unlogged, and must be changed.
+  const findLogin = db.prepare('SELECT id, password FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))');
   const insertAdmin = db.prepare(`
-    INSERT INTO users (email, password, role, name, first_name, last_name, app_language, status)
-    VALUES (?, ?, 'admin', ?, ?, ?, 'English', 'active')
+    INSERT INTO users (email, password, role, name, first_name, last_name, app_language, status, must_change_password, temp_password)
+    VALUES (?, ?, 'admin', ?, ?, ?, 'English', 'active', ?, ?)
   `);
+  const seedLogin = (email, name, firstName, lastName, envValue) => {
+    const existing = findLogin.get(email);
+    if (existing && String(existing.password || '').trim()) return;
+    const material = accountSecurity.initialPassword(envValue);
+    const hash = bcrypt.hashSync(material.password, 10);
+    const mustChange = material.mustChange ? 1 : 0;
+    const temp = material.mustChange ? accountSecurity.sealFromHash(hash) : null;
+    if (!existing) insertAdmin.run(email, hash, name, firstName, lastName, mustChange, temp);
+    else db.prepare('UPDATE users SET password = ?, must_change_password = ?, temp_password = ? WHERE id = ?')
+      .run(hash, mustChange, temp, existing.id);
+  };
   [
     ['admin@dt1logistics.com', 'Administrator', 'Administrator', ''],
     ['kammy@dt1logistics.com', 'Kammy', 'Kammy', ''],
     ['kammy.hall@gmail.com', 'Kammy Hall', 'Kammy', 'Hall']
-  ].forEach(([email, name, firstName, lastName]) => {
-    if (!findAdmin.get(email)) insertAdmin.run(email, adminPassword, name, firstName, lastName);
-  });
+  ].forEach(([email, name, firstName, lastName]) => seedLogin(email, name, firstName, lastName, ''));
 
   // Logan's login is separate from Kammy's. A later password change on /profile updates only that user.
-  const loganEmail = 'david.dt1@mail.grokbot.com';
-  const logan = db.prepare('SELECT id, password FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))').get(loganEmail);
-  const needsLoganPassword = !logan || !String(logan.password || '').trim();
-  if (needsLoganPassword) {
-    const loganPassword = bcrypt.hashSync(process.env.LOGAN_TMS_PASSWORD || 'LoganDT1Ops2026!', 10);
-    if (!logan) insertAdmin.run(loganEmail, loganPassword, 'Logan (Operations Manager)', 'Logan', 'Operations Manager');
-    else db.prepare('UPDATE users SET password = ? WHERE id = ?').run(loganPassword, logan.id);
-  }
+  // LOGAN_TMS_PASSWORD is used only when this account is missing a password. It is never logged.
+  seedLogin(
+    'david.dt1@mail.grokbot.com',
+    'Logan (Operations Manager)',
+    'Logan',
+    'Operations Manager',
+    process.env.LOGAN_TMS_PASSWORD || ''
+  );
+
+  // One-time recovery. Remove RESET_USER_EMAIL and RESET_USER_TEMP_PASSWORD after the
+  // account has signed in and chosen a new password. The same pair is not applied twice.
+  const bootstrapEmail = process.env.RESET_USER_EMAIL || '';
+  const bootstrap = accountSecurity.applyBootstrapReset({
+    db,
+    email: bootstrapEmail,
+    lookupEmail: loginEmail(bootstrapEmail),
+    tempPassword: process.env.RESET_USER_TEMP_PASSWORD || '',
+    now: Date.now()
+  });
+  if (bootstrap.applied) console.log('One-time password reset applied');
+  else if (bootstrap.reason === 'missing') console.log('One-time password reset skipped: no matching account');
 
   db.prepare('DELETE FROM fuel_rates WHERE central_atlantic_rate IS NULL OR surcharge_percent IS NULL').run();
   const validFuel = db.prepare(`
@@ -1348,68 +1386,205 @@ function requireAdmin(req, res, next) {
 }
 
 app.get('/change-password', requireAuth, (req, res) => {
-  res.render('change-password', { user: req.session.user });
+  res.render('change-password', { user: req.session.user, error: '' });
 });
 
 app.post('/change-password', requireAuth, (req, res) => {
-  const bcrypt = require('bcryptjs');
-  const { password } = req.body;
-  if (!password || password.length < 6) {
-    return res.render('change-password', { user: req.session.user, error: 'Password must be at least 6 characters' });
-  }
-  const hash = bcrypt.hashSync(password, 10);
-  db.prepare('UPDATE users SET password = ?, must_change_password = 0, temp_password = NULL WHERE id = ?').run(hash, req.session.user.id);
-  clearPasswordRequests(req.session.user.id);
+  const password = String(req.body.new_password || '');
+  const confirm = String(req.body.confirm_password || '');
+  const renderForm = (error) => res.status(400).render('change-password', { user: req.session.user, error });
+  if (password.length < 6) return renderForm('Password must be at least 6 characters.');
+  if (password !== confirm) return renderForm('New password and confirmation do not match.');
+  applyPassword(req.session.user.id, password, false);
+  forgetTempPassword(req, req.session.user.id);
   req.session.user.must_change_password = 0;
   res.redirect('/');
 });
 
 app.get('/forgot-password', (req, res) => {
   if (req.session.user) return res.redirect('/');
-  res.render('forgot-password', { sent: false, error: '' });
+  res.render('forgot-password', { sent: false, error: '', message: '' });
 });
 
 app.post('/forgot-password', async (req, res) => {
   const email = loginEmail(req.body.email || '');
-  const user = email ? db.prepare('SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM(?))').get(email) : null;
-  if (user) {
-    if (smtpConfigured()) {
-      const tempPassword = randomPassword();
-      applyPassword(user.id, tempPassword, true);
-      try {
-        const delivery = await emailTempPassword(user, tempPassword);
-        if (!delivery.sent) recordPasswordRequest(user);
-      } catch (err) {
-        console.error('Password reset email failed:', err.message);
-        recordPasswordRequest(user);
+  const renderResult = (result) => res.render('forgot-password', {
+    sent: !result.limited,
+    error: result.limited ? result.message : '',
+    message: result.limited ? '' : result.message
+  });
+  try {
+    const result = await accountSecurity.requestPasswordReset({
+      db,
+      email,
+      ip: clientIp(req),
+      now: Date.now(),
+      sendLink: async ({ to, name, token }) => {
+        if (!smtpConfigured()) return { sent: false };
+        const link = `${String(process.env.APP_URL || APP_URL).replace(/\/$/, '')}/reset-password/${token}`;
+        const text = resetLinkMessage({ name }, link);
+        const delivery = await deliverWelcomeEmail({
+          to,
+          subject: 'DT1 Logistics password reset',
+          text,
+          html: messageHtml(text)
+        });
+        return { sent: !!delivery.sent };
       }
-    } else {
-      recordPasswordRequest(user);
+    });
+    if (result.emailFailed) {
+      const detail = result.error && result.error.message ? `: ${result.error.message}` : '';
+      console.error(`Password reset email failed; account unchanged${detail}`);
     }
+    return renderResult(result);
+  } catch (err) {
+    console.error('Password reset failed:', err.message);
+    return renderResult({ limited: false, message: accountSecurity.GENERIC_MESSAGE });
   }
-  res.render('forgot-password', { sent: true, error: '' });
+});
+
+app.get('/reset-password/:token', (req, res) => {
+  const peek = accountSecurity.peekResetToken(db, req.params.token, Date.now());
+  res.render('reset-password', {
+    valid: peek.ok,
+    error: peek.ok ? '' : peek.error,
+    email: peek.email || '',
+    token: req.params.token
+  });
+});
+
+app.post('/reset-password/:token', (req, res) => {
+  const password = String(req.body.new_password || '');
+  const confirm = String(req.body.confirm_password || '');
+  const peek = accountSecurity.peekResetToken(db, req.params.token, Date.now());
+  const renderForm = (status, valid, error, email) => res.status(status).render('reset-password', {
+    valid,
+    error,
+    email: email || '',
+    token: req.params.token
+  });
+  if (!peek.ok) return renderForm(400, false, peek.error, '');
+  if (password.length < 6) return renderForm(400, true, 'Password must be at least 6 characters.', peek.email);
+  if (password !== confirm) return renderForm(400, true, 'New password and confirmation do not match.', peek.email);
+  const result = accountSecurity.consumePasswordReset({
+    db,
+    token: req.params.token,
+    password,
+    now: Date.now()
+  });
+  if (!result.ok) return renderForm(400, false, result.error, '');
+  clearPasswordRequests(result.userId);
+  res.render('login', { message: 'Password updated. Sign in with your new password.' });
+});
+
+function renderUsers(req, res, status, error) {
+  const users = db.prepare(`
+    SELECT id, email, name, role, status, must_change_password
+    FROM users
+    ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, name, email
+  `).all();
+  let notice = null;
+  if (req.session.userTempNotice) {
+    notice = req.session.userTempNotice;
+    delete req.session.userTempNotice;
+  }
+  res.status(status).render('users', {
+    user: req.session.user,
+    users,
+    error: error || '',
+    notice
+  });
+}
+
+app.get('/users', requireAdmin, (req, res) => {
+  renderUsers(req, res, 200, '');
+});
+
+app.post('/users/:id/temp-password', requireAdmin, (req, res) => {
+  const target = db.prepare('SELECT id, email, name FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.redirect('/users');
+  let password = String(req.body.temp_password || '').trim();
+  if (!password) password = accountSecurity.generatePassword();
+  if (password.length < 6) return renderUsers(req, res, 400, 'Password must be at least 6 characters.');
+  applyPassword(target.id, password, true);
+  rememberTempPassword(req, target.id, password);
+  logAudit(req, 'Set temporary password', 'user', target.id, `Temporary password set for ${target.email}. Must change at next login.`);
+  req.session.userTempNotice = {
+    userId: target.id,
+    email: target.email,
+    name: target.name || target.email,
+    password
+  };
+  res.redirect('/users');
 });
 
 function clearPasswordRequests(userId) {
   db.prepare("UPDATE password_reset_requests SET status = 'cleared' WHERE user_id = ? AND status = 'pending'").run(userId);
 }
 
-function recordPasswordRequest(user) {
-  if (!user || !user.id) return;
-  const pending = db.prepare("SELECT id FROM password_reset_requests WHERE user_id = ? AND status = 'pending'").get(user.id);
-  if (pending) return;
-  db.prepare('INSERT INTO password_reset_requests (user_id, email, status) VALUES (?, ?, ?)').run(user.id, user.email || '', 'pending');
+function randomPassword() {
+  return accountSecurity.generatePassword();
 }
 
-function randomPassword() {
-  return Math.random().toString(36).slice(-8);
+function rememberTempPassword(req, userId, password) {
+  if (!req.session) return;
+  if (!req.session.tempPasswords) req.session.tempPasswords = {};
+  req.session.tempPasswords[String(userId)] = password;
+}
+
+function recalledTempPassword(req, userId) {
+  const bag = (req.session && req.session.tempPasswords) || {};
+  return String(bag[String(userId)] || '');
+}
+
+function forgetTempPassword(req, userId) {
+  if (!req.session || !req.session.tempPasswords) return;
+  delete req.session.tempPasswords[String(userId)];
+}
+
+function passwordMatches(plain, hash) {
+  if (!plain || !hash) return false;
+  try {
+    return bcrypt.compareSync(plain, hash);
+  } catch (err) {
+    return false;
+  }
+}
+
+function matchingTempPassword(req, user) {
+  if (!user) return '';
+  const recalled = recalledTempPassword(req, user.id);
+  if (recalled) {
+    if (passwordMatches(recalled, user.password)) return recalled;
+    forgetTempPassword(req, user.id);
+  }
+  const legacy = accountSecurity.revealableTempPassword(user.temp_password);
+  if (!legacy) return '';
+  if (!passwordMatches(legacy, user.password)) {
+    db.prepare('UPDATE users SET temp_password = NULL WHERE id = ?').run(user.id);
+    user.temp_password = null;
+    return '';
+  }
+  rememberTempPassword(req, user.id, legacy);
+  const sealed = accountSecurity.sealFromHash(user.password);
+  db.prepare('UPDATE users SET temp_password = ? WHERE id = ?').run(sealed, user.id);
+  user.temp_password = sealed;
+  return legacy;
 }
 
 function applyPassword(userId, password, mustChange) {
-  const hash = bcrypt.hashSync(password, 10);
-  db.prepare('UPDATE users SET password = ?, must_change_password = ?, temp_password = ? WHERE id = ?')
-    .run(hash, mustChange ? 1 : 0, mustChange ? password : null, userId);
+  accountSecurity.setUserPassword(db, userId, password, mustChange, Date.now());
   clearPasswordRequests(userId);
+}
+
+function resetLinkMessage(user, link) {
+  return [
+    `Hi ${user.name || 'there'},`,
+    'A password reset was requested for your DT1 Logistics account.',
+    'Open this link to choose a new password. It expires in one hour and works only once:',
+    link,
+    'If you did not request this, ignore this email. Your password has not been changed.'
+  ].join('\n');
 }
 
 function passwordResetMessage(user, tempPassword) {
@@ -1421,16 +1596,6 @@ function passwordResetMessage(user, tempPassword) {
     `Temporary password: ${tempPassword}`,
     'You will be asked to choose a new password when you sign in.'
   ].join('\n');
-}
-
-async function emailTempPassword(user, tempPassword) {
-  const message = passwordResetMessage(user, tempPassword);
-  return deliverWelcomeEmail({
-    to: user.email,
-    subject: 'DT1 Logistics password reset',
-    text: message,
-    html: messageHtml(message)
-  });
 }
 
 function passwordShareLinks(driver, tempPassword) {
@@ -2735,13 +2900,16 @@ app.post('/communications/send', requireAuth, async (req, res) => {
   res.redirect('/communications?sent=1');
 });
 
-function ensureDriverTempPassword(driver) {
-  const existing = String(driver.temp_password || '').trim();
+function ensureDriverTempPassword(driver, req) {
+  const existing = matchingTempPassword(req, driver);
   if (existing) return { tempPassword: existing, generatedNewPassword: false };
-  const tempPassword = Math.random().toString(36).slice(-8);
-  const hash = bcrypt.hashSync(tempPassword, 10);
-  db.prepare('UPDATE users SET password = ?, temp_password = ?, must_change_password = 1 WHERE id = ?')
-    .run(hash, tempPassword, driver.id);
+  const tempPassword = accountSecurity.generatePassword();
+  applyPassword(driver.id, tempPassword, true);
+  rememberTempPassword(req, driver.id, tempPassword);
+  driver.must_change_password = 1;
+  driver.temp_password = accountSecurity.sealFromHash(
+    db.prepare('SELECT password FROM users WHERE id = ?').get(driver.id).password
+  );
   return { tempPassword, generatedNewPassword: true };
 }
 
@@ -2754,13 +2922,14 @@ app.post('/drivers', requireAuth, async (req, res) => {
   const phone = String(req.body.phone || '').trim();
   const place = readAddressParts(req.body);
   const fullName = composeName(firstName, middleInitial, lastName);
-  const tempPassword = Math.random().toString(36).slice(-8);
+  const tempPassword = accountSecurity.generatePassword();
   const hash = bcrypt.hashSync(tempPassword, 10);
   try {
     const result = db.prepare(`
       INSERT INTO users (email, password, role, name, first_name, middle_initial, last_name, phone, address, city, state, zip, pay_percentage, hire_date, dob, app_language, must_change_password, temp_password)
       VALUES (?, ?, 'driver', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'English', 1, ?)
-    `).run(email, hash, fullName, firstName, middleInitial, lastName, phone, place.address, place.city, place.state, place.zip, req.body.pay_percentage || null, req.body.hire_date, req.body.dob, tempPassword);
+    `).run(email, hash, fullName, firstName, middleInitial, lastName, phone, place.address, place.city, place.state, place.zip, req.body.pay_percentage || null, req.body.hire_date, req.body.dob, accountSecurity.sealFromHash(hash));
+    rememberTempPassword(req, result.lastInsertRowid, tempPassword);
     const welcome = buildWelcomeEmail({ name: fullName, email, tempPassword, phone });
     const delivery = await deliverWelcome(welcome, phone, 'both');
     res.render('driver-created', {
@@ -2780,7 +2949,7 @@ app.post('/drivers/:id/send-welcome', requireAuth, async (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
   const driver = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'driver'").get(req.params.id);
   if (!driver) return res.redirect('/drivers');
-  const issued = ensureDriverTempPassword(driver);
+  const issued = ensureDriverTempPassword(driver, req);
   const welcome = buildWelcomeEmail({ name: driver.name, email: driver.email, tempPassword: issued.tempPassword, phone: driver.phone });
   const channel = req.body.channel === 'email' || req.body.channel === 'sms' ? req.body.channel : 'both';
   const delivery = await deliverWelcome(welcome, driver.phone, channel);
@@ -2815,12 +2984,13 @@ function renderDriverEditor(req, res, driver, status, extras) {
     resetNotice = req.session.resetNotice;
     delete req.session.resetNotice;
   }
+  if (resetNotice && resetNotice.password) rememberTempPassword(req, driver.id, resetNotice.password);
   let passwordSent = extras && extras.passwordSent;
   if (!passwordSent && req.session.passwordSent && String(req.session.passwordSent.driverId) === String(driver.id)) {
     passwordSent = req.session.passwordSent;
     delete req.session.passwordSent;
   }
-  const sharePassword = (resetNotice && resetNotice.password) || (driver.must_change_password ? String(driver.temp_password || '').trim() : '');
+  const sharePassword = (resetNotice && resetNotice.password) || matchingTempPassword(req, driver);
   const shareLinks = sharePassword ? passwordShareLinks(driver, sharePassword) : null;
   res.status(status).render('driver-profile', Object.assign({
     user: req.session.user,
@@ -2860,7 +3030,9 @@ app.post('/drivers/:id/reset-password', requireAuth, (req, res) => {
   }
   const mustChange = mode === 'temp' || req.body.must_change === '1' || req.body.must_change === 'on';
   applyPassword(driver.id, password, mustChange);
-  logAudit(req, 'Reset password', 'user', driver.id, mustChange ? 'Temporary password set' : 'Password set directly');
+  if (mustChange) rememberTempPassword(req, driver.id, password);
+  else forgetTempPassword(req, driver.id);
+  logAudit(req, 'Reset password', 'user', driver.id, mustChange ? 'Temporary password set. Must change at next login.' : 'Password set directly');
   req.session.resetNotice = { driverId: driver.id, password, mustChange };
   res.redirect(`/drivers/${driver.id}#reset-password`);
 });
@@ -2869,9 +3041,9 @@ app.post('/drivers/:id/send-password', requireAuth, async (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
   const driver = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(req.params.id, 'driver');
   if (!driver) return res.redirect('/drivers');
-  const tempPassword = String(driver.temp_password || '').trim();
+  const tempPassword = matchingTempPassword(req, driver);
   if (!tempPassword) {
-    return renderDriverEditor(req, res, driver, 400, { error: 'Generate a temporary password before sending it.' });
+    return renderDriverEditor(req, res, driver, 400, { error: 'Generate a temporary password before sending it. A stored one is hashed and cannot be displayed.' });
   }
   const channel = req.body.channel === 'email' || req.body.channel === 'sms' ? req.body.channel : 'both';
   const message = [
@@ -3703,6 +3875,7 @@ app.post('/profile/password', requireAuth, (req, res) => {
   if (password.length < 6) return renderForm(400, 'Password must be at least 6 characters.');
   if (password !== confirm) return renderForm(400, 'New password and confirmation do not match.');
   applyPassword(profile.id, password, false);
+  forgetTempPassword(req, profile.id);
   req.session.user.must_change_password = 0;
   res.redirect('/profile?saved=password');
 });
