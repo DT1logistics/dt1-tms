@@ -13,6 +13,8 @@ const backup = require('./lib/backup');
 const dataStore = require('./lib/data-store');
 const SqliteSessionStore = require('./lib/sqlite-session-store');
 const equipmentPlate = require('./lib/equipment-plate');
+const equipImport = require('./lib/equipment-import');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -283,6 +285,11 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 // Equipment expense receipts: same disk storage as load tickets/BOLs (plus a DB blob copy, like
 // documents.file_blob), limited to images and PDFs.
+// Spreadsheet import is parsed in memory. It is not written into DATA_DIR/uploads.
+const importUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }
+});
 const expenseUpload = multer({
   storage,
   limits: { fileSize: 25 * 1024 * 1024 },
@@ -3207,6 +3214,125 @@ app.get('/equipment', requireAuth, (req, res) => {
   const expenseTotals = equipExpenses.totalsByEquipment(
     db.prepare('SELECT equipment_id, expense_date, amount FROM equipment_expenses').all(), expenseYear);
   res.render('equipment', { user: req.session.user, trucks, trailers, expenseTotals, expenseYear, q: req.query.q || '' });
+});
+
+function equipmentRowsForImport() {
+  return db.prepare('SELECT * FROM equipment').all();
+}
+
+function renderImportPreview(req, res, annotated, extra) {
+  const pending = req.session.equipmentImport || {};
+  const status = extra && extra.status ? extra.status : 200;
+  res.status(status).render('equipment-import-preview', {
+    user: req.session.user,
+    rows: annotated,
+    summary: equipImport.summarize(annotated),
+    filename: pending.filename || '',
+    token: pending.token || '',
+    skippedSheets: pending.skippedSheets || [],
+    unrecognizedSheets: pending.unrecognizedSheets || [],
+    ignoredHeaders: pending.ignoredHeaders || [],
+    sheetWarnings: pending.sheetWarnings || [],
+    error: extra && extra.error ? extra.error : ''
+  });
+}
+
+app.get('/equipment/import', requireAdmin, (req, res) => {
+  delete req.session.equipmentImport;
+  res.render('equipment-import', {
+    user: req.session.user,
+    error: '',
+    notice: ''
+  });
+});
+
+app.get('/equipment/import/template.csv', requireAdmin, (req, res) => {
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="equipment-import-template.csv"');
+  res.send(`\uFEFF${equipImport.templateCsv()}`);
+});
+
+function importFileMiddleware(req, res, next) {
+  importUpload.single('file')(req, res, (err) => {
+    if (!err) return next();
+    const message = err.code === 'LIMIT_FILE_SIZE' ? 'File is too large (max 5 MB).' : 'Upload failed. Please try again.';
+    return res.status(400).render('equipment-import', { user: req.session.user, error: message, notice: '' });
+  });
+}
+
+app.post('/equipment/import/preview', requireAdmin, importFileMiddleware, (req, res) => {
+  if (!req.file || !req.file.buffer) {
+    return res.status(400).render('equipment-import', { user: req.session.user, error: 'Choose a CSV or Excel file.', notice: '' });
+  }
+  const parsed = equipImport.parseUpload(req.file.buffer, req.file.originalname || '');
+  if (!parsed.ok) {
+    return res.status(400).render('equipment-import', { user: req.session.user, error: parsed.error, notice: '' });
+  }
+  const annotated = equipImport.annotateExisting(parsed.rows, equipmentRowsForImport());
+  req.session.equipmentImport = {
+    token: crypto.randomBytes(16).toString('hex'),
+    filename: path.basename(String(req.file.originalname || 'upload')).slice(0, 180),
+    rows: parsed.rows,
+    skippedSheets: parsed.skippedSheets,
+    unrecognizedSheets: parsed.unrecognizedSheets,
+    ignoredHeaders: parsed.ignoredHeaders,
+    sheetWarnings: parsed.sheetWarnings,
+    stamp: equipImport.matchStamp(annotated)
+  };
+  return renderImportPreview(req, res, annotated);
+});
+
+app.post('/equipment/import/commit', requireAdmin, (req, res) => {
+  const pending = req.session.equipmentImport;
+  if (!pending || pending.token !== String(req.body.token || '')) {
+    return res.status(400).render('equipment-import', {
+      user: req.session.user,
+      error: 'That preview expired. Upload the file again.',
+      notice: ''
+    });
+  }
+  const annotated = equipImport.annotateExisting(pending.rows, equipmentRowsForImport());
+  const stamp = equipImport.matchStamp(annotated);
+  if (stamp !== pending.stamp) {
+    pending.stamp = stamp;
+    return renderImportPreview(req, res, annotated, {
+      status: 409,
+      error: 'Equipment changed after this preview was built. Review the matches, then confirm again.'
+    });
+  }
+  const decisions = annotated.map((_, index) => req.body['row_' + index]);
+  const ops = equipImport.operationsFromDecisions(annotated, decisions);
+  if (!ops.length) {
+    delete req.session.equipmentImport;
+    return res.render('equipment-import', {
+      user: req.session.user,
+      error: '',
+      notice: 'Nothing was imported. Rows with errors are skipped, and no other rows were selected.'
+    });
+  }
+  try {
+    const result = equipImport.applyImport(db, {
+      operations: ops,
+      actor: { id: req.session.user.id, name: actorName(req) },
+      filename: pending.filename,
+      skipped: annotated.length - ops.length
+    });
+    delete req.session.equipmentImport;
+    const created = result.created.length;
+    const updated = result.updated.length;
+    return res.render('equipment-import', {
+      user: req.session.user,
+      error: '',
+      notice: `Imported ${created} ${created === 1 ? 'unit' : 'units'} and updated ${updated}.`
+    });
+  } catch (err) {
+    console.error('Equipment import failed:', err.message);
+    return res.status(500).render('equipment-import', {
+      user: req.session.user,
+      error: 'Import failed and nothing was saved. Upload the file and preview it again.',
+      notice: ''
+    });
+  }
 });
 
 app.get('/equipment/new', requireAuth, (req, res) => {
