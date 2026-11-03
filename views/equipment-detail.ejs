@@ -9,6 +9,7 @@
     <% } else { %><span class="badge green">Active</span><% } %>
   </div>
   <div class="equip-meta"><strong>VIN#:</strong> <%= equipment.vin || '—' %></div>
+  <div class="equip-meta"><strong>Plate:</strong> <%= formatPlate(equipment) || '—' %></div>
   <div class="equip-meta"><strong>Year / Make / Model:</strong> <%= [equipment.year, equipment.make, equipment.model].filter(Boolean).join(' ') || '—' %></div>
   <div class="equip-meta"><strong>Description:</strong> <%= equipment.description || '—' %></div>
   <div class="muted">Status: <%= equipment.status === 'inactive' ? 'Inactive' : 'Active' %> · <%= equipment.ownership || 'Ownership not set' %></div>

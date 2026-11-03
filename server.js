@@ -12,6 +12,7 @@ const equipExpenses = require('./lib/equipment-expenses');
 const backup = require('./lib/backup');
 const dataStore = require('./lib/data-store');
 const SqliteSessionStore = require('./lib/sqlite-session-store');
+const equipmentPlate = require('./lib/equipment-plate');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -263,6 +264,7 @@ app.locals.loadStatusLabel = loadStatusLabel;
 app.locals.loadOriginLabel = loadOriginLabel;
 app.locals.settlementWeekLabel = settlementWeekLabel;
 app.locals.ticketFileKind = ticketFileKind;
+app.locals.formatPlate = equipmentPlate.formatPlate;
 app.locals.auditStamp = auditStamp;
 
 app.use((req, res, next) => {
@@ -576,6 +578,8 @@ function initDB() {
       registration_expiration DATE,
       inspection_expiration DATE,
       maintenance_status TEXT DEFAULT 'active',
+      plate_number TEXT,
+      plate_state TEXT DEFAULT 'VA',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -737,6 +741,7 @@ function initDB() {
   ensureColumn('equipment', 'registration_expiration', 'DATE');
   ensureColumn('equipment', 'inspection_expiration', 'DATE');
   ensureColumn('equipment', 'maintenance_status', "TEXT DEFAULT 'active'");
+  equipmentPlate.ensurePlateColumns(db);
 
   const complianceCount = db.prepare('SELECT COUNT(*) AS n FROM compliance_items').get().n;
   if (!complianceCount) {
@@ -3136,6 +3141,13 @@ app.post('/compliance/:id', requireAuth, (req, res) => {
   res.redirect('/compliance');
 });
 
+function wantsJson(req) {
+  const type = String(req.get('content-type') || '');
+  if (type.includes('application/json')) return true;
+  const accept = String(req.get('accept') || '');
+  return accept.includes('application/json') && !accept.includes('text/html');
+}
+
 function readEquipment(body, existing) {
   const maintenance = bodyHas(body, 'maintenance_status') && ['active', 'maintenance', 'out_of_service'].includes(body.maintenance_status)
     ? body.maintenance_status
@@ -3144,6 +3156,12 @@ function readEquipment(body, existing) {
     ? (body.type === 'trailer' ? 'trailer' : 'truck')
     : (existing ? existing.type : 'truck');
   const kept = (key) => (bodyHas(body, key) ? String(body[key] || '').trim() : (existing ? (existing[key] || '') : ''));
+  const plateNumber = bodyHas(body, 'plate_number')
+    ? equipmentPlate.normalizePlateNumber(body.plate_number)
+    : (existing ? existing.plate_number || null : null);
+  const plateState = equipmentPlate.normalizePlateState(
+    bodyHas(body, 'plate_state') ? body.plate_state : (existing ? existing.plate_state : '')
+  );
   return {
     type,
     number: kept('number'),
@@ -3156,55 +3174,90 @@ function readEquipment(body, existing) {
     ownership: kept('ownership'),
     registration_expiration: bodyHas(body, 'registration_expiration') ? blankToNull(body.registration_expiration) : (existing ? existing.registration_expiration : null),
     inspection_expiration: bodyHas(body, 'inspection_expiration') ? blankToNull(body.inspection_expiration) : (existing ? existing.inspection_expiration : null),
-    maintenance_status: maintenance
+    maintenance_status: maintenance,
+    plate_number: plateNumber,
+    plate_state: plateState.value,
+    error: plateState.error
   };
+}
+
+function equipmentFormView(req, res, status, equipment, error) {
+  return res.status(status).render('equipment-form', {
+    user: req.session.user,
+    equipment: equipment || {},
+    states: equipmentPlate.US_STATES,
+    error: error || ''
+  });
 }
 
 // Equipment
 app.get('/equipment', requireAuth, (req, res) => {
-  if (req.session.user.role !== 'admin') return res.redirect('/');
-  const trucks = db.prepare("SELECT * FROM equipment WHERE type = 'truck' ORDER BY number").all();
-  const trailers = db.prepare("SELECT * FROM equipment WHERE type = 'trailer' ORDER BY number").all();
+  if (req.session.user.role !== 'admin') return wantsJson(req) ? res.status(403).json({ error: 'Admin only' }) : res.redirect('/');
+  const q = String(req.query.q || '').trim().toLowerCase().replace(/\s+/g, '');
+  const matchesQuery = (item) => {
+    if (!q) return true;
+    const hay = [item.number, item.vin, item.plate_number, item.plate_state, equipmentPlate.formatPlate(item)]
+      .filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, '');
+    return hay.includes(q);
+  };
+  const trucks = db.prepare("SELECT * FROM equipment WHERE type = 'truck' ORDER BY number").all().filter(matchesQuery);
+  const trailers = db.prepare("SELECT * FROM equipment WHERE type = 'trailer' ORDER BY number").all().filter(matchesQuery);
+  if (wantsJson(req)) return res.json({ trucks, trailers });
   const expenseYear = expenseReportYear(req);
   const expenseTotals = equipExpenses.totalsByEquipment(
     db.prepare('SELECT equipment_id, expense_date, amount FROM equipment_expenses').all(), expenseYear);
-  res.render('equipment', { user: req.session.user, trucks, trailers, expenseTotals, expenseYear });
+  res.render('equipment', { user: req.session.user, trucks, trailers, expenseTotals, expenseYear, q: req.query.q || '' });
 });
 
 app.get('/equipment/new', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  res.render('equipment-form', { user: req.session.user, equipment: {} });
+  return equipmentFormView(req, res, 200, { plate_state: 'VA' }, '');
 });
 
 app.get('/equipment/:id/edit', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
   const equipment = db.prepare('SELECT * FROM equipment WHERE id = ?').get(req.params.id);
-  if (!equipment) return res.redirect('/equipment');
-  res.render('equipment-form', { user: req.session.user, equipment });
+  if (!equipment) return wantsJson(req) ? res.status(404).json({ error: 'Not found' }) : res.redirect('/equipment');
+  if (wantsJson(req)) return res.json(equipment);
+  return equipmentFormView(req, res, 200, equipment, '');
 });
 
 app.post('/equipment', requireAuth, (req, res) => {
-  if (req.session.user.role !== 'admin') return res.redirect('/');
+  if (req.session.user.role !== 'admin') return wantsJson(req) ? res.status(403).json({ error: 'Admin only' }) : res.redirect('/');
   const item = readEquipment(req.body);
-  db.prepare(`
+  if (item.error) {
+    if (wantsJson(req)) return res.status(400).json({ error: item.error });
+    return equipmentFormView(req, res, 400, { ...req.body, plate_state: req.body.plate_state || 'VA' }, item.error);
+  }
+  const result = db.prepare(`
     INSERT INTO equipment (
-      type, number, description, vin, year, make, model, status, ownership, registration_expiration, inspection_expiration, maintenance_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(item.type, item.number, item.description, item.vin, item.year, item.make, item.model, item.status, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status);
+      type, number, description, vin, year, make, model, status, ownership, registration_expiration, inspection_expiration, maintenance_status,
+      plate_number, plate_state
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(item.type, item.number, item.description, item.vin, item.year, item.make, item.model, item.status, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status, item.plate_number, item.plate_state);
+  const created = db.prepare('SELECT * FROM equipment WHERE id = ?').get(result.lastInsertRowid);
+  if (wantsJson(req)) return res.status(201).json(created);
   res.redirect('/equipment');
 });
 
 app.post('/equipment/:id', requireAuth, (req, res) => {
-  if (req.session.user.role !== 'admin') return res.redirect('/');
+  if (req.session.user.role !== 'admin') return wantsJson(req) ? res.status(403).json({ error: 'Admin only' }) : res.redirect('/');
   const existing = db.prepare('SELECT * FROM equipment WHERE id = ?').get(req.params.id);
-  if (!existing) return res.redirect('/equipment');
+  if (!existing) return wantsJson(req) ? res.status(404).json({ error: 'Not found' }) : res.redirect('/equipment');
   const item = readEquipment(req.body, existing);
+  if (item.error) {
+    if (wantsJson(req)) return res.status(400).json({ error: item.error });
+    return equipmentFormView(req, res, 400, { ...existing, ...req.body, id: existing.id }, item.error);
+  }
   db.prepare(`
     UPDATE equipment
     SET type = ?, number = ?, description = ?, vin = ?, year = ?, make = ?, model = ?, status = ?,
-        ownership = ?, registration_expiration = ?, inspection_expiration = ?, maintenance_status = ?
+        ownership = ?, registration_expiration = ?, inspection_expiration = ?, maintenance_status = ?,
+        plate_number = ?, plate_state = ?
     WHERE id = ?
-  `).run(item.type, item.number, item.description, item.vin, item.year, item.make, item.model, item.status, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status, req.params.id);
+  `).run(item.type, item.number, item.description, item.vin, item.year, item.make, item.model, item.status, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status, item.plate_number, item.plate_state, req.params.id);
+  const updated = db.prepare('SELECT * FROM equipment WHERE id = ?').get(req.params.id);
+  if (wantsJson(req)) return res.json(updated);
   res.redirect('/equipment');
 });
 
@@ -3308,8 +3361,10 @@ function renderEquipmentDetail(req, res, equipment, opts = {}) {
 }
 
 app.get('/equipment/:id', requireAuth, (req, res) => {
-  const equipment = adminEquipment(req, res);
-  if (!equipment) return;
+  if (req.session.user.role !== 'admin') return wantsJson(req) ? res.status(403).json({ error: 'Admin only' }) : res.redirect('/');
+  const equipment = db.prepare('SELECT * FROM equipment WHERE id = ?').get(req.params.id);
+  if (!equipment) return wantsJson(req) ? res.status(404).json({ error: 'Not found' }) : res.redirect('/equipment');
+  if (wantsJson(req)) return res.json(equipment);
   renderEquipmentDetail(req, res, equipment);
 });
 
