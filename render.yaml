@@ -8,9 +8,9 @@ services:
     startCommand: npm start
     # SQLite database + uploads live on this persistent disk (DATA_DIR). Render snapshots it daily.
     disk:
-      name: dt1-data
+      name: disk
       mountPath: /var/data
-      sizeGB: 1
+      sizeGB: 2
     envVars:
       - key: NODE_ENV
         value: production
