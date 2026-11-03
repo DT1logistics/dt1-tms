@@ -1,0 +1,111 @@
+<%- include('partials/open', { title: 'Preview Equipment Import', user: user, active: 'equipment' }) %>
+<p><a href="/equipment/import">&larr; Choose another file</a></p>
+<h1>Preview import</h1>
+<p class="muted"><%= filename %></p>
+<% if (error) { %><div class="reject-note"><%= error %></div><% } %>
+<div class="import-summary">
+  <div><span class="muted">Rows</span><strong><%= summary.total %></strong></div>
+  <div><span class="muted">Ready to add</span><strong><%= summary.ready %></strong></div>
+  <div><span class="muted">Warnings</span><strong><%= summary.warnings %></strong></div>
+  <div><span class="muted">Already on file</span><strong><%= summary.matches %></strong></div>
+  <div><span class="muted">Will not import</span><strong><%= summary.errors %></strong></div>
+</div>
+<% if (skippedSheets && skippedSheets.length) { %><p class="muted">Skipped sheets: <%= skippedSheets.join(', ') %>.</p><% } %>
+<% if (unrecognizedSheets && unrecognizedSheets.length) { %><p class="muted">Sheets without equipment columns: <%= unrecognizedSheets.join(', ') %>.</p><% } %>
+<% if (ignoredHeaders && ignoredHeaders.length) { %><p class="muted">Columns left out of the import: <%= ignoredHeaders.join(', ') %>.</p><% } %>
+<% if (sheetWarnings && sheetWarnings.length) { %><div class="reject-note"><% sheetWarnings.forEach(function (w) { %><div><%= w %></div><% }) %></div><% } %>
+<p>Nothing is written until you confirm. Rows with errors are skipped. Update writes the cells that have values and leaves blank cells unchanged on the saved unit.</p>
+<form method="POST" action="/equipment/import/commit">
+  <input type="hidden" name="token" value="<%= token %>">
+  <% if (summary.matches) { %>
+    <p class="import-bulk">
+      <button type="button" class="secondary" id="import-skip-existing">Skip all existing</button>
+      <button type="button" class="secondary" id="import-update-existing">Update all existing</button>
+    </p>
+  <% } %>
+  <div class="import-wrap">
+    <table class="import-table">
+      <thead>
+        <tr>
+          <th>Row</th>
+          <th>Result</th>
+          <th>Type</th>
+          <th>Number</th>
+          <th>VIN</th>
+          <th>Year / Make / Model</th>
+          <th>Plate</th>
+          <th>Registration</th>
+          <th>Inspection</th>
+          <th>Status</th>
+          <th>Messages</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% rows.forEach(function (row, i) {
+          const failed = row.errors.length > 0;
+          const matched = row.match && !row.match.ambiguous;
+          const cls = failed ? 'import-row-error' : ((row.warnings.length || matched) ? 'import-row-warn' : '');
+          const ymm = [row.value.year, row.value.make, row.value.model].filter(Boolean).join(' ');
+          const plate = (row.value.plate_number || row.value.plate_state)
+            ? [(row.value.plate_state || 'VA'), row.value.plate_number].filter(Boolean).join(' ')
+            : '';
+        %>
+          <tr class="<%= cls %>">
+            <td><%= row.source.sheet %> row <%= row.source.row %></td>
+            <td>
+              <% if (failed) { %><span class="badge red">Error</span>
+              <% } else if (matched) { %><span class="badge yellow">On file</span>
+              <% } else if (row.warnings.length) { %><span class="badge yellow">Warning</span>
+              <% } else { %><span class="badge green">Ready</span><% } %>
+            </td>
+            <td><%= row.value.type || '—' %></td>
+            <td><%= row.value.number || '—' %></td>
+            <td><%= row.value.vin || '—' %></td>
+            <td>
+              <%= ymm || '—' %>
+              <% if (row.value.description) { %><div class="muted"><%= row.value.description.length > 80 ? row.value.description.slice(0, 77) + '...' : row.value.description %></div><% } %>
+            </td>
+            <td><%= plate || '—' %></td>
+            <td><%= row.value.registration_expiration || '—' %></td>
+            <td><%= row.value.inspection_expiration || '—' %></td>
+            <td><%= row.value.status || 'active' %> / <%= row.value.maintenance_status || 'active' %></td>
+            <td>
+              <% row.errors.forEach(function (msg) { %><div class="import-msg"><%= msg %></div><% }) %>
+              <% row.warnings.forEach(function (msg) { %><div class="import-msg"><%= msg %></div><% }) %>
+              <% if (!row.errors.length && !row.warnings.length) { %><span class="muted">OK</span><% } %>
+            </td>
+            <td>
+              <% if (failed) { %>
+                <span class="muted">Skipped</span>
+              <% } else if (matched) { %>
+                <div class="import-choice">
+                  <label><input type="radio" name="row_<%= i %>" value="skip" data-existing="skip" checked> Skip</label>
+                  <label><input type="radio" name="row_<%= i %>" value="update" data-existing="update"> Update</label>
+                </div>
+              <% } else { %>
+                <label class="import-choice"><input type="checkbox" name="row_<%= i %>" value="import" checked> Import</label>
+              <% } %>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
+  <div class="form-actions">
+    <button type="submit">Confirm import</button>
+    <a class="btn btn-secondary" href="/equipment/import">Cancel</a>
+  </div>
+</form>
+<script>
+  (function () {
+    function setExisting(value) {
+      document.querySelectorAll('input[data-existing="' + value + '"]').forEach(function (el) { el.checked = true; });
+    }
+    var skip = document.getElementById('import-skip-existing');
+    var update = document.getElementById('import-update-existing');
+    if (skip) skip.addEventListener('click', function () { setExisting('skip'); });
+    if (update) update.addEventListener('click', function () { setExisting('update'); });
+  })();
+</script>
+<%- include('partials/close') %>

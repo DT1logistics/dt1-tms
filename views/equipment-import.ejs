@@ -1,0 +1,19 @@
+<%- include('partials/open', { title: 'Import Equipment', user: user, active: 'equipment' }) %>
+<p><a href="/equipment">&larr; Equipment</a></p>
+<h1>Import Equipment</h1>
+<% if (notice) { %><div class="notice"><%= notice %></div><% } %>
+<% if (error) { %><div class="reject-note"><%= error %></div><% } %>
+<p>Upload a CSV or Excel file of trucks and trailers. Nothing is written until you review the preview and confirm.</p>
+<p><a href="/equipment/import/template.csv">Download the CSV template</a></p>
+<form class="form-narrow" method="POST" action="/equipment/import/preview" enctype="multipart/form-data">
+  <label for="equipment_file">CSV or Excel file</label>
+  <input id="equipment_file" type="file" name="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+  <button type="submit">Preview import</button>
+</form>
+<div class="card">
+  <p><strong>Columns.</strong> Type, unit number, VIN, year, make, model, description, ownership, registration expiration, inspection expiration, status, maintenance status, plate number, and plate state. Header names can vary (<em>Unit #</em>, <em>VIN#</em>, <em>Reg Exp</em>, <em>License Plate</em>, and the equipment form labels all match).</p>
+  <p><strong>Dates</strong> should be YYYY-MM-DD. The importer also accepts M/D/YYYY, M-D-YYYY, month names such as July 31, 2026, and Excel date cells.</p>
+  <p><strong>Sheets</strong> named Reference, Notes, Instructions, or Legend are skipped. A sheet named Trucks or Trailers supplies the type when that cell is blank.</p>
+  <p>A row is skipped when the unit number is missing, the type is not truck or trailer, a date cannot be read, or the plate state is not a 2-letter code. A bad or missing VIN, a duplicate inside the file, and a unit or VIN already in the database are warnings. For a unit already on file, choose skip or update. Update fills in the cells that have values and leaves blank cells as they are. A new unit with a blank plate state is saved as VA.</p>
+</div>
+<%- include('partials/close') %>
