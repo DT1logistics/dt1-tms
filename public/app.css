@@ -779,6 +779,11 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 .inline-check { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-weight: normal; }
 .inline-check input { width: auto; }
 .equip-cost { margin-top: 6px; }
+.plate-fields { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.plate-fields > div { flex: 1 1 140px; min-width: 0; }
+.plate-fields label { margin-top: 12px; }
+.equipment-filter { max-width: 360px; margin: 12px 0 4px; }
+.equipment-filter label { margin-top: 0; }
 .equip-other[hidden] { display: none !important; }
 .receipt-lines { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 6px; }
 .receipt-line { padding: 4px 0; }

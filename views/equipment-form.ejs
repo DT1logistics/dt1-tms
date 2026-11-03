@@ -1,5 +1,6 @@
 <%- include('partials/open', { title: (equipment && equipment.id ? 'Edit Equipment' : 'Add Equipment'), user: user, active: 'equipment' }) %>
 <h1><%= equipment && equipment.id ? 'Edit Equipment' : 'Add Equipment' %></h1>
+<% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
 <form class="form-narrow" method="POST" action="<%= equipment && equipment.id ? '/equipment/' + equipment.id : '/equipment' %>">
   <label>Type</label>
   <select name="type" required>
@@ -8,8 +9,25 @@
   </select>
   <label>Equipment Number / Identifier</label>
   <input type="text" name="number" placeholder="e.g. #1002" value="<%= equipment.number || '' %>" required>
-  <label>VIN#</label>
-  <input type="text" name="vin" value="<%= equipment.vin || '' %>">
+  <div class="plate-fields">
+    <div>
+      <label for="vin">VIN#</label>
+      <input id="vin" type="text" name="vin" value="<%= equipment.vin || '' %>">
+    </div>
+    <div>
+      <label for="plate_number">Plate Number</label>
+      <input id="plate_number" type="text" name="plate_number" value="<%= equipment.plate_number || '' %>" placeholder="UN16065" autocomplete="off">
+    </div>
+    <div>
+      <label for="plate_state">Plate State</label>
+      <select id="plate_state" name="plate_state">
+        <% const selectedState = (equipment.plate_state || 'VA').toUpperCase(); %>
+        <% (states || []).forEach(function (pair) { %>
+          <option value="<%= pair[0] %>" <%= selectedState === pair[0] ? 'selected' : '' %>><%= pair[0] %> — <%= pair[1] %></option>
+        <% }) %>
+      </select>
+    </div>
+  </div>
   <label>Year</label>
   <input type="text" name="year" value="<%= equipment.year || '' %>">
   <label>Make</label>

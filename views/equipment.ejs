@@ -1,9 +1,14 @@
 <%- include('partials/open', { title: 'Equipment', user: user, active: 'equipment' }) %>
 <h1>Equipment</h1>
 <a href="/equipment/new" class="btn">+ Add Equipment</a>
+<form class="equipment-filter" method="GET" action="/equipment">
+  <label for="equipment_q">Search</label>
+  <input id="equipment_q" type="search" name="q" value="<%= typeof q !== 'undefined' ? q : '' %>" placeholder="Number, VIN, or plate">
+</form>
 
 <% function equipmentCard(item) { %>
-  <div class="card">
+  <% const plateLabel = formatPlate(item); %>
+  <div class="card equipment-card">
     <div class="counts">
       <strong><a href="/equipment/<%= item.id %>"><%= item.number || 'Unnumbered' %></a></strong>
       <% if (item.maintenance_status === 'out_of_service') { %>
@@ -15,6 +20,7 @@
       <% } %>
     </div>
     <div class="equip-meta"><strong>VIN#:</strong> <%= item.vin || '—' %></div>
+    <div class="equip-meta"><strong>Plate:</strong> <%= plateLabel || '—' %></div>
     <div class="equip-meta"><strong>Year:</strong> <%= item.year || '—' %></div>
     <div class="equip-meta"><strong>Make:</strong> <%= item.make || '—' %></div>
     <div class="equip-meta"><strong>Model:</strong> <%= item.model || '—' %></div>
