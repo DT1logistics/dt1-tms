@@ -16,7 +16,7 @@ function memoryDb() {
   db.exec(`
     CREATE TABLE equipment (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      type TEXT CHECK(type IN ('truck', 'trailer')),
+      type TEXT CHECK(type IN ('truck', 'trailer', 'hotshot')),
       number TEXT,
       description TEXT,
       vin TEXT,
@@ -24,6 +24,7 @@ function memoryDb() {
       make TEXT,
       model TEXT,
       status TEXT DEFAULT 'active',
+      inactive_reason TEXT,
       ownership TEXT,
       registration_expiration DATE,
       inspection_expiration DATE,
@@ -54,6 +55,7 @@ function rowValue(overrides) {
     make: 'Sample',
     model: 'Alpha',
     status: 'active',
+    inactive_reason: null,
     ownership: 'Owned',
     registration_expiration: null,
     inspection_expiration: null,
@@ -326,14 +328,17 @@ check('import writes in one transaction, audits, and rolls back on failure', () 
   db.close();
 });
 
-check('template CSV round-trips into two ready rows', () => {
+check('template CSV round-trips into ready truck, trailer, and hotshot rows', () => {
   const parsed = imp.parseUpload(Buffer.from(imp.templateCsv()), 'equipment-import-template.csv');
   assert.strictEqual(parsed.ok, true);
-  assert.strictEqual(parsed.rows.length, 2);
+  assert.strictEqual(parsed.rows.length, 3);
   assert.strictEqual(imp.outcome(parsed.rows[0]), 'pass');
   assert.strictEqual(imp.outcome(parsed.rows[1]), 'pass');
+  assert.strictEqual(imp.outcome(parsed.rows[2]), 'pass');
   assert.strictEqual(parsed.rows[1].value.type, 'trailer');
   assert.strictEqual(parsed.rows[1].value.plate_state, 'WV');
+  assert.strictEqual(parsed.rows[2].value.type, 'hotshot');
+  assert.strictEqual(parsed.rows[2].value.number, '1006');
 });
 
 check('quoted CSV cells and a sheet named Trucks without a type column', () => {
@@ -360,6 +365,85 @@ check('reference and notes sheet names are skipped', () => {
   assert.strictEqual(imp.sheetSkipped('Notes'), true);
   assert.strictEqual(imp.sheetSkipped('Trucks'), false);
   assert.strictEqual(imp.sheetSkipped('Trailers'), false);
+  assert.strictEqual(imp.sheetSkipped('Hotshots'), false);
+});
+
+check('hotshot type is accepted case-insensitively and from a Hotshots sheet', () => {
+  const csv = 'Type,Unit Number\nHOTSHOT,1006\nHot Shot,1007\nhot-shot,1008\ntruck,1001\n';
+  const parsed = imp.parseUpload(Buffer.from(csv), 'hs.csv');
+  assert.strictEqual(parsed.rows[0].errors.length, 0);
+  assert.strictEqual(parsed.rows[0].value.type, 'hotshot');
+  assert.strictEqual(parsed.rows[1].value.type, 'hotshot');
+  assert.strictEqual(parsed.rows[2].value.type, 'hotshot');
+  assert.strictEqual(parsed.rows[3].value.type, 'truck');
+
+  const XLSX = require('xlsx');
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Unit Number'], ['1006']]), 'Hotshots');
+  const fromSheet = imp.parseUpload(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }), 'hot.xlsx');
+  assert.strictEqual(fromSheet.rows[0].value.type, 'hotshot');
+  assert.strictEqual(fromSheet.rows[0].errors.length, 0);
+});
+
+check('status accepts sold, total loss, out of service, and inactive reason', () => {
+  const csv = [
+    'Type,Unit Number,Status,Maintenance Status,Inactive Reason',
+    'truck,1002,Total loss,,',
+    'truck,1003,Out of Service,,',
+    'hotshot,1004,Active,,sold',
+    'truck,1005,Inactive (Sold),,',
+    'trailer,T-1,sold/inactive,out of service,',
+    'truck,1001,inactive,,',
+    'hotshot,1006,,,"total loss"',
+    'truck,1009,sale pending,,'
+  ].join('\n');
+  const parsed = imp.parseUpload(Buffer.from(csv), 'status.csv');
+  const byNumber = (number) => parsed.rows.find((row) => row.value.number === number);
+  const loss = byNumber('1002');
+  assert.strictEqual(loss.errors.length, 0);
+  assert.strictEqual(loss.value.status, 'inactive');
+  assert.strictEqual(loss.value.inactive_reason, 'total_loss');
+  assert.strictEqual(imp.valuesForInsert(loss.value).inactive_reason, 'total_loss');
+
+  const oos = byNumber('1003');
+  assert.strictEqual(oos.value.status, 'active');
+  assert.strictEqual(oos.value.maintenance_status, 'out_of_service');
+  assert.strictEqual(oos.value.inactive_reason, null);
+  assert.strictEqual(oos.errors.length, 0);
+
+  const pending = byNumber('1004');
+  assert.strictEqual(pending.value.status, 'active');
+  assert.strictEqual(pending.value.inactive_reason, null);
+  assert.ok(pending.warnings.some((w) => w.includes('not applied because Status is active')));
+
+  assert.strictEqual(byNumber('1005').value.inactive_reason, 'sold');
+  assert.strictEqual(byNumber('1005').value.status, 'inactive');
+  const both = byNumber('T-1');
+  assert.strictEqual(both.value.status, 'inactive');
+  assert.strictEqual(both.value.inactive_reason, 'sold');
+  assert.strictEqual(both.value.maintenance_status, 'out_of_service');
+  assert.strictEqual(byNumber('1001').value.status, 'inactive');
+  assert.strictEqual(byNumber('1001').value.inactive_reason, null);
+  assert.strictEqual(byNumber('1006').value.status, 'inactive');
+  assert.strictEqual(byNumber('1006').value.inactive_reason, 'total_loss');
+  const unknown = byNumber('1009');
+  assert.strictEqual(unknown.value.status, null);
+  assert.ok(unknown.warnings.some((w) => w.includes('sale pending')));
+
+  const kept = imp.valuesForUpdate(
+    { type: 'truck', number: '1002', status: 'inactive', inactive_reason: 'sold', maintenance_status: 'maintenance' },
+    byNumber('1003').value
+  );
+  assert.strictEqual(kept.status, 'active');
+  assert.strictEqual(kept.inactive_reason, null);
+  assert.strictEqual(kept.maintenance_status, 'out_of_service');
+
+  const keptSold = imp.valuesForUpdate(
+    { type: 'truck', number: '1005', status: 'inactive', inactive_reason: 'sold', maintenance_status: 'active' },
+    { status: null, inactive_reason: null, maintenance_status: null, type: 'truck', number: '1005' }
+  );
+  assert.strictEqual(keptSold.status, 'inactive');
+  assert.strictEqual(keptSold.inactive_reason, 'sold');
 });
 
 console.log('All equipment import tests passed.');

@@ -17,12 +17,12 @@
                   <% if (line.is_general) { %>
                     <div class="muted">Shop supplies and business expenses stay off the equipment log.</div>
                   <% } else if (line.logged_equipment_id) { %>
-                    <div class="muted">Logged to <a href="/equipment/<%= line.logged_equipment_id %>#expenses"><%= line.logged_equipment_type === 'trailer' ? 'Trailer' : 'Truck' %> <%= line.logged_equipment_number %></a></div>
+                    <div class="muted">Logged to <a href="/equipment/<%= line.logged_equipment_id %>#expenses"><%= equipmentTypeLabel(line.logged_equipment_type) %> <%= line.logged_equipment_number %></a></div>
                   <% } else if (equipmentList.length) { %>
                     <form method="POST" action="/receipts/lines/<%= line.id %>/log-equipment" class="log-equipment-form">
-                      <select name="equipment_id" required aria-label="Truck or trailer">
-                        <option value="">Truck / Trailer…</option>
-                        <% equipmentList.forEach(eq => { %><option value="<%= eq.id %>" <%= String(line.suggested_equipment_id) === String(eq.id) ? 'selected' : '' %>><%= eq.type === 'trailer' ? 'Trailer' : 'Truck' %> <%= eq.number %></option><% }) %>
+                      <select name="equipment_id" required aria-label="Truck, hotshot, or trailer">
+                        <option value="">Truck / Hotshot / Trailer…</option>
+                        <% equipmentList.forEach(eq => { %><option value="<%= eq.id %>" <%= String(line.suggested_equipment_id) === String(eq.id) ? 'selected' : '' %>><%= equipmentChoiceLabel(eq) %></option><% }) %>
                       </select>
                       <select name="category" aria-label="Category"><% categories.forEach(c => { %><option value="<%= c %>"><%= c %></option><% }) %></select>
                       <button type="submit" class="secondary">Log to Equipment</button>

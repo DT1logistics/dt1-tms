@@ -74,6 +74,8 @@ check('Receipt tag matching to a unit number', () => {
   assert.ok(ex.receiptTagMatches('Truck #1002', '#1002'));
   assert.ok(ex.receiptTagMatches('trk 1002 - brakes', '1002'));
   assert.ok(ex.receiptTagMatches('Trailer T-12', 'T-12'));
+  assert.ok(ex.receiptTagMatches('Hotshot #1006', '1006'));
+  assert.ok(ex.receiptTagMatches('Hotshot1006', '#1006'));
   assert.ok(!ex.receiptTagMatches('Truck #10021', '1002'));
   assert.ok(!ex.receiptTagMatches('', '1002'));
   assert.ok(!ex.receiptTagMatches('Truck 5', ''));

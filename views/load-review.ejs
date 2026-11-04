@@ -175,11 +175,11 @@
       <label for="edit_load_notes">Notes <span class="shared-notes-badge">Visible to Admin &amp; Driver</span></label>
       <textarea name="notes" id="edit_load_notes" class="load-notes-input" rows="3" maxlength="2000" placeholder="Notes for this load (Admin and Driver can both see these)"><%= load.notes || load.admin_notes || '' %></textarea>
       <% if (trucks && trucks.length) { %>
-        <label>Truck</label>
+        <label>Truck / Hotshot</label>
         <select name="truck_id">
           <option value="">-- No truck --</option>
           <% trucks.forEach(function (truck) { %>
-            <option value="<%= truck.id %>" <%= String(load.truck_id) === String(truck.id) ? 'selected' : '' %>><%= truck.number %><%= truck.description ? ' — ' + truck.description : '' %></option>
+            <option value="<%= truck.id %>" <%= String(load.truck_id) === String(truck.id) ? 'selected' : '' %>><%= equipmentPowerLabel(truck) %></option>
           <% }) %>
         </select>
       <% } %>
