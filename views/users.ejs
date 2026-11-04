@@ -1,0 +1,22 @@
+<%- include('partials/open', { title: 'Users', user: user, active: 'users' }) %>
+<h1>Users</h1>
+<p class="muted">Set a temporary password for any admin or driver. They must choose a new password the next time they sign in, before they can use the app. The temporary password is shown once here and is stored only as a hash.</p>
+<% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
+<% if (notice) { %>
+  <div class="card">
+    <p>Temporary password for <strong><%= notice.name %></strong> (<%= notice.email %>). They must change it at the next sign-in.</p>
+    <div class="temp" id="temp-password"><%= notice.password %></div>
+  </div>
+<% } %>
+<% users.forEach(function (account) { %>
+  <div class="card">
+    <strong><%= account.name || account.email %></strong>
+    <div class="muted"><%= account.email %> · <%= account.role %><% if (account.status === 'inactive') { %> · inactive<% } %><% if (account.must_change_password) { %> · must change password<% } %></div>
+    <form method="POST" action="/users/<%= account.id %>/temp-password">
+      <label for="temp-<%= account.id %>">Temporary password (leave blank to generate one)</label>
+      <input id="temp-<%= account.id %>" type="text" name="temp_password" autocomplete="off" minlength="6" placeholder="Leave blank to generate one">
+      <button type="submit">Set temporary password</button>
+    </form>
+  </div>
+<% }) %>
+<%- include('partials/close') %>

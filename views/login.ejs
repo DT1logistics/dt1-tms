@@ -10,6 +10,7 @@
 <body class="login-page">
   <div class="login-box">
     <img class="login-logo" src="<%= logoSrc %>" alt="DT1 Logistics" onerror="this.onerror=null;this.src='/logo.svg'">
+    <% if (typeof message !== 'undefined' && message) { %><div class="all-clear"><%= message %></div><% } %>
     <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
     <form method="POST" action="/login">
       <label>Email</label>
