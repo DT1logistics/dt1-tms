@@ -21,3 +21,12 @@ services:
       # Shared secret for GET /admin/backup (nightly OneDrive backup). Set in the dashboard.
       - key: BACKUP_TOKEN
         sync: false
+      # Logan (Grok Bot) load-created webhook. POST JSON with Authorization: Bearer <key>.
+      # Set both in the dashboard. Unset = no webhook. sync: false is not copied into previews.
+      - key: LOGAN_WEBHOOK_URL
+        sync: false
+      - key: LOGAN_WEBHOOK_KEY
+        sync: false
+      # Bearer token for /api/logan (min 32 characters). Unset = those routes are 404.
+      - key: LOGAN_API_TOKEN
+        sync: false

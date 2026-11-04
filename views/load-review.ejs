@@ -41,12 +41,34 @@
 <% if (saved === 'rejected') { %><div class="reject-note">Load sent back to the driver as a draft.</div><% } %>
 <% if (saved === 'edited') { %><div class="all-clear">Load saved.</div><% } %>
 <% if (saved === 'flag') { %><div class="all-clear">Missing info flag saved.</div><% } %>
+<% if (saved === 'review') { %><div class="all-clear">Review notes saved.</div><% } %>
+<% if (saved === 'cleared') { %><div class="all-clear">Missing-info flag cleared.</div><% } %>
+<% if (saved === 'accepted') { %><div class="all-clear">Load accepted.</div><% } %>
+<% if (saved === 'review-rejected') { %><div class="reject-note">Load rejected.</div><% } %>
+<% if (saved === 'need-reason') { %><div class="reject-note">A reason is required to reject a load.</div><% } %>
+<% if (user.role === 'admin' && load.review_status === 'flagged_missing_info') { %>
+  <div class="reject-note">
+    <strong>Flagged — missing info</strong>
+    <% if (load.review_set_by_name) { %> by <%= load.review_set_by_name %><% if (load.review_set_at) { %> on <%= auditStamp(load.review_set_at) %><% } %><% } %>
+    <div><%= load.review_notes || load.missing_info_note || 'Missing information' %></div>
+  </div>
+<% } else if (user.role === 'admin' && load.review_status && load.review_status !== 'none') { %>
+  <p>
+    <span class="status <%= reviewStatusClass(load.review_status) %>"><%= reviewStatusLabel(load.review_status) %></span>
+    <% if (load.review_set_by_name) { %><span class="muted">Set by <%= load.review_set_by_name %><% if (load.review_set_at) { %> on <%= auditStamp(load.review_set_at) %><% } %></span><% } %>
+  </p>
+<% } %>
+<% if (user.role === 'admin' && load.review_decision === 'rejected') { %>
+  <div class="reject-note">
+    <strong>Rejected</strong><% if (load.review_decision_by_name) { %> by <%= load.review_decision_by_name %><% if (load.review_decision_at) { %> on <%= auditStamp(load.review_decision_at) %><% } %><% } %>
+    <% if (load.review_decision_reason) { %><div><%= load.review_decision_reason %></div><% } %>
+  </div>
+<% } else if (user.role === 'admin' && load.review_decision === 'accepted') { %>
+  <p class="muted">Accepted by <%= load.review_decision_by_name || 'admin' %><% if (load.review_decision_at) { %> on <%= auditStamp(load.review_decision_at) %><% } %></p>
+<% } %>
 <% if (user.role === 'admin' && load.status === 'submitted') { %>
   <% const gaps = submittedLoadGaps(load, tickets && tickets.length); %>
   <% if (gaps.length) { %><div class="reject-note"><strong>Submitted load missing:</strong> <%= gaps.join(', ') %></div><% } %>
-<% } %>
-<% if (load.missing_info_note) { %>
-  <div class="reject-note"><strong>Missing Info Flag:</strong> <%= load.missing_info_note %></div>
 <% } %>
 <% if (load.status === 'draft' && load.rejection_reason) { %>
   <div class="reject-note"><strong>Rejection reason:</strong> <%= load.rejection_reason %></div>
@@ -236,15 +258,34 @@
     </form>
   </div>
 
-  <% if (user.role === 'admin') { %>
-    <form class="card" method="POST" action="/loads/<%= load.id %>/missing-info">
-      <h2>Missing Info Flag</h2>
-      <p class="muted">This note stays on the admin dashboard until it is cleared.</p>
-      <label>Completeness note</label>
-      <textarea name="missing_info_note" rows="3"><%= load.missing_info_note || '' %></textarea>
-      <button type="submit">Save Missing Info Flag</button>
-    </form>
-  <% } %>
+  <form class="card" method="POST" action="/loads/<%= load.id %>/review">
+    <h2>Logan review</h2>
+    <p class="muted">Logan flags a load when information is missing. An admin can edit the notes or clear the flag. Drivers do not see this.</p>
+    <p>
+      <span class="status <%= reviewStatusClass(load.review_status) %>"><%= reviewStatusLabel(load.review_status) %></span>
+      <% if (load.review_set_by_name) { %>
+        <span class="muted">Set by <%= load.review_set_by_name %><% if (load.review_set_at) { %> on <%= auditStamp(load.review_set_at) %><% } %></span>
+      <% } %>
+    </p>
+    <label for="review_notes">Review notes</label>
+    <textarea name="review_notes" id="review_notes" rows="4" placeholder="One missing item per line"><%= load.review_notes || '' %></textarea>
+    <button type="submit" name="review_action" value="save">Save notes</button>
+    <button type="submit" class="btn-draft" name="review_action" value="clear">Clear flag</button>
+  </form>
+
+  <form class="card" method="POST" action="/loads/<%= load.id %>/review-decision">
+    <h2>Accept or reject</h2>
+    <p class="muted">Only an admin can accept or reject a load. Logan can flag a load and cannot make this decision.</p>
+    <% if (load.review_decision === 'rejected') { %>
+      <p>Current decision: <strong>Rejected</strong><% if (load.review_decision_by_name) { %> by <%= load.review_decision_by_name %><% if (load.review_decision_at) { %> on <%= auditStamp(load.review_decision_at) %><% } %><% } %></p>
+    <% } else if (load.review_decision === 'accepted') { %>
+      <p>Current decision: <strong>Accepted</strong><% if (load.review_decision_by_name) { %> by <%= load.review_decision_by_name %><% if (load.review_decision_at) { %> on <%= auditStamp(load.review_decision_at) %><% } %><% } %></p>
+    <% } %>
+    <label for="review_decision_reason">Reason (required to reject)</label>
+    <textarea name="reason" id="review_decision_reason" rows="3" placeholder="Why this load is rejected"><%= load.review_decision === 'rejected' ? (load.review_decision_reason || '') : '' %></textarea>
+    <button class="approve" type="submit" name="decision" value="accepted">Accept load</button>
+    <button class="danger" type="submit" name="decision" value="rejected" onclick="return confirm('Reject this load?');">Reject load</button>
+  </form>
 
   <div class="review-actions">
     <% if (load.status === 'submitted') { %>
