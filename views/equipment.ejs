@@ -12,13 +12,9 @@
   <div class="card equipment-card">
     <div class="counts">
       <strong><a href="/equipment/<%= item.id %>"><%= item.number || 'Unnumbered' %></a></strong>
-      <% if (item.maintenance_status === 'out_of_service') { %>
-        <span class="badge red">Out of service</span>
-      <% } else if (item.maintenance_status === 'maintenance') { %>
-        <span class="badge yellow">In maintenance</span>
-      <% } else { %>
-        <span class="badge green">Active</span>
-      <% } %>
+      <% equipmentBadges(item).forEach(function (badge) { %>
+        <span class="badge <%= badge.className %>"><%= badge.label %></span>
+      <% }) %>
     </div>
     <div class="equip-meta"><strong>VIN#:</strong> <%= item.vin || '—' %></div>
     <div class="equip-meta"><strong>Plate:</strong> <%= plateLabel || '—' %></div>
@@ -26,7 +22,7 @@
     <div class="equip-meta"><strong>Make:</strong> <%= item.make || '—' %></div>
     <div class="equip-meta"><strong>Model:</strong> <%= item.model || '—' %></div>
     <div class="equip-meta"><strong>Description:</strong> <%= item.description || '—' %></div>
-    <div class="muted">Status: <%= item.status === 'inactive' ? 'Inactive' : 'Active' %></div>
+    <div class="muted">Status: <%= equipmentStatusLabel(item) %></div>
     <div class="muted"><%= item.ownership || 'Ownership not set' %></div>
     <div>
       Registration Expiration:
@@ -50,6 +46,8 @@
 
 <h2>Trucks</h2>
 <% if (trucks.length) { trucks.forEach(equipmentCard); } else { %><p>No trucks yet.</p><% } %>
+<h2>Hotshots</h2>
+<% if (hotshots.length) { hotshots.forEach(equipmentCard); } else { %><p>No hotshots yet.</p><% } %>
 <h2>Trailers</h2>
 <% if (trailers.length) { trailers.forEach(equipmentCard); } else { %><p>No trailers yet.</p><% } %>
 <%- include('partials/close') %>

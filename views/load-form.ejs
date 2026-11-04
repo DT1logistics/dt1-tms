@@ -71,11 +71,11 @@
   <label for="load_notes">Notes <span class="shared-notes-badge">Visible to Admin &amp; Driver</span></label>
   <textarea name="notes" id="load_notes" class="load-notes-input" rows="3" maxlength="2000" placeholder="Notes for this load (Admin and Driver can both see these)"><%= load.notes || load.admin_notes || '' %></textarea>
   <% if (trucks && trucks.length) { %>
-    <label>Truck</label>
+    <label>Truck / Hotshot</label>
     <select name="truck_id">
       <option value="">-- No truck --</option>
       <% trucks.forEach(function (truck) { %>
-        <option value="<%= truck.id %>" <%= String(load.truck_id) === String(truck.id) ? 'selected' : '' %>><%= truck.number %><%= truck.description ? ' — ' + truck.description : '' %></option>
+        <option value="<%= truck.id %>" <%= String(load.truck_id) === String(truck.id) ? 'selected' : '' %>><%= equipmentPowerLabel(truck) %></option>
       <% }) %>
     </select>
   <% } %>
@@ -453,7 +453,8 @@
     const projName = projOpt && projOpt.value ? projOpt.text.replace(/\s*\(\$[0-9.]+\)\s*$/, '').trim() : '';
     const truckSelect = document.querySelector('select[name="truck_id"]');
     const truckOpt = truckSelect && truckSelect.options ? truckSelect.options[truckSelect.selectedIndex] : null;
-    const truckText = truckOpt && truckOpt.value ? ('Truck ' + truckOpt.text.split('—')[0].trim()) : '';
+    const truckRaw = truckOpt && truckOpt.value ? truckOpt.text.split('—')[0].trim() : '';
+    const truckText = !truckRaw ? '' : (/^hotshot\b/i.test(truckRaw) ? truckRaw : ('Truck ' + truckRaw));
     const destInput = document.querySelector('input[name="destination"]');
     const dest = destInput && destInput.value ? destInput.value.trim() : '';
     const details = [];

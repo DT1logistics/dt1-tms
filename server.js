@@ -18,6 +18,7 @@ const SqliteSessionStore = require('./lib/sqlite-session-store');
 const equipmentPlate = require('./lib/equipment-plate');
 const equipImport = require('./lib/equipment-import');
 const accountSecurity = require('./lib/account-security');
+const equipment = require('./lib/equipment');
 const crypto = require('crypto');
 
 const app = express();
@@ -278,6 +279,11 @@ app.locals.reviewStatusClass = loadReview.reviewStatusClass;
 app.locals.settlementWeekLabel = settlementWeekLabel;
 app.locals.ticketFileKind = ticketFileKind;
 app.locals.formatPlate = equipmentPlate.formatPlate;
+app.locals.equipmentTypeLabel = equipment.equipmentTypeLabel;
+app.locals.equipmentStatusLabel = equipment.equipmentStatusLabel;
+app.locals.equipmentBadges = equipment.equipmentBadges;
+app.locals.equipmentPowerLabel = equipment.equipmentPowerLabel;
+app.locals.equipmentChoiceLabel = equipment.equipmentChoiceLabel;
 app.locals.auditStamp = auditStamp;
 
 app.use((req, res, next) => {
@@ -604,7 +610,7 @@ function initDB() {
 
     CREATE TABLE IF NOT EXISTS equipment (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      type TEXT CHECK(type IN ('truck', 'trailer')),
+      type TEXT CHECK(type IN ('truck', 'trailer', 'hotshot')),
       number TEXT,
       description TEXT,
       vin TEXT,
@@ -612,6 +618,7 @@ function initDB() {
       make TEXT,
       model TEXT,
       status TEXT DEFAULT 'active',
+      inactive_reason TEXT CHECK (inactive_reason IS NULL OR inactive_reason IN ('sold', 'total_loss', 'other')),
       ownership TEXT,
       registration_expiration DATE,
       inspection_expiration DATE,
@@ -791,6 +798,8 @@ function initDB() {
   ensureColumn('equipment', 'inspection_expiration', 'DATE');
   ensureColumn('equipment', 'maintenance_status', "TEXT DEFAULT 'active'");
   equipmentPlate.ensurePlateColumns(db);
+  // Adds hotshot to the type check and inactive_reason. Existing rows are copied as-is.
+  equipment.ensureEquipmentSchema(db);
 
   const complianceCount = db.prepare('SELECT COUNT(*) AS n FROM compliance_items').get().n;
   if (!complianceCount) {
@@ -995,11 +1004,7 @@ function loadFormData(user, load) {
       if (current) drivers.unshift(current);
     }
   }
-  let trucks = db.prepare("SELECT id, number, description, status FROM equipment WHERE type = 'truck' AND (status IS NULL OR status = 'active') ORDER BY number").all();
-  if (load && load.truck_id && !trucks.some((truck) => String(truck.id) === String(load.truck_id))) {
-    const current = db.prepare("SELECT id, number, description, status FROM equipment WHERE id = ? AND type = 'truck'").get(load.truck_id);
-    if (current) trucks.unshift(current);
-  }
+  const trucks = equipment.loadPowerUnits(db, load);
   // Admin only: full fuel-rate history so the form can look up the rate for the Load Date's week.
   let fuelRates = [];
   let latestFuel = null;
@@ -1086,7 +1091,7 @@ function resolveLoadEntry(req, existing) {
 
 const loadQuery = `
   SELECT l.*, u.name as driver_name, u.pay_percentage,
-         e.number as truck_number,
+         e.number as truck_number, e.type as truck_type,
          p.display_name as project_display, p.project_name as project_short_name,
          c.name as customer_name, c.address_line1, c.address_line2,
          c.poc_name, c.poc_phone, c.poc_email, c.terms
@@ -1140,6 +1145,7 @@ function assessEquipment(item) {
     if (rankLevel(next) < rankLevel(level)) level = next;
     notes.push(note);
   };
+  if (item.status === 'inactive') notes.push(equipment.equipmentStatusLabel(item));
   if (item.maintenance_status === 'out_of_service') bump('red', 'Out of service');
   else if (item.maintenance_status === 'maintenance') bump('yellow', 'In maintenance');
   if (item.registration_expiration) {
@@ -1185,7 +1191,7 @@ function collectDriverLevels(driverId, hrefs) {
   `).all(driverId);
   equipment.forEach((item) => {
     const assessed = assessEquipment(item);
-    const label = `${item.type === 'trailer' ? 'Trailer' : 'Truck'} ${item.number || ''}`.trim();
+    const label = `${equipment.equipmentTypeLabel(item.type)} ${item.number || ''}`.trim();
     levels.push({
       level: assessed.level,
       name: label,
@@ -1259,7 +1265,7 @@ function collectAlerts(user) {
       );
     });
     db.prepare('SELECT * FROM equipment ORDER BY type, number').all().forEach((item) => {
-      const label = `${item.type === 'trailer' ? 'Trailer' : 'Truck'} ${item.number || ''}`.trim();
+      const label = `${equipment.equipmentTypeLabel(item.type)} ${item.number || ''}`.trim();
       if (item.maintenance_status === 'out_of_service') {
         pushAlert(alerts, 'red', 'Equipment', label, 'Out of service', '/equipment');
       } else if (item.maintenance_status === 'maintenance') {
@@ -2042,11 +2048,7 @@ function buildLoadValues(req, project, existing) {
 
   let truckId = existing ? existing.truck_id : null;
   if (bodyHas(body, 'truck_id')) {
-    const parsed = parseInt(body.truck_id, 10);
-    const truck = Number.isInteger(parsed)
-      ? db.prepare("SELECT id FROM equipment WHERE id = ? AND type = 'truck'").get(parsed)
-      : null;
-    truckId = truck ? truck.id : null;
+    truckId = equipment.resolveAssignedTruckId(db, body.truck_id, existing ? existing.truck_id : null);
   }
 
   let projectId = existing ? existing.project_id : null;
@@ -2167,7 +2169,7 @@ function buildAssignedLoadSms(load, customMessage) {
   const parts = [`#${load.id}`];
   if (load.load_date) parts[0] += ` for ${load.load_date}`;
   if (load.project_display) parts.push(load.project_display);
-  if (load.truck_number) parts.push(`Truck ${load.truck_number}`);
+  if (load.truck_number) parts.push(`${load.truck_type === 'hotshot' ? 'Hotshot' : 'Truck'} ${load.truck_number}`);
   const destText = load.destination || load.description || '';
   if (load.origin && destText) {
     parts.push(`${load.origin} -> ${destText}`);
@@ -3315,7 +3317,11 @@ app.get('/receipts', requireAuth, (req, res) => {
     `).all();
     const byReceipt = {};
     lines.forEach((line) => { (byReceipt[line.receipt_id] = byReceipt[line.receipt_id] || []).push(line); });
-    equipmentList = db.prepare("SELECT id, type, number FROM equipment ORDER BY type DESC, number").all();
+    equipmentList = db.prepare(`
+      SELECT id, type, number, status, maintenance_status, inactive_reason
+      FROM equipment
+      ORDER BY CASE type WHEN 'truck' THEN 0 WHEN 'hotshot' THEN 1 ELSE 2 END, number
+    `).all();
     receipts.forEach((r) => {
       r.lines = byReceipt[r.id] || [];
       r.lines.forEach((line) => {
@@ -3336,14 +3342,14 @@ app.get('/receipts', requireAuth, (req, res) => {
 
 function activeEquipmentUnits() {
   return db.prepare(`
-    SELECT id, type, number, description FROM equipment
+    SELECT id, type, number, description, status, maintenance_status, inactive_reason FROM equipment
     WHERE status IS NULL OR status = 'active'
-    ORDER BY CASE type WHEN 'truck' THEN 0 ELSE 1 END, number
+    ORDER BY CASE type WHEN 'truck' THEN 0 WHEN 'hotshot' THEN 1 ELSE 2 END, number
   `).all();
 }
 
 function equipmentUnitTag(eq) {
-  const kind = eq.type === 'trailer' ? 'Trailer' : 'Truck';
+  const kind = equipment.equipmentTypeLabel(eq.type);
   const number = String(eq.number || '').trim();
   if (!number) return kind;
   return `${kind} ${number.startsWith('#') ? number : '#' + number}`;
@@ -3487,8 +3493,14 @@ function readEquipment(body, existing) {
     ? body.maintenance_status
     : (existing ? (existing.maintenance_status || 'active') : 'active');
   const type = bodyHas(body, 'type')
-    ? (body.type === 'trailer' ? 'trailer' : 'truck')
+    ? (equipment.EQUIPMENT_TYPES.includes(body.type) ? body.type : (existing && equipment.EQUIPMENT_TYPES.includes(existing.type) ? existing.type : 'truck'))
     : (existing ? existing.type : 'truck');
+  const status = bodyHas(body, 'status')
+    ? (body.status === 'inactive' ? 'inactive' : 'active')
+    : (existing ? (existing.status || 'active') : 'active');
+  const inactiveReason = status === 'inactive'
+    ? equipment.normalizeInactiveReason(bodyHas(body, 'inactive_reason') ? body.inactive_reason : (existing ? existing.inactive_reason : ''))
+    : null;
   const kept = (key) => (bodyHas(body, key) ? String(body[key] || '').trim() : (existing ? (existing[key] || '') : ''));
   const plateNumber = bodyHas(body, 'plate_number')
     ? equipmentPlate.normalizePlateNumber(body.plate_number)
@@ -3504,7 +3516,8 @@ function readEquipment(body, existing) {
     year: kept('year'),
     make: kept('make'),
     model: kept('model'),
-    status: bodyHas(body, 'status') ? (body.status === 'inactive' ? 'inactive' : 'active') : (existing ? (existing.status || 'active') : 'active'),
+    status,
+    inactive_reason: inactiveReason,
     ownership: kept('ownership'),
     registration_expiration: bodyHas(body, 'registration_expiration') ? blankToNull(body.registration_expiration) : (existing ? existing.registration_expiration : null),
     inspection_expiration: bodyHas(body, 'inspection_expiration') ? blankToNull(body.inspection_expiration) : (existing ? existing.inspection_expiration : null),
@@ -3535,12 +3548,13 @@ app.get('/equipment', requireAuth, (req, res) => {
     return hay.includes(q);
   };
   const trucks = db.prepare("SELECT * FROM equipment WHERE type = 'truck' ORDER BY number").all().filter(matchesQuery);
+  const hotshots = db.prepare("SELECT * FROM equipment WHERE type = 'hotshot' ORDER BY number").all().filter(matchesQuery);
   const trailers = db.prepare("SELECT * FROM equipment WHERE type = 'trailer' ORDER BY number").all().filter(matchesQuery);
-  if (wantsJson(req)) return res.json({ trucks, trailers });
+  if (wantsJson(req)) return res.json({ trucks, hotshots, trailers });
   const expenseYear = expenseReportYear(req);
   const expenseTotals = equipExpenses.totalsByEquipment(
     db.prepare('SELECT equipment_id, expense_date, amount FROM equipment_expenses').all(), expenseYear);
-  res.render('equipment', { user: req.session.user, trucks, trailers, expenseTotals, expenseYear, q: req.query.q || '' });
+  res.render('equipment', { user: req.session.user, trucks, hotshots, trailers, expenseTotals, expenseYear, q: req.query.q || '' });
 });
 
 function equipmentRowsForImport() {
@@ -3684,10 +3698,10 @@ app.post('/equipment', requireAuth, (req, res) => {
   }
   const result = db.prepare(`
     INSERT INTO equipment (
-      type, number, description, vin, year, make, model, status, ownership, registration_expiration, inspection_expiration, maintenance_status,
+      type, number, description, vin, year, make, model, status, inactive_reason, ownership, registration_expiration, inspection_expiration, maintenance_status,
       plate_number, plate_state
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(item.type, item.number, item.description, item.vin, item.year, item.make, item.model, item.status, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status, item.plate_number, item.plate_state);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(item.type, item.number, item.description, item.vin, item.year, item.make, item.model, item.status, item.inactive_reason, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status, item.plate_number, item.plate_state);
   const created = db.prepare('SELECT * FROM equipment WHERE id = ?').get(result.lastInsertRowid);
   if (wantsJson(req)) return res.status(201).json(created);
   res.redirect('/equipment');
@@ -3704,11 +3718,11 @@ app.post('/equipment/:id', requireAuth, (req, res) => {
   }
   db.prepare(`
     UPDATE equipment
-    SET type = ?, number = ?, description = ?, vin = ?, year = ?, make = ?, model = ?, status = ?,
+    SET type = ?, number = ?, description = ?, vin = ?, year = ?, make = ?, model = ?, status = ?, inactive_reason = ?,
         ownership = ?, registration_expiration = ?, inspection_expiration = ?, maintenance_status = ?,
         plate_number = ?, plate_state = ?
     WHERE id = ?
-  `).run(item.type, item.number, item.description, item.vin, item.year, item.make, item.model, item.status, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status, item.plate_number, item.plate_state, req.params.id);
+  `).run(item.type, item.number, item.description, item.vin, item.year, item.make, item.model, item.status, item.inactive_reason, item.ownership, item.registration_expiration, item.inspection_expiration, item.maintenance_status, item.plate_number, item.plate_state, req.params.id);
   const updated = db.prepare('SELECT * FROM equipment WHERE id = ?').get(req.params.id);
   if (wantsJson(req)) return res.json(updated);
   res.redirect('/equipment');

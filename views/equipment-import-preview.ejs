@@ -69,7 +69,7 @@
             <td><%= plate || '—' %></td>
             <td><%= row.value.registration_expiration || '—' %></td>
             <td><%= row.value.inspection_expiration || '—' %></td>
-            <td><%= row.value.status || 'active' %> / <%= row.value.maintenance_status || 'active' %></td>
+            <td><%= equipmentStatusLabel({ status: row.value.status || 'active', inactive_reason: row.value.inactive_reason }) %><% if (row.value.maintenance_status === 'out_of_service') { %> · Out of service<% } else if (row.value.maintenance_status === 'maintenance') { %> · In maintenance<% } %></td>
             <td>
               <% row.errors.forEach(function (msg) { %><div class="import-msg"><%= msg %></div><% }) %>
               <% row.warnings.forEach(function (msg) { %><div class="import-msg"><%= msg %></div><% }) %>

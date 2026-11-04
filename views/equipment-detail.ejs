@@ -1,18 +1,16 @@
-<%- include('partials/open', { title: (equipment.type === 'trailer' ? 'Trailer ' : 'Truck ') + (equipment.number || ''), user: user, active: 'equipment' }) %>
+<%- include('partials/open', { title: equipmentTypeLabel(equipment.type) + ' ' + (equipment.number || ''), user: user, active: 'equipment' }) %>
 <p><a href="/equipment">&larr; Equipment</a></p>
-<h1><%= equipment.type === 'trailer' ? 'Trailer' : 'Truck' %> <%= equipment.number || 'Unnumbered' %></h1>
+<h1><%= equipmentTypeLabel(equipment.type) %> <%= equipment.number || 'Unnumbered' %></h1>
 
 <div class="card">
   <div class="counts">
-    <% if (equipment.maintenance_status === 'out_of_service') { %><span class="badge red">Out of service</span>
-    <% } else if (equipment.maintenance_status === 'maintenance') { %><span class="badge yellow">In maintenance</span>
-    <% } else { %><span class="badge green">Active</span><% } %>
+    <% equipmentBadges(equipment).forEach(function (badge) { %><span class="badge <%= badge.className %>"><%= badge.label %></span><% }) %>
   </div>
   <div class="equip-meta"><strong>VIN#:</strong> <%= equipment.vin || '—' %></div>
   <div class="equip-meta"><strong>Plate:</strong> <%= formatPlate(equipment) || '—' %></div>
   <div class="equip-meta"><strong>Year / Make / Model:</strong> <%= [equipment.year, equipment.make, equipment.model].filter(Boolean).join(' ') || '—' %></div>
   <div class="equip-meta"><strong>Description:</strong> <%= equipment.description || '—' %></div>
-  <div class="muted">Status: <%= equipment.status === 'inactive' ? 'Inactive' : 'Active' %> · <%= equipment.ownership || 'Ownership not set' %></div>
+  <div class="muted">Status: <%= equipmentStatusLabel(equipment) %> · <%= equipment.ownership || 'Ownership not set' %></div>
   <p><a href="/equipment/<%= equipment.id %>/edit">Edit unit details</a></p>
 </div>
 
