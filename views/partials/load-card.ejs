@@ -4,12 +4,26 @@
     <span class="status <%= load.status %>"><%= loadStatusLabel(load.status, load.settlement_status) %></span>
     <% const origin = loadOriginLabel(load); %>
     <% if (origin) { %><span class="origin-badge"><%= origin %></span><% } %>
+    <% if (user.role === 'admin' && load.review_status === 'flagged_missing_info') { %>
+      <span class="status flagged">Flagged — missing info</span>
+    <% } %>
+    <% if (user.role === 'admin' && load.review_decision === 'rejected') { %>
+      <span class="status rejected">Rejected</span>
+    <% } else if (user.role === 'admin' && load.review_decision === 'accepted') { %>
+      <span class="status cleared">Accepted</span>
+    <% } %>
   </div>
   <% if (load.status === 'approved' && load.settlement_status !== 'approved') { %>
     <div class="muted">Pending Driver Settlement Approval<%= load.load_date ? ' · ' + settlementWeekLabel(load.load_date) : '' %></div>
   <% } %>
   <% if (load.status === 'draft' && load.rejection_reason) { %>
     <div class="reject-note"><strong>Rejected — needs a fix:</strong> <%= load.rejection_reason %></div>
+  <% } %>
+  <% if (user.role === 'admin' && load.review_status === 'flagged_missing_info') { %>
+    <div class="reject-note"><strong>Flagged — missing info:</strong> <%= load.review_notes || load.missing_info_note || 'Needs review' %></div>
+  <% } %>
+  <% if (user.role === 'admin' && load.review_decision === 'rejected' && load.review_decision_reason) { %>
+    <div class="reject-note"><strong>Rejected:</strong> <%= load.review_decision_reason %></div>
   <% } %>
   <div>Date: <%= load.load_date || '—' %></div>
   <div>Project: <%= load.project_display || '—' %></div>

@@ -8,6 +8,9 @@ const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 const fuelCalc = require('./lib/fuel-surcharge');
+const loadReview = require('./lib/load-review');
+const loganWebhook = require('./lib/logan-webhook');
+const loganApi = require('./lib/logan-api');
 const equipExpenses = require('./lib/equipment-expenses');
 const backup = require('./lib/backup');
 const dataStore = require('./lib/data-store');
@@ -270,6 +273,8 @@ function loadFuelSurcharge(load, fuelRates) {
 app.locals.loadFuelSurcharge = loadFuelSurcharge;
 app.locals.loadStatusLabel = loadStatusLabel;
 app.locals.loadOriginLabel = loadOriginLabel;
+app.locals.reviewStatusLabel = loadReview.reviewStatusLabel;
+app.locals.reviewStatusClass = loadReview.reviewStatusClass;
 app.locals.settlementWeekLabel = settlementWeekLabel;
 app.locals.ticketFileKind = ticketFileKind;
 app.locals.formatPlate = equipmentPlate.formatPlate;
@@ -343,10 +348,12 @@ app.use(session({
   cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 }
 }));
 // A temporary password is only a way back in. Until it is replaced, block every other page.
+// /api/logan authenticates with its own bearer token and must stay reachable.
 app.use((req, res, next) => {
   const current = req.session && req.session.user;
   if (!current || !Number(current.must_change_password)) return next();
   if (req.path === '/change-password' || req.path === '/logout') return next();
+  if (req.path === '/api/logan' || req.path.startsWith('/api/logan/')) return next();
   return res.redirect('/change-password');
 });
 // Ticket, BOL, and receipt files live here. The same URLs stay usable for a logged-in
@@ -543,6 +550,17 @@ function initDB() {
       created_by_role TEXT,
       entry_mode TEXT,
       missing_info_note TEXT,
+      review_status TEXT DEFAULT 'none',
+      review_notes TEXT,
+      review_set_by INTEGER,
+      review_set_by_name TEXT,
+      review_set_at DATETIME,
+      review_decision TEXT,
+      review_decision_reason TEXT,
+      review_decision_by INTEGER,
+      review_decision_by_name TEXT,
+      review_decision_at DATETIME,
+      created_via TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (driver_id) REFERENCES users(id),
       FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -718,6 +736,17 @@ function initDB() {
   ensureColumn('loads', 'created_by_role', 'TEXT');
   ensureColumn('loads', 'entry_mode', 'TEXT');
   ensureColumn('loads', 'missing_info_note', 'TEXT');
+  ensureColumn('loads', 'review_status', "TEXT DEFAULT 'none'");
+  ensureColumn('loads', 'review_notes', 'TEXT');
+  ensureColumn('loads', 'review_set_by', 'INTEGER');
+  ensureColumn('loads', 'review_set_by_name', 'TEXT');
+  ensureColumn('loads', 'review_set_at', 'DATETIME');
+  ensureColumn('loads', 'review_decision', 'TEXT');
+  ensureColumn('loads', 'review_decision_reason', 'TEXT');
+  ensureColumn('loads', 'review_decision_by', 'INTEGER');
+  ensureColumn('loads', 'review_decision_by_name', 'TEXT');
+  ensureColumn('loads', 'review_decision_at', 'DATETIME');
+  ensureColumn('loads', 'created_via', 'TEXT');
   ensureColumn('loads', 'driver_pay_type', "TEXT DEFAULT 'percentage'");
   ensureColumn('loads', 'driver_flat_rate', 'REAL DEFAULT 0');
   ensureColumn('projects', 'default_driver_pay_type', "TEXT DEFAULT 'percentage'");
@@ -1270,9 +1299,14 @@ function collectAlerts(user) {
     const href = `/loads/${load.id}`;
     const who = load.driver_name || 'Unassigned';
     const name = `Load #${load.id} (${who})`;
-    const note = String(load.missing_info_note || '').trim();
-    if (user.role === 'admin' && note) {
-      pushAlert(alerts, 'red', 'Load', name, `Missing info flag: ${note}`, href);
+    const note = String(load.review_notes || load.missing_info_note || '').trim();
+    const flagged = load.review_status === 'flagged_missing_info' || String(load.missing_info_note || '').trim();
+    if (user.role === 'admin' && flagged) {
+      pushAlert(alerts, 'red', 'Load', name, `Missing info flag: ${note || 'Missing information'}`, href);
+    }
+    if (user.role === 'admin' && load.review_decision === 'rejected') {
+      const why = String(load.review_decision_reason || '').trim();
+      pushAlert(alerts, 'red', 'Load', name, why ? `Rejected: ${why}` : 'Rejected', href);
     }
     if (load.status === 'draft') return;
     const hasFile = (docMap[load.id] || 0) > 0;
@@ -1861,8 +1895,17 @@ app.get('/loads', requireAuth, (req, res) => {
       deleted: req.query.deleted === '1'
     });
   }
-  const loads = attachTickets(db.prepare(loadQuery + ' ORDER BY l.created_at DESC').all()).map(annotatePay);
-  res.render('loads', { user: req.session.user, loads, weekGroups: [], undatedLoads: null, deleted: req.query.deleted === '1' });
+  const reviewFilter = req.query.review === 'flagged' ? 'flagged' : '';
+  const flaggedClause = reviewFilter ? " WHERE IFNULL(l.review_status, '') = 'flagged_missing_info'" : '';
+  const loads = attachTickets(db.prepare(loadQuery + flaggedClause + ' ORDER BY l.created_at DESC').all()).map(annotatePay);
+  res.render('loads', {
+    user: req.session.user,
+    loads,
+    weekGroups: [],
+    undatedLoads: null,
+    deleted: req.query.deleted === '1',
+    reviewFilter
+  });
 });
 
 app.post('/loads/:id/approve', requireAuth, (req, res) => {
@@ -2291,25 +2334,35 @@ function stampLoadApproval(loadId, req, entry) {
   `).run(req.session.user.id, actorName(req), loadId);
 }
 
-app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) => {
-  const isAdmin = req.session.user.role === 'admin';
-  const entry = resolveLoadEntry(req, null);
-  const project = findActiveProject(req.body.project_id);
-  const values = buildLoadValues(req, project);
-  values.status = entry.status;
-  if (isAdmin && !values.driver_id) {
-    return renderLoadForm(req, res, 400, loadFormErrorView(req), 'Select a driver');
+function publicBaseUrl() {
+  const raw = process.env.APP_BASE_URL || process.env.RENDER_EXTERNAL_URL || APP_URL;
+  return String(raw || 'https://dt1-tms.onrender.com').replace(/\/+$/, '');
+}
+
+function scheduleLoadCreatedWebhook(loadId, actor) {
+  try {
+    const load = db.prepare('SELECT id, ticket_number, origin, destination, description FROM loads WHERE id = ?').get(loadId);
+    if (!load) return;
+    const job = loganWebhook.notifyLoadCreated(process.env, load, {
+      createdBy: actor.name,
+      createdVia: actor.via === 'api' ? 'api' : 'ui',
+      baseUrl: publicBaseUrl()
+    });
+    if (job && typeof job.catch === 'function') job.catch(() => {});
+  } catch (err) {
+    console.error(`Logan webhook failed for load ${loadId}: ${err && err.message ? err.message : 'error'}`);
   }
-  if (!project && req.body.action !== 'draft') {
-    return renderLoadForm(req, res, 400, loadFormErrorView(req), 'Select an active project');
-  }
+}
+
+function insertNewLoad(values, entry, actor) {
   const result = db.prepare(`
     INSERT INTO loads (
       ticket_number, load_date, driver_id, truck_id, project_id, description, origin, destination, notes, admin_notes, weight_quantity,
       rate, has_fuel_surcharge, has_drive_time, drive_time_amount, has_self_load, self_load_amount,
       driver_pay_type, driver_flat_rate,
-      status, submitted_by, created_by_role, entry_mode
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      status, submitted_by, created_by_role, entry_mode,
+      review_status, review_set_by, review_set_by_name, review_set_at, created_via
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'needs_review', ?, ?, CURRENT_TIMESTAMP, ?)
   `).run(
     values.ticket_number,
     values.load_date,
@@ -2331,18 +2384,87 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
     values.payType,
     values.flatRate,
     entry.status,
-    req.session.user.id,
+    actor.id || null,
     entry.createdByRole,
-    entry.entryMode
+    entry.entryMode,
+    actor.id || null,
+    actor.name,
+    actor.via === 'api' ? 'api' : 'ui'
   );
-  stampLoadApproval(result.lastInsertRowid, req, entry);
-  saveTicketFiles(result.lastInsertRowid, req.files, req.session.user.id);
-  logAudit(req, entry.auditAction, 'load', result.lastInsertRowid, entry.auditDetail);
-  if (isAdmin && entry.entryMode === 'assigned' && values.driver_id) {
-    await notifyAssignedLoadDriver(req, result.lastInsertRowid);
-    return res.redirect(`/loads/${result.lastInsertRowid}?saved=assigned`);
+  const id = Number(result.lastInsertRowid);
+  scheduleLoadCreatedWebhook(id, actor);
+  return id;
+}
+
+function findLoadByKey(key) {
+  const text = String(key || '').trim();
+  if (!text) return null;
+  if (/^\d+$/.test(text)) {
+    const byId = db.prepare(loadQuery + ' WHERE l.id = ?').get(Number(text));
+    if (byId) return byId;
   }
-  res.redirect(isAdmin ? `/loads/${result.lastInsertRowid}` : '/loads');
+  return db.prepare(loadQuery + ' WHERE l.ticket_number = ? ORDER BY l.id DESC').get(text) || null;
+}
+
+function applyLoadReview(loadId, input) {
+  const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(loadId);
+  if (!load) return { error: 'Not found', code: 404 };
+  if (!loadReview.REVIEW_STATUSES.includes(input.status)) return { error: 'Invalid review_status', code: 400 };
+  const notes = input.notes == null ? null : (String(input.notes).trim().slice(0, 4000) || null);
+  const missing = input.status === 'flagged_missing_info' ? (notes || 'Missing information') : null;
+  db.prepare(`
+    UPDATE loads
+    SET review_status = ?, review_notes = ?, review_set_by = ?, review_set_by_name = ?, review_set_at = CURRENT_TIMESTAMP,
+        missing_info_note = ?
+    WHERE id = ?
+  `).run(input.status, notes, input.actorId || null, input.actorName, missing, load.id);
+  const auditReq = { session: { user: { id: input.actorId || null, name: input.actorName, role: 'admin' } } };
+  const action = input.status === 'flagged_missing_info'
+    ? 'Flagged missing info'
+    : (input.status === 'cleared' ? 'Cleared load review flag' : 'Updated load review');
+  logAudit(auditReq, action, 'load', load.id, notes || input.status);
+  return { load: db.prepare('SELECT * FROM loads WHERE id = ?').get(load.id) };
+}
+
+function decideLoadReview(loadId, input) {
+  const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(loadId);
+  if (!load) return { error: 'Not found', code: 404 };
+  const decision = input.decision === 'accepted' || input.decision === 'rejected' ? input.decision : '';
+  if (!decision) return { error: 'Invalid decision', code: 400 };
+  const reason = String(input.reason || '').trim().slice(0, 2000);
+  if (decision === 'rejected' && !reason) return { error: 'A rejection reason is required', code: 400 };
+  db.prepare(`
+    UPDATE loads
+    SET review_decision = ?, review_decision_reason = ?, review_decision_by = ?,
+        review_decision_by_name = ?, review_decision_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(decision, reason || null, input.actorId || null, input.actorName, load.id);
+  const auditReq = { session: { user: { id: input.actorId || null, name: input.actorName, role: 'admin' } } };
+  logAudit(auditReq, decision === 'rejected' ? 'Rejected load' : 'Accepted load', 'load', load.id, reason || null);
+  return { load: db.prepare('SELECT * FROM loads WHERE id = ?').get(load.id) };
+}
+
+app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) => {
+  const isAdmin = req.session.user.role === 'admin';
+  const entry = resolveLoadEntry(req, null);
+  const project = findActiveProject(req.body.project_id);
+  const values = buildLoadValues(req, project);
+  values.status = entry.status;
+  if (isAdmin && !values.driver_id) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req), 'Select a driver');
+  }
+  if (!project && req.body.action !== 'draft') {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req), 'Select an active project');
+  }
+  const loadId = insertNewLoad(values, entry, { id: req.session.user.id, name: actorName(req), via: 'ui' });
+  stampLoadApproval(loadId, req, entry);
+  saveTicketFiles(loadId, req.files, req.session.user.id);
+  logAudit(req, entry.auditAction, 'load', loadId, entry.auditDetail);
+  if (isAdmin && entry.entryMode === 'assigned' && values.driver_id) {
+    await notifyAssignedLoadDriver(req, loadId);
+    return res.redirect(`/loads/${loadId}?saved=assigned`);
+  }
+  res.redirect(isAdmin ? `/loads/${loadId}` : '/loads');
 });
 
 app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res) => {
@@ -2412,13 +2534,46 @@ app.post('/loads/:id/missing-info', requireAuth, (req, res) => {
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!load) return res.redirect('/loads');
   const note = String(req.body.missing_info_note || '').trim();
-  db.prepare(`
-    UPDATE loads
-    SET missing_info_note = ?, updated_by = ?, updated_by_name = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(note || null, req.session.user.id, actorName(req), load.id);
-  logAudit(req, note ? 'Missing info flag' : 'Cleared missing info flag', 'load', load.id, note || 'Cleared');
+  applyLoadReview(load.id, {
+    status: note ? 'flagged_missing_info' : 'cleared',
+    notes: note,
+    actorId: req.session.user.id,
+    actorName: actorName(req)
+  });
   res.redirect(`/loads/${load.id}?saved=flag`);
+});
+
+app.post('/loads/:id/review', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/loads');
+  const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+  if (!load) return res.redirect('/loads');
+  const clearing = req.body.review_action === 'clear';
+  const notes = Object.prototype.hasOwnProperty.call(req.body, 'review_notes')
+    ? String(req.body.review_notes || '')
+    : String(load.review_notes || '');
+  applyLoadReview(load.id, {
+    status: clearing ? 'cleared' : (load.review_status || 'none'),
+    notes,
+    actorId: req.session.user.id,
+    actorName: actorName(req)
+  });
+  res.redirect(`/loads/${load.id}?saved=${clearing ? 'cleared' : 'review'}`);
+});
+
+app.post('/loads/:id/review-decision', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/loads');
+  const result = decideLoadReview(req.params.id, {
+    decision: req.body.decision,
+    reason: req.body.reason || req.body.rejection_reason,
+    actorId: req.session.user.id,
+    actorName: actorName(req)
+  });
+  if (result.error) {
+    if (result.code === 404) return res.redirect('/loads');
+    return res.redirect(`/loads/${req.params.id}?saved=need-reason`);
+  }
+  const saved = req.body.decision === 'rejected' ? 'review-rejected' : 'accepted';
+  res.redirect(`/loads/${req.params.id}?saved=${saved}`);
 });
 
 // Admin: Drivers management
@@ -4337,6 +4492,21 @@ async function boot() {
 
 process.on('unhandledRejection', (err) => {
   console.error('Unhandled promise rejection:', err && err.stack ? err.stack : err);
+});
+
+loganApi.mountLoganApi(app, {
+  getDb: () => db,
+  tokenConfigured: backup.backupEnabled,
+  tokenMatches: backup.tokenMatches,
+  loadQuery: () => loadQuery,
+  publicBaseUrl,
+  findLoadByKey,
+  findActiveProject,
+  buildLoadValues,
+  resolveLoadEntry,
+  insertNewLoad,
+  applyLoadReview,
+  logAudit
 });
 
 boot().catch((err) => {
