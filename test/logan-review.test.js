@@ -363,6 +363,64 @@ async function waitUntil(fn, ms) {
       assert.ok(!srv.output().includes(TOKEN));
     });
 
+    await check('API assigns a hotshot and rejects inactive, sold, and total-loss units', async () => {
+      async function addUnit(fields) {
+        const res = await request(srv.port, { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader(admin) }, {
+          method: 'POST',
+          path: '/equipment',
+          body: form(Object.assign({ plate_state: 'VA', maintenance_status: 'active', status: 'active', inactive_reason: '' }, fields))
+        });
+        assert.strictEqual(res.status, 302, fields.number + ' ' + res.body.slice(0, 180));
+      }
+      await addUnit({ type: 'hotshot', number: '1006', year: '2026', make: 'Ford', model: 'F350' });
+      await addUnit({ type: 'truck', number: '1003', maintenance_status: 'out_of_service' });
+      await addUnit({ type: 'truck', number: '1002', status: 'inactive', inactive_reason: 'total_loss' });
+      await addUnit({ type: 'truck', number: '1008', status: 'inactive', inactive_reason: 'sold' });
+      await addUnit({ type: 'truck', number: '1009', status: 'inactive' });
+      await addUnit({ type: 'trailer', number: 'T-1' });
+      const rows = readRows(dataDir, 'SELECT id, number FROM equipment');
+      const idOf = (number) => {
+        const row = rows.find((item) => item.number === number);
+        assert.ok(row, number);
+        return row.id;
+      };
+      async function createWithTruck(truckId) {
+        return request(srv.port, auth, {
+          method: 'POST',
+          path: '/api/logan/loads',
+          body: JSON.stringify({
+            action: 'draft',
+            driver_id: driverId,
+            truck_id: truckId,
+            destination: 'Yard'
+          })
+        });
+      }
+      const hotshot = await createWithTruck(idOf('1006'));
+      assert.strictEqual(hotshot.status, 201);
+      assert.strictEqual(JSON.parse(hotshot.body).load.truck_id, idOf('1006'));
+      assert.strictEqual(JSON.parse(hotshot.body).load.truck_number, '1006');
+      const oos = await createWithTruck(idOf('1003'));
+      assert.strictEqual(oos.status, 201);
+      assert.strictEqual(JSON.parse(oos.body).load.truck_id, idOf('1003'));
+      const before = readRows(dataDir, 'SELECT COUNT(*) AS n FROM loads')[0].n;
+      for (const number of ['1002', '1008', '1009', 'T-1']) {
+        const denied = await createWithTruck(idOf(number));
+        assert.strictEqual(denied.status, 400, number + ' ' + denied.body);
+        assert.ok(JSON.parse(denied.body).error.includes('hotshot'));
+      }
+      const unknown = await createWithTruck(999999);
+      assert.strictEqual(unknown.status, 400);
+      assert.strictEqual(readRows(dataDir, 'SELECT COUNT(*) AS n FROM loads')[0].n, before);
+      const open = await request(srv.port, auth, {
+        method: 'POST',
+        path: '/api/logan/loads',
+        body: JSON.stringify({ action: 'draft', driver_id: driverId, destination: 'Yard' })
+      });
+      assert.strictEqual(open.status, 201);
+      assert.strictEqual(JSON.parse(open.body).load.truck_id, null);
+    });
+
     await check('API cannot reject, accept, approve, or delete a load', async () => {
       const before = readRows(dataDir, 'SELECT review_decision, review_status, status FROM loads WHERE id = ?', [apiLoadId])[0];
       for (const pathName of [
