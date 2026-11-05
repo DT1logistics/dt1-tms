@@ -3081,6 +3081,7 @@ app.post('/drivers', requireAuth, async (req, res) => {
   const phone = String(req.body.phone || '').trim();
   const place = readAddressParts(req.body);
   const fullName = composeName(firstName, middleInitial, lastName);
+  const sendWelcomeEmail = req.body.send_welcome_email === '1' || req.body.send_welcome_email === 'on';
   const tempPassword = accountSecurity.generatePassword();
   const hash = bcrypt.hashSync(tempPassword, 10);
   try {
@@ -3090,7 +3091,19 @@ app.post('/drivers', requireAuth, async (req, res) => {
     `).run(email, hash, fullName, firstName, middleInitial, lastName, phone, place.address, place.city, place.state, place.zip, req.body.pay_percentage || null, req.body.hire_date, req.body.dob, accountSecurity.sealFromHash(hash));
     rememberTempPassword(req, result.lastInsertRowid, tempPassword);
     const welcome = buildWelcomeEmail({ name: fullName, email, tempPassword, phone });
-    const delivery = await deliverWelcome(welcome, phone, 'both');
+    const delivery = sendWelcomeEmail
+      ? await deliverWelcome(welcome, phone, 'email')
+      : {
+          sent: false,
+          smtpConfigured: notificationStatus().email,
+          smtpError: false,
+          emailAttempted: false,
+          smsSent: false,
+          smsConfigured: notificationStatus().sms,
+          smsError: false,
+          smsStatus: 'Not sent',
+          smsAttempted: false
+        };
     res.render('driver-created', {
       user: req.session.user,
       email,
