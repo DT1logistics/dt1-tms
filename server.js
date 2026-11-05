@@ -1182,14 +1182,16 @@ function collectDriverLevels(driverId, hrefs) {
     return levels;
   }
 
-  const equipment = db.prepare(`
+  // Keep this off the name `equipment`. That identifier is the ./lib/equipment module,
+  // and shadowing it makes equipmentTypeLabel throw when a driver has assigned units.
+  const assignedUnits = db.prepare(`
     SELECT DISTINCT e.*
     FROM loads l
     JOIN equipment e ON e.id = l.truck_id
     WHERE l.driver_id = ?
     ORDER BY e.number
   `).all(driverId);
-  equipment.forEach((item) => {
+  assignedUnits.forEach((item) => {
     const assessed = assessEquipment(item);
     const label = `${equipment.equipmentTypeLabel(item.type)} ${item.number || ''}`.trim();
     levels.push({
