@@ -26,6 +26,11 @@
       <input type="email" name="email" required>
       <label>Driver Percentage Pay (%)</label>
       <input type="number" step="0.01" name="pay_percentage" placeholder="e.g. 25">
+      <label class="check">
+        <input type="checkbox" id="send_welcome_email" name="send_welcome_email" value="1">
+        <span>Send Welcome Email</span>
+      </label>
+      <p class="muted">Save Profile sends nothing unless Send Welcome Email is checked. You can send the welcome email or text later from the driver&rsquo;s page.</p>
       <button type="submit">Save Profile</button>
     </form>
 <%- include('partials/close') %>

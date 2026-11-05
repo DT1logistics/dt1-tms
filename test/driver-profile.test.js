@@ -43,6 +43,14 @@ function cookieHeader(res) {
   return raw.map((item) => item.split(';')[0]).join('; ');
 }
 
+function statusBlock(body, start, end) {
+  const from = body.indexOf(start);
+  assert.ok(from >= 0, `missing ${start}`);
+  const to = body.indexOf(end, from + start.length);
+  assert.ok(to > from, `missing ${end} after ${start}`);
+  return body.slice(from, to);
+}
+
 function startServer(env) {
   return new Promise((resolve, reject) => {
     const port = 20000 + Math.floor(Math.random() * 20000);
@@ -134,7 +142,12 @@ async function main() {
   const env = {
     DATA_DIR: dataDir,
     LOGAN_TMS_PASSWORD: password,
-    SESSION_SECRET: 'driver-profile-test-secret'
+    SESSION_SECRET: 'driver-profile-test-secret',
+    SMTP_HOST: '127.0.0.1',
+    SMTP_PORT: '1',
+    SMTP_USER: 'welcome-test',
+    SMTP_PASS: 'welcome-test',
+    SMTP_CONNECTION_TIMEOUT_MS: '500'
   };
   let server = null;
   try {
@@ -178,11 +191,111 @@ async function main() {
     assert.ok(empty.body.includes('CDL License'));
     assert.ok(!empty.body.includes('Hotshot 1006'));
     assert.ok(!empty.body.includes('Truck 441'));
+
+    const form = await httpCall(server.port, { path: '/drivers/new', headers: { Cookie: cookie } });
+    assert.strictEqual(form.status, 200, form.body.slice(0, 500));
+    const emailInput = form.body.match(/<input[^>]*name="email"[^>]*>/);
+    assert.ok(emailInput, 'email field missing from new driver form');
+    assert.ok(emailInput[0].includes('type="email"'));
+    assert.ok(emailInput[0].includes('required'), 'email must stay required');
+    const welcomeBox = form.body.match(/<input[^>]*name="send_welcome_email"[^>]*>/);
+    assert.ok(welcomeBox, 'Send Welcome Email checkbox missing');
+    assert.ok(welcomeBox[0].includes('value="1"'));
+    assert.ok(!/\schecked(?:\s|>|=)/.test(welcomeBox[0]), 'Send Welcome Email must be unchecked by default');
+    assert.ok(form.body.includes('Send Welcome Email'));
+
+    const quiet = await httpCall(server.port, {
+      method: 'POST',
+      path: '/drivers',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+      body: formBody({
+        hire_date: '2026-11-01',
+        first_name: 'Quiet',
+        last_name: 'Driver',
+        email: 'quiet.driver@example.com',
+        phone: '5555550199'
+      })
+    });
+    assert.strictEqual(quiet.status, 200, quiet.body.slice(0, 800));
+    assert.ok(quiet.body.includes('Driver Created'));
+    assert.ok(quiet.body.includes('quiet.driver@example.com'));
+    const quietTemp = (quiet.body.match(/<div class="temp">([^<]+)<\/div>/) || [])[1];
+    assert.ok(quietTemp && quietTemp.length >= 8);
+    assert.ok(quiet.body.includes(`Temporary password:</strong> ${quietTemp}`));
+    const quietEmail = statusBlock(quiet.body, 'Welcome Email Sent:', 'Welcome Text (SMS) Status:');
+    assert.ok(quietEmail.includes('Not sent'), quietEmail);
+    assert.ok(!quietEmail.includes('could not be sent'), quietEmail);
+    assert.ok(!quietEmail.includes('email delivery is not configured'), quietEmail);
+    const quietSms = statusBlock(quiet.body, 'Welcome Text (SMS) Status:', 'welcome-source');
+    assert.ok(quietSms.includes('Not sent'), quietSms);
+    assert.ok(!quietSms.includes('Not configured'), quietSms);
+    assert.ok(quiet.body.includes('Send Welcome Email &amp; Text'));
+    assert.ok(quiet.body.includes('name="channel" value="email"'));
+    assert.ok(quiet.body.includes('name="channel" value="sms"'));
+
+    const savedDb = new Database(path.join(dataDir, 'dt1.db'), { readonly: true });
+    const quietRow = savedDb.prepare("SELECT id, email, role, must_change_password FROM users WHERE email = 'quiet.driver@example.com'").get();
+    savedDb.close();
+    assert.ok(quietRow, 'driver was not saved when welcome was skipped');
+    assert.strictEqual(quietRow.role, 'driver');
+    assert.strictEqual(quietRow.must_change_password, 1);
+    assert.ok(quiet.body.includes(`action="/drivers/${quietRow.id}/send-welcome"`));
+
+    const listed = await httpCall(server.port, { path: '/drivers', headers: { Cookie: cookie } });
+    assert.strictEqual(listed.status, 200);
+    assert.ok(listed.body.includes('Quiet Driver'));
+
+    const quietProfile = await httpCall(server.port, {
+      path: `/drivers/${quietRow.id}`,
+      headers: { Cookie: cookie }
+    });
+    assert.strictEqual(quietProfile.status, 200, quietProfile.body.slice(0, 500));
+    assert.ok(quietProfile.body.includes(`action="/drivers/${quietRow.id}/send-welcome"`));
+    assert.ok(quietProfile.body.includes('name="channel" value="both"'));
+
+    const later = await httpCall(server.port, {
+      method: 'POST',
+      path: `/drivers/${quietRow.id}/send-welcome`,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+      body: formBody({ channel: 'email' })
+    });
+    assert.strictEqual(later.status, 200, later.body.slice(0, 500));
+    const laterEmail = statusBlock(later.body, 'Welcome Email Sent:', 'Welcome Text (SMS) Status:');
+    assert.ok(laterEmail.includes('could not be sent'), laterEmail);
+    const laterSms = statusBlock(later.body, 'Welcome Text (SMS) Status:', 'welcome-source');
+    assert.ok(laterSms.includes('Not sent'), laterSms);
+    assert.ok(!laterSms.includes('Not configured'), laterSms);
+
+    const welcomed = await httpCall(server.port, {
+      method: 'POST',
+      path: '/drivers',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookie },
+      body: formBody({
+        hire_date: '2026-11-01',
+        first_name: 'Welcomed',
+        last_name: 'Driver',
+        email: 'welcomed.driver@example.com',
+        phone: '5555550188',
+        send_welcome_email: '1'
+      })
+    });
+    assert.strictEqual(welcomed.status, 200, welcomed.body.slice(0, 800));
+    assert.ok(welcomed.body.includes('Driver Created'));
+    const welcomedTemp = (welcomed.body.match(/<div class="temp">([^<]+)<\/div>/) || [])[1];
+    assert.ok(welcomedTemp && welcomed.body.includes(`Temporary password:</strong> ${welcomedTemp}`));
+    const welcomedEmail = statusBlock(welcomed.body, 'Welcome Email Sent:', 'Welcome Text (SMS) Status:');
+    assert.ok(welcomedEmail.includes('could not be sent'), welcomedEmail);
+    assert.ok(!welcomedEmail.includes('Not sent'), welcomedEmail);
+    const welcomedSms = statusBlock(welcomed.body, 'Welcome Text (SMS) Status:', 'welcome-source');
+    assert.ok(welcomedSms.includes('Not sent'), welcomedSms);
+    assert.ok(!welcomedSms.includes('Not configured'), welcomedSms);
+    assert.ok(!welcomedSms.includes('Sent via'), welcomedSms);
   } finally {
     if (server) await stopServer(server.child);
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
   console.log('ok - driver profile renders assigned truck and hotshot labels');
+  console.log('ok - new driver save sends a welcome email only when Send Welcome Email is checked');
 }
 
 main().catch((err) => {
