@@ -177,7 +177,7 @@
       <label for="edit_destination">Destination</label>
       <input type="text" name="destination" id="edit_destination" value="<%= load.destination || load.description || '' %>" placeholder="Delivery location / jobsite destination">
       <label for="edit_load_notes">Notes <span class="shared-notes-badge">Visible to Admin &amp; Driver</span></label>
-      <textarea name="notes" id="edit_load_notes" class="load-notes-input" rows="3" maxlength="2000" placeholder="Notes for this load (Admin and Driver can both see these)"><%= load.notes || load.admin_notes || '' %></textarea>
+      <textarea name="notes" id="edit_load_notes" class="load-notes-input" rows="2" maxlength="2000" placeholder="Notes for this load (Admin and Driver can both see these)"><%= load.notes || load.admin_notes || '' %></textarea>
       <% if (trucks && trucks.length) { %>
         <label>Truck</label>
         <select name="truck_id">
