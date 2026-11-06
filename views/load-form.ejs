@@ -1,4 +1,4 @@
-<%- include('partials/open', { title: load && load.id ? 'Edit Load' : 'New Load', user: user, active: load && load.id ? 'loads' : 'new-load', headerTitle: load && load.id ? 'Edit Load' : 'New Load', backHref: '/loads' }) %>
+<%- include('partials/open', { title: load && load.id ? 'Edit Load' : 'New Load', user: user, active: load && load.id ? 'loads' : 'new-load', headerTitle: load && load.id ? 'Edit Load' : 'New Load', backHref: '/loads', bodyClass: 'load-screen' }) %>
 <h1><%= load && load.id ? 'Edit Load' : 'New Load' %></h1>
 <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
 <% if (load && load.status === 'draft' && load.rejection_reason) { %>

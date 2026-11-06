@@ -1,4 +1,4 @@
-<%- include('partials/open', { title: 'Review Load', user: user, active: 'loads', headerTitle: 'Review Load', backHref: '/loads' }) %>
+<%- include('partials/open', { title: 'Review Load', user: user, active: 'loads', headerTitle: 'Review Load', backHref: '/loads', bodyClass: 'load-screen' }) %>
 <h1>Review Load</h1>
 <p>
   <span class="status <%= load.status %>"><%= loadStatusLabel(load.status, load.settlement_status) %></span>

@@ -475,6 +475,12 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   .tabbar svg { width: 18px; height: 18px; }
   .main { margin-left: 0; padding-top: 56px; padding-bottom: 108px; }
   .content { padding: 16px 16px 8px; }
+  /* Load forms only: don't stretch to the viewport, and leave just enough
+     room for the fixed tab bar (about its height plus 12px). */
+  body.load-screen .main {
+    min-height: 0;
+    padding-bottom: 59px;
+  }
 }
 
 .assign-sms-box {
