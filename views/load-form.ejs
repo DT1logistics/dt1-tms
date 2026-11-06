@@ -103,13 +103,21 @@
         <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="20.00" name="self_load_amount" id="self_load_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.self_load_amount != null && Number(load.self_load_amount) > 0 ? Number(load.self_load_amount).toFixed(2) : '20.00' %>">
       </div>
     </div>
-    <div class="self-load-group drive-time-group">
-      <label class="self-check-label" for="has_drive_time">
-        <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
-        <span>Drive Time ($)</span>
-      </label>
-      <div id="drive_time_wrap" class="self-amount-inline" style="<%= load.has_drive_time ? 'display:inline-flex;' : 'display:none;' %>">
-        <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="drive_time_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null && load.drive_time_amount !== '' ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
+    <div class="drive-detention-pair">
+      <div class="self-load-group drive-time-group">
+        <label class="self-check-label" for="has_drive_time">
+          <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
+          <span>Drive Time ($)</span>
+        </label>
+        <div id="drive_time_wrap" class="self-amount-inline" style="<%= load.has_drive_time ? 'display:inline-flex;' : 'display:none;' %>">
+          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="drive_time_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null && load.drive_time_amount !== '' ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
+        </div>
+      </div>
+      <div class="self-load-group">
+        <label class="self-check-label" for="detention">
+          <input type="checkbox" name="detention" id="detention" value="1" <%= load.detention ? 'checked' : '' %>>
+          <span>Detention</span>
+        </label>
       </div>
     </div>
     <% if (user.role === 'admin') { %>
@@ -122,17 +130,9 @@
     </div>
     <% } %>
   </div>
-  <div class="load-self-row">
-    <div class="self-load-group">
-      <label class="self-check-label" for="detention">
-        <input type="checkbox" name="detention" id="detention" value="1" <%= load.detention ? 'checked' : '' %>>
-        <span>Detention</span>
-      </label>
-      <div id="detention_wrap" class="self-amount-inline" style="<%= load.detention ? 'display:inline-flex;' : 'display:none;' %>">
-        <label for="detention_amount">Detention Amount ($)</label>
-        <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
-      </div>
-    </div>
+  <div id="detention_wrap" class="detention-amount-row" style="<%= load.detention ? '' : 'display:none;' %>">
+    <label for="detention_amount">Detention Amount ($)</label>
+    <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
   </div>
   <div class="load-totals-row">
     <div class="load-total-under" id="load_total">Load Total: $0.00</div>
@@ -478,7 +478,7 @@
   function syncDetention() {
     if (!detentionBox || !detentionWrap) return;
     const on = detentionBox.checked;
-    detentionWrap.style.display = on ? 'inline-flex' : 'none';
+    detentionWrap.style.display = on ? 'block' : 'none';
     if (!on && detentionAmount) detentionAmount.value = '';
   }
   if (detentionBox) detentionBox.addEventListener('change', syncDetention);

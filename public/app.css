@@ -622,12 +622,31 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 }
 .load-self-row {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 14px;
   margin-top: 12px;
   margin-bottom: 16px;
   padding: 4px 0;
+}
+.drive-detention-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  flex: 0 1 auto;
+}
+.detention-amount-row {
+  width: 100%;
+  margin: -4px 0 16px;
+}
+.detention-amount-row label {
+  display: block;
+  margin-bottom: 4px;
+}
+.detention-amount-row input {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .self-load-group {
   display: inline-flex;
@@ -718,6 +737,12 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
     margin-top: 10px;
     margin-bottom: 14px;
     padding: 4px 0;
+  }
+  .drive-detention-pair {
+    gap: 8px;
+  }
+  .detention-amount-row {
+    margin-top: 0;
   }
   #loadForm .self-load-group {
     gap: 5px;
