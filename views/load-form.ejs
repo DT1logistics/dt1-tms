@@ -73,7 +73,7 @@
   <label for="destination">Destination</label>
   <input type="text" name="destination" id="destination" value="<%= load.destination || load.description || '' %>" placeholder="Delivery location / jobsite destination">
   <label for="load_notes">Notes <span class="shared-notes-badge">Visible to Admin &amp; Driver</span></label>
-  <textarea name="notes" id="load_notes" class="load-notes-input" rows="3" maxlength="2000" placeholder="Notes for this load (Admin and Driver can both see these)"><%= load.notes || load.admin_notes || '' %></textarea>
+  <textarea name="notes" id="load_notes" class="load-notes-input" rows="2" maxlength="2000" placeholder="Notes for this load (Admin and Driver can both see these)"><%= load.notes || load.admin_notes || '' %></textarea>
   <% if (trucks && trucks.length) { %>
     <label>Truck</label>
     <select name="truck_id">
@@ -144,7 +144,6 @@
     <div class="load-total-under fuel-total-under" id="fuel_surcharge_total" title="Uses the fuel rate for the Load Date's week: Load Rate × FSC % × Wet Tons"><% const fscNow = loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []); %><%= !Number(load.has_fuel_surcharge) ? 'Fuel Surcharge Total: $0.00' : (fscNow.pending ? 'Fuel Surcharge Total: Rate pending ($0.00)' : 'Fuel Surcharge Total: $' + money(fscNow.total) + ' @ ' + Number(fscNow.percent).toFixed(2) + '%') %></div>
     <% } %>
   </div>
-  <% if (user.role !== 'admin') { %><p class="muted compact-hint">Rate comes from the project. An admin can change it.</p><% } %>
   <% if (user.role === 'admin') { %>
     <label for="driver_pay_type">Driver Pay Basis / Type</label>
     <select name="driver_pay_type" id="driver_pay_type">

@@ -817,7 +817,7 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   border-radius: 999px;
   vertical-align: middle;
 }
-.load-notes-input { min-height: 72px; resize: vertical; }
+.load-notes-input { min-height: 48px; resize: vertical; }
 .load-notes-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .load-notes-view .load-notes-text { margin-top: 4px; }
 
