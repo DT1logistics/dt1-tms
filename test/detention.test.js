@@ -218,6 +218,27 @@ function writeDb(dataDir, fn) {
       assert.ok(list.body.includes('Driver Pay: $55.24'));
     });
 
+    await check('load total includes drive time and excludes detention when self load is off', async () => {
+      const res = await postLoad({
+        action: 'draft',
+        ticket_number: 'DET-HAUL',
+        has_drive_time: '1',
+        drive_time_amount: '15',
+        detention: '1',
+        detention_amount: '40'
+      });
+      assert.strictEqual(res.status, 302, res.body.slice(0, 400));
+      const row = readRows(dataDir, 'SELECT has_drive_time, drive_time_amount, has_self_load, detention, detention_amount FROM loads WHERE ticket_number = ?', ['DET-HAUL'])[0];
+      assert.strictEqual(row.has_drive_time, 1);
+      assert.strictEqual(Number(row.drive_time_amount).toFixed(2), '15.00');
+      assert.strictEqual(row.has_self_load, 0);
+      assert.strictEqual(row.detention, 1);
+      assert.strictEqual(Number(row.detention_amount).toFixed(2), '40.00');
+      const detail = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: `/loads/${readRows(dataDir, "SELECT id FROM loads WHERE ticket_number = 'DET-HAUL'")[0].id}` });
+      assert.ok(detail.body.includes('<strong>Load Total</strong> $115.00'), detail.body.slice(detail.body.indexOf('Load Total'), 80));
+      assert.ok(!detail.body.includes('$155.00'));
+    });
+
     await check('an unchecked detention box stores no amount and does not change percentage pay', async () => {
       const res = await postLoad({ action: 'draft', ticket_number: 'DET-OFF', detention_amount: '40' });
       assert.strictEqual(res.status, 302, res.body.slice(0, 300));
