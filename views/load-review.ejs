@@ -173,10 +173,16 @@
             <%= String(load.project_id) === String(project.id) ? 'selected' : '' %>><%= project.display_name %></option>
         <% }) %>
       </select>
-      <label for="edit_origin">Origin</label>
-      <input type="text" name="origin" id="edit_origin" value="<%= load.origin || '' %>" placeholder="Pickup location">
-      <label for="edit_destination">Destination</label>
-      <input type="text" name="destination" id="edit_destination" value="<%= load.destination || load.description || '' %>" placeholder="Delivery location / jobsite destination">
+      <div class="origin-destination-row">
+        <div>
+          <label for="edit_origin">Origin</label>
+          <input type="text" name="origin" id="edit_origin" value="<%= load.origin || '' %>" placeholder="Pickup location">
+        </div>
+        <div>
+          <label for="edit_destination">Destination</label>
+          <input type="text" name="destination" id="edit_destination" value="<%= load.destination || load.description || '' %>" placeholder="Delivery location / jobsite destination">
+        </div>
+      </div>
       <label for="edit_load_notes">Notes <span class="shared-notes-badge">Visible to Admin &amp; Driver</span></label>
       <textarea name="notes" id="edit_load_notes" class="load-notes-input" rows="2" maxlength="2000" placeholder="Notes for this load (Admin and Driver can both see these)"><%= load.notes || load.admin_notes || '' %></textarea>
       <% if (trucks && trucks.length) { %>

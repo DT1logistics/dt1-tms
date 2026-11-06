@@ -583,6 +583,26 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   flex: 1 1 auto;
   min-width: 0;
 }
+.origin-destination-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+.origin-destination-row > div {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.origin-destination-row label {
+  margin-top: 0;
+  white-space: nowrap;
+}
+.origin-destination-row input {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
 .load-rate-qty-drive-row {
   display: flex;
   flex-wrap: nowrap;
@@ -720,9 +740,13 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
     font-size: 13px;
   }
   #loadForm .load-date-ticket-row label,
+  #loadForm .origin-destination-row label,
   #loadForm .load-rate-qty-drive-row label,
   #loadForm .load-self-row label {
     margin-top: 0;
+  }
+  .origin-destination-row {
+    gap: 8px;
   }
   #loadForm input,
   #loadForm select,
