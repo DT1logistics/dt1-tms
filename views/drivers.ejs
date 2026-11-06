@@ -1,6 +1,9 @@
 <%- include('partials/open', { title: 'Drivers', user: user, active: 'drivers' }) %>
 <h1>Drivers</h1>
 <p class="muted">Active drivers are listed below. Select a driver to open their profile.</p>
+<% if (complianceFilter === 'attention') { %>
+  <p class="muted">Showing drivers with a CDL or medical card that is out of compliance or expiring soon. <a href="/drivers">Show all drivers</a></p>
+<% } %>
 <a href="/drivers/new" class="btn">+ Add New Driver</a>
 
 <div class="card" id="notification-settings">
@@ -37,6 +40,7 @@
   <p>No active drivers.</p>
 <% } %>
 
+<% if (complianceFilter !== 'attention') { %>
 <details class="inactive-drivers" id="inactive-drivers">
   <summary>Inactive Drivers (<%= inactiveDrivers.length %>)</summary>
   <% if (inactiveDrivers.length) { %>
@@ -47,4 +51,5 @@
     <p>No inactive drivers.</p>
   <% } %>
 </details>
+<% } %>
 <%- include('partials/close') %>

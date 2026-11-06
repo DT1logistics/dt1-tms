@@ -19,6 +19,7 @@ const equipmentPlate = require('./lib/equipment-plate');
 const equipImport = require('./lib/equipment-import');
 const accountSecurity = require('./lib/account-security');
 const equipment = require('./lib/equipment');
+const complianceTiles = require('./lib/compliance-tiles');
 const crypto = require('crypto');
 
 const app = express();
@@ -1221,6 +1222,52 @@ function collectDriverLevels(driverId, hrefs) {
   return levels;
 }
 
+function driverDocumentFlags(driver, docs, href) {
+  return [['cdl', 'CDL License'], ['medical_card', 'Medical Card']].map(([kind, label]) => {
+    const doc = (docs || []).find((item) => item.doc_type === kind);
+    const exp = doc ? doc.expiration_date : null;
+    return {
+      level: getStatusClass(exp),
+      category: 'Driver Document',
+      name: `${driver.name || driver.email} — ${label}`,
+      detail: `${getStatusText(exp)}${exp ? ' · ' + exp : ''}`,
+      href: href || ''
+    };
+  });
+}
+
+function equipmentComplianceFlags(item) {
+  const label = `${equipment.equipmentTypeLabel(item.type)} ${item.number || ''}`.trim();
+  const href = '/equipment';
+  const flags = [];
+  if (item.maintenance_status === 'out_of_service') {
+    flags.push({ level: 'red', category: 'Equipment', name: label, detail: 'Out of service', href });
+  } else if (item.maintenance_status === 'maintenance') {
+    flags.push({ level: 'yellow', category: 'Equipment', name: label, detail: 'In maintenance', href });
+  }
+  // A registration or inspection date is flagged only when one is stored.
+  // Missing dates are not alerts. Unit number does not change that.
+  if (item.registration_expiration) {
+    flags.push({
+      level: getStatusClass(item.registration_expiration),
+      category: 'Equipment',
+      name: `${label} registration`,
+      detail: `${getStatusText(item.registration_expiration)} · ${item.registration_expiration}`,
+      href
+    });
+  }
+  if (item.inspection_expiration) {
+    flags.push({
+      level: getStatusClass(item.inspection_expiration),
+      category: 'Equipment',
+      name: `${label} inspection`,
+      detail: `${getStatusText(item.inspection_expiration)} · ${item.inspection_expiration}`,
+      href
+    });
+  }
+  return flags;
+}
+
 function collectAlerts(user) {
   const alerts = [];
   const drivers = user.role === 'admin'
@@ -1229,18 +1276,9 @@ function collectAlerts(user) {
   const docsFor = db.prepare('SELECT * FROM driver_documents WHERE driver_id = ?');
   drivers.forEach((driver) => {
     const docs = docsFor.all(driver.id);
-    [['cdl', 'CDL License'], ['medical_card', 'Medical Card']].forEach(([kind, label]) => {
-      const doc = docs.find((item) => item.doc_type === kind);
-      const exp = doc ? doc.expiration_date : null;
-      const href = user.role === 'admin' ? `/drivers/${driver.id}` : '/profile';
-      pushAlert(
-        alerts,
-        getStatusClass(exp),
-        'Driver Document',
-        `${driver.name || driver.email} — ${label}`,
-        `${getStatusText(exp)}${exp ? ' · ' + exp : ''}`,
-        href
-      );
+    const href = user.role === 'admin' ? `/drivers/${driver.id}` : '/profile';
+    driverDocumentFlags(driver, docs, href).forEach((flag) => {
+      pushAlert(alerts, flag.level, flag.category, flag.name, flag.detail, flag.href);
     });
   });
 
@@ -1267,32 +1305,9 @@ function collectAlerts(user) {
       );
     });
     db.prepare('SELECT * FROM equipment ORDER BY type, number').all().forEach((item) => {
-      const label = `${equipment.equipmentTypeLabel(item.type)} ${item.number || ''}`.trim();
-      if (item.maintenance_status === 'out_of_service') {
-        pushAlert(alerts, 'red', 'Equipment', label, 'Out of service', '/equipment');
-      } else if (item.maintenance_status === 'maintenance') {
-        pushAlert(alerts, 'yellow', 'Equipment', label, 'In maintenance', '/equipment');
-      }
-      if (item.registration_expiration) {
-        pushAlert(
-          alerts,
-          getStatusClass(item.registration_expiration),
-          'Equipment',
-          `${label} registration`,
-          `${getStatusText(item.registration_expiration)} · ${item.registration_expiration}`,
-          '/equipment'
-        );
-      }
-      if (item.inspection_expiration) {
-        pushAlert(
-          alerts,
-          getStatusClass(item.inspection_expiration),
-          'Equipment',
-          `${label} inspection`,
-          `${getStatusText(item.inspection_expiration)} · ${item.inspection_expiration}`,
-          '/equipment'
-        );
-      }
+      equipmentComplianceFlags(item).forEach((flag) => {
+        pushAlert(alerts, flag.level, flag.category, flag.name, flag.detail, flag.href);
+      });
     });
   }
 
@@ -1371,7 +1386,11 @@ function renderDashboard(req, res) {
     });
   }
   const attention = collectAlerts(req.session.user);
-  res.render('dashboard', { user: req.session.user, ...attention });
+  res.render('dashboard', {
+    user: req.session.user,
+    ...attention,
+    complianceTiles: complianceTiles.buildComplianceTiles(attention.alerts)
+  });
 }
 
 app.get('/', renderDashboard);
@@ -2583,12 +2602,20 @@ app.post('/loads/:id/review-decision', requireAuth, (req, res) => {
 // Admin: Drivers management
 app.get('/drivers', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  const drivers = db.prepare("SELECT id, name, first_name, last_name, email, phone, pay_percentage, status, profile_pic FROM users WHERE role = 'driver' ORDER BY name").all();
+  const complianceFilter = req.query.compliance === 'attention' ? 'attention' : '';
+  let drivers = db.prepare("SELECT id, name, first_name, last_name, email, phone, pay_percentage, status, profile_pic FROM users WHERE role = 'driver' ORDER BY name").all();
+  if (complianceFilter) {
+    const docsFor = db.prepare('SELECT * FROM driver_documents WHERE driver_id = ?');
+    drivers = drivers.filter((driver) => {
+      if ((driver.status || 'active') === 'inactive') return false;
+      return driverDocumentFlags(driver, docsFor.all(driver.id)).some((flag) => flag.level === 'red' || flag.level === 'yellow');
+    });
+  }
   drivers.forEach((driver) => {
     const levels = collectDriverLevels(driver.id, { documentsOnly: true });
     driver.compliance = complianceSummary(levels);
   });
-  res.render('drivers', { user: req.session.user, drivers, notifications: notificationStatus() });
+  res.render('drivers', { user: req.session.user, drivers, notifications: notificationStatus(), complianceFilter });
 });
 
 app.get('/drivers/new', requireAuth, (req, res) => {
@@ -3556,20 +3583,34 @@ function equipmentFormView(req, res, status, equipment, error) {
 app.get('/equipment', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return wantsJson(req) ? res.status(403).json({ error: 'Admin only' }) : res.redirect('/');
   const q = String(req.query.q || '').trim().toLowerCase().replace(/\s+/g, '');
+  const complianceFilter = req.query.compliance === 'attention' ? 'attention' : '';
   const matchesQuery = (item) => {
     if (!q) return true;
     const hay = [item.number, item.vin, item.plate_number, item.plate_state, equipmentPlate.formatPlate(item)]
       .filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, '');
     return hay.includes(q);
   };
-  const trucks = db.prepare("SELECT * FROM equipment WHERE type = 'truck' ORDER BY number").all().filter(matchesQuery);
-  const hotshots = db.prepare("SELECT * FROM equipment WHERE type = 'hotshot' ORDER BY number").all().filter(matchesQuery);
-  const trailers = db.prepare("SELECT * FROM equipment WHERE type = 'trailer' ORDER BY number").all().filter(matchesQuery);
+  const matchesAttention = (item) => {
+    if (!complianceFilter) return true;
+    return equipmentComplianceFlags(item).some((flag) => flag.level === 'red' || flag.level === 'yellow');
+  };
+  const trucks = db.prepare("SELECT * FROM equipment WHERE type = 'truck' ORDER BY number").all().filter((item) => matchesQuery(item) && matchesAttention(item));
+  const hotshots = db.prepare("SELECT * FROM equipment WHERE type = 'hotshot' ORDER BY number").all().filter((item) => matchesQuery(item) && matchesAttention(item));
+  const trailers = db.prepare("SELECT * FROM equipment WHERE type = 'trailer' ORDER BY number").all().filter((item) => matchesQuery(item) && matchesAttention(item));
   if (wantsJson(req)) return res.json({ trucks, hotshots, trailers });
   const expenseYear = expenseReportYear(req);
   const expenseTotals = equipExpenses.totalsByEquipment(
     db.prepare('SELECT equipment_id, expense_date, amount FROM equipment_expenses').all(), expenseYear);
-  res.render('equipment', { user: req.session.user, trucks, hotshots, trailers, expenseTotals, expenseYear, q: req.query.q || '' });
+  res.render('equipment', {
+    user: req.session.user,
+    trucks,
+    hotshots,
+    trailers,
+    expenseTotals,
+    expenseYear,
+    q: req.query.q || '',
+    complianceFilter
+  });
 });
 
 function equipmentRowsForImport() {

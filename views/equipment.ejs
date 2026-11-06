@@ -3,9 +3,13 @@
 <a href="/equipment/new" class="btn">+ Add Equipment</a>
 <a href="/equipment/import" class="btn btn-secondary">Import</a>
 <form class="equipment-filter" method="GET" action="/equipment">
+  <% if (complianceFilter === 'attention') { %><input type="hidden" name="compliance" value="attention"><% } %>
   <label for="equipment_q">Search</label>
   <input id="equipment_q" type="search" name="q" value="<%= typeof q !== 'undefined' ? q : '' %>" placeholder="Number, VIN, or plate">
 </form>
+<% if (complianceFilter === 'attention') { %>
+  <p class="muted">Showing equipment that is out of compliance or expiring soon. <a href="/equipment">Show all equipment</a></p>
+<% } %>
 
 <% function equipmentCard(item) { %>
   <% const plateLabel = formatPlate(item); %>
