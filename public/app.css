@@ -635,14 +635,17 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   gap: 14px;
   flex: 0 1 auto;
 }
+.addon-amount-row,
 .detention-amount-row {
   width: 100%;
-  margin: -4px 0 16px;
+  margin: 0 0 12px;
 }
+.addon-amount-row label,
 .detention-amount-row label {
   display: block;
-  margin-bottom: 4px;
+  margin: 0 0 4px;
 }
+.addon-amount-row input,
 .detention-amount-row input {
   width: 100%;
   max-width: 100%;
@@ -741,8 +744,14 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   .drive-detention-pair {
     gap: 8px;
   }
+  .addon-amount-row,
   .detention-amount-row {
     margin-top: 0;
+  }
+  .addon-amount-row input,
+  .detention-amount-row input {
+    width: 100%;
+    max-width: 100%;
   }
   #loadForm .self-load-group {
     gap: 5px;
