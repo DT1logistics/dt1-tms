@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node test/fuel-surcharge.test.js && node test/equipment-expenses.test.js && node test/backup.test.js && node test/equipment-plate.test.js && node test/equipment-import.test.js && node test/equipment.test.js && node test/driver-profile.test.js && node test/account-security.test.js && node test/logan-review.test.js && node test/quo-webhook.test.js && node test/load-date.test.js && node test/load-origin.test.js"
+    "test": "node test/fuel-surcharge.test.js && node test/equipment-expenses.test.js && node test/backup.test.js && node test/equipment-plate.test.js && node test/equipment-import.test.js && node test/equipment.test.js && node test/driver-profile.test.js && node test/account-security.test.js && node test/compliance-tiles.test.js && node test/logan-review.test.js && node test/quo-webhook.test.js && node test/load-date.test.js && node test/load-origin.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

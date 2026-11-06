@@ -132,6 +132,14 @@ h2 { color: var(--navy); }
 }
 .quick strong { display: block; font-size: 16px; margin-bottom: 6px; }
 .quick span { display: block; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.compliance-tiles { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.quick.quick-alert { border-top-color: #c0392b; }
+.quick.quick-warn { border-top-color: #b8860b; }
+.compliance-counts { display: flex; flex-wrap: nowrap; gap: 6px; align-items: center; }
+.quick .compliance-counts .badge { display: inline-block; font-size: 12px; line-height: 1.3; white-space: nowrap; }
+.quick .compliance-counts .badge.red { color: #721c24; }
+.quick .compliance-counts .badge.yellow { color: #856404; }
+.compliance-clear { display: block; color: var(--muted); font-size: 13px; font-weight: 600; }
 
 .btn, button {
   font: inherit;
