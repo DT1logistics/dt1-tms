@@ -635,21 +635,31 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   gap: 14px;
   flex: 0 1 auto;
 }
-.addon-amount-row,
-.detention-amount-row {
+.addon-amount-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
   width: 100%;
   margin: 0 0 12px;
 }
-.addon-amount-row label,
-.detention-amount-row label {
+.addon-amount {
+  flex: 0 0 auto;
+}
+.addon-amount label {
   display: block;
   margin: 0 0 4px;
+  font-size: 13px;
+  white-space: nowrap;
 }
-.addon-amount-row input,
-.detention-amount-row input {
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
+.addon-amount input {
+  width: 10ch;
+  min-width: 8ch;
+  max-width: 10ch;
+  margin-top: 0;
+  padding: 8px 6px;
+  box-sizing: content-box;
+  text-align: right;
 }
 .self-load-group {
   display: inline-flex;
@@ -744,14 +754,14 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   .drive-detention-pair {
     gap: 8px;
   }
-  .addon-amount-row,
-  .detention-amount-row {
+  .addon-amount-row {
+    gap: 10px 12px;
     margin-top: 0;
   }
-  .addon-amount-row input,
-  .detention-amount-row input {
-    width: 100%;
-    max-width: 100%;
+  #loadForm .addon-amount input {
+    width: 10ch;
+    min-width: 8ch;
+    max-width: 10ch;
   }
   #loadForm .self-load-group {
     gap: 5px;

@@ -227,17 +227,19 @@
           <input type="hidden" name="fuel_surcharge_amount" id="review_fuel_amount" value="<%= Number(load.has_fuel_surcharge) ? money(loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []).total) : '0.00' %>">
         </div>
       </div>
-      <div id="review_self_wrap" class="addon-amount-row" style="<%= load.has_self_load ? '' : 'display:none;' %>">
-        <label for="review_self_amount">Self Load Amount ($)</label>
-        <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="20.00" name="self_load_amount" id="review_self_amount" data-four-dec="1" value="<%= load.self_load_amount != null && Number(load.self_load_amount) > 0 ? Number(load.self_load_amount).toFixed(2) : '20.00' %>">
-      </div>
-      <div id="review_drive_wrap" class="addon-amount-row" style="<%= load.has_drive_time ? '' : 'display:none;' %>">
-        <label for="review_drive_amount">Drive Time Amount ($)</label>
-        <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="review_drive_amount" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
-      </div>
-      <div id="review_detention_wrap" class="addon-amount-row" style="<%= load.detention ? '' : 'display:none;' %>">
-        <label for="review_detention_amount">Detention Amount ($)</label>
-        <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="review_detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
+      <div class="addon-amount-row">
+        <div id="review_self_wrap" class="addon-amount" style="<%= load.has_self_load ? '' : 'display:none;' %>">
+          <label for="review_self_amount">Self Load $</label>
+          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="20.00" name="self_load_amount" id="review_self_amount" data-four-dec="1" value="<%= load.self_load_amount != null && Number(load.self_load_amount) > 0 ? Number(load.self_load_amount).toFixed(2) : '20.00' %>">
+        </div>
+        <div id="review_drive_wrap" class="addon-amount" style="<%= load.has_drive_time ? '' : 'display:none;' %>">
+          <label for="review_drive_amount">Drive Time $</label>
+          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="review_drive_amount" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
+        </div>
+        <div id="review_detention_wrap" class="addon-amount" style="<%= load.detention ? '' : 'display:none;' %>">
+          <label for="review_detention_amount">Detention $</label>
+          <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="review_detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
+        </div>
       </div>
       <div class="load-totals-row">
         <div class="load-total-under" id="review_load_total">Load Total: $<%= money(loadTotalAmount(load)) %></div>

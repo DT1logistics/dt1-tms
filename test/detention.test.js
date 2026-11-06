@@ -177,7 +177,7 @@ function writeDb(dataDir, fn) {
 
     const newForm = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/loads/new' });
     assert.ok(newForm.body.includes('name="detention"'));
-    assert.ok(newForm.body.includes('Detention Amount ($)'));
+    assert.ok(newForm.body.includes('Detention $'));
     assert.ok(newForm.body.includes('id="detention_wrap"'));
     assert.ok(newForm.body.includes('display:none'));
 
