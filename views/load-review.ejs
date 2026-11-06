@@ -93,9 +93,11 @@
 
 <div class="card">
   <div><strong>Ticket #</strong> <%= load.ticket_number || '—' %></div>
-  <div><strong>Date</strong> <%= load.load_date || '—' %></div>
+  <div><strong>Date</strong> <%= formatLoadDate(load.load_date) || '—' %></div>
   <div><strong>Driver</strong> <%= load.driver_name || 'Unassigned' %></div>
   <div><strong>Project</strong> <%= load.project_display || '—' %></div>
+  <div><strong>Trucks</strong> <%= loadTruckLabel(load) || '—' %></div>
+  <div><strong>Origin</strong> <%= load.origin || '—' %></div>
   <div><strong>Destination</strong> <%= load.destination || load.description || '—' %></div>
   <div><strong>Qty/Wet Ton</strong> <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
   <div><strong>Rate</strong> $<%= money(load.rate) %></div>
@@ -170,16 +172,18 @@
             <%= String(load.project_id) === String(project.id) ? 'selected' : '' %>><%= project.display_name %></option>
         <% }) %>
       </select>
+      <label for="edit_origin">Origin</label>
+      <input type="text" name="origin" id="edit_origin" value="<%= load.origin || '' %>" placeholder="Pickup location">
       <label for="edit_destination">Destination</label>
       <input type="text" name="destination" id="edit_destination" value="<%= load.destination || load.description || '' %>" placeholder="Delivery location / jobsite destination">
       <label for="edit_load_notes">Notes <span class="shared-notes-badge">Visible to Admin &amp; Driver</span></label>
       <textarea name="notes" id="edit_load_notes" class="load-notes-input" rows="3" maxlength="2000" placeholder="Notes for this load (Admin and Driver can both see these)"><%= load.notes || load.admin_notes || '' %></textarea>
       <% if (trucks && trucks.length) { %>
-        <label>Truck / Hotshot</label>
+        <label>Truck</label>
         <select name="truck_id">
           <option value="">-- No truck --</option>
           <% trucks.forEach(function (truck) { %>
-            <option value="<%= truck.id %>" <%= String(load.truck_id) === String(truck.id) ? 'selected' : '' %>><%= equipmentPowerLabel(truck) %></option>
+            <option value="<%= truck.id %>" <%= String(load.truck_id) === String(truck.id) ? 'selected' : '' %>><%= loadTruckLabel(truck) %></option>
           <% }) %>
         </select>
       <% } %>
