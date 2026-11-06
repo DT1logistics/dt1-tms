@@ -30,3 +30,16 @@ services:
       # Bearer token for /api/logan (min 32 characters). Unset = those routes are 404.
       - key: LOGAN_API_TOKEN
         sync: false
+      # Quo (formerly OpenPhone) inbound text relay: POST /webhooks/quo/message-received
+      # verifies the signature, then POSTs a short summary to Logan with
+      # Authorization: Bearer <LOGAN_QUO_WEBHOOK_KEY>. Set these in the dashboard.
+      # QUO_DT1_PHONE_NUMBER is optional; unset forwards every message.received.
+      # sync: false is not copied into preview environments.
+      - key: QUO_WEBHOOK_SECRET
+        sync: false
+      - key: LOGAN_QUO_WEBHOOK_URL
+        sync: false
+      - key: LOGAN_QUO_WEBHOOK_KEY
+        sync: false
+      - key: QUO_DT1_PHONE_NUMBER
+        sync: false
