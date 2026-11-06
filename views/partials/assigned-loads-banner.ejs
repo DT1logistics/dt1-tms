@@ -13,8 +13,9 @@
           <div class="assigned-load-info">
             <strong>Load #<%= load.id %><%= load.project_display ? ' — ' + load.project_display : '' %></strong>
             <div class="muted">
-              Date: <%= load.load_date || 'TBD' %>
-              <% if (load.truck_number) { %> · <%= load.truck_type === 'hotshot' ? 'Hotshot' : 'Truck' %>: <%= load.truck_number %><% } %>
+              Date: <%= formatLoadDate(load.load_date) || 'TBD' %>
+              <% if (loadTruckLabel(load)) { %> · <%= loadTruckLabel(load) %><% } %>
+              <% if (load.origin) { %> · Origin: <%= load.origin %><% } %>
               <% if (load.destination || load.description) { %> · Destination: <%= load.destination || load.description %><% } %>
             </div>
           </div>

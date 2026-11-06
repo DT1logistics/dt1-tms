@@ -61,21 +61,25 @@
         data-drivetime-amount="<%= project.default_drive_time_amount %>"
         data-pay-type="<%= project.default_driver_pay_type === 'flat' ? 'flat' : 'percentage' %>"
         data-flat-rate="<%= project.default_driver_flat_rate || 0 %>"
+        data-customer="<%= project.customer_name || '' %>"
+        data-project-name="<%= project.project_name || '' %>"
         <%= String(load.project_id) === String(project.id) ? 'selected' : '' %>>
         <%= project.display_name %>
       </option>
     <% }) %>
   </select>
+  <label for="origin">Origin</label>
+  <input type="text" name="origin" id="origin" value="<%= load.origin || '' %>" placeholder="Pickup location">
   <label for="destination">Destination</label>
   <input type="text" name="destination" id="destination" value="<%= load.destination || load.description || '' %>" placeholder="Delivery location / jobsite destination">
   <label for="load_notes">Notes <span class="shared-notes-badge">Visible to Admin &amp; Driver</span></label>
   <textarea name="notes" id="load_notes" class="load-notes-input" rows="3" maxlength="2000" placeholder="Notes for this load (Admin and Driver can both see these)"><%= load.notes || load.admin_notes || '' %></textarea>
   <% if (trucks && trucks.length) { %>
-    <label>Truck / Hotshot</label>
+    <label>Truck</label>
     <select name="truck_id">
       <option value="">-- No truck --</option>
       <% trucks.forEach(function (truck) { %>
-        <option value="<%= truck.id %>" <%= String(load.truck_id) === String(truck.id) ? 'selected' : '' %>><%= equipmentPowerLabel(truck) %></option>
+        <option value="<%= truck.id %>" <%= String(load.truck_id) === String(truck.id) ? 'selected' : '' %>><%= loadTruckLabel(truck) %></option>
       <% }) %>
     </select>
   <% } %>
@@ -188,6 +192,7 @@
   </div>
 </form>
 <script src="/js/fuel-surcharge.js"></script>
+<script src="/js/load-date.js"></script>
 <script>
   // Prevent duplicate loads from repeated clicks while the server is still saving.
   (function () {
@@ -270,9 +275,50 @@
     selfWrap.style.display = selfInput.checked ? 'inline-flex' : 'none';
   }
 
+  const isNewLoad = <%= load && load.id ? 'false' : 'true' %>;
+  const originInput = document.querySelector('input[name="origin"]');
+  const destInputForDefault = document.querySelector('input[name="destination"]');
+  let originEdited = false;
+  let destinationEdited = false;
+  let lastOriginPrefill = '';
+  let lastDestinationPrefill = '';
+  if (originInput) originInput.addEventListener('input', () => { originEdited = true; });
+  if (destInputForDefault) destInputForDefault.addEventListener('input', () => { destinationEdited = true; });
+
+  function applyUberFreightPrefill() {
+    if (!isNewLoad || !projectSelect) return;
+    const opt = projectSelect.options[projectSelect.selectedIndex];
+    const customer = String(opt && opt.getAttribute('data-customer') || '').trim().toLowerCase();
+    const projectName = String(opt && opt.getAttribute('data-project-name') || '').trim();
+    const uber = !!(opt && opt.value && customer === 'uber freight');
+    if (originInput && !originEdited) {
+      const current = String(originInput.value || '').trim();
+      if (uber && (current === '' || current === lastOriginPrefill)) {
+        originInput.value = 'Sandston';
+        lastOriginPrefill = 'Sandston';
+      } else if (!uber && lastOriginPrefill && current === lastOriginPrefill) {
+        originInput.value = '';
+        lastOriginPrefill = '';
+      }
+    }
+    if (destInputForDefault && !destinationEdited) {
+      const current = String(destInputForDefault.value || '').trim();
+      if (uber && projectName && (current === '' || current === lastDestinationPrefill)) {
+        destInputForDefault.value = projectName;
+        lastDestinationPrefill = projectName;
+      } else if (!uber && lastDestinationPrefill && current === lastDestinationPrefill) {
+        destInputForDefault.value = '';
+        lastDestinationPrefill = '';
+      }
+    }
+  }
+
   function applyProject() {
     const opt = projectSelect.options[projectSelect.selectedIndex];
-    if (!opt || !opt.value) return;
+    if (!opt || !opt.value) {
+      applyUberFreightPrefill();
+      return;
+    }
     rateInput.value = money(opt.getAttribute('data-rate'));
     if (fscInput) fscInput.checked = opt.getAttribute('data-fsc') === '1';
     const payType = document.getElementById('driver_pay_type');
@@ -287,6 +333,7 @@
     driveAmount.value = hasDrive ? money(opt.getAttribute('data-drivetime-amount')) : '0.00';
     syncDriveWrap();
     syncLoadTotal();
+    applyUberFreightPrefill();
   }
 
   const qtyInput = document.getElementById('weight_quantity');
@@ -448,24 +495,29 @@
   function buildAssignSmsPreview() {
     if (!smsPreviewEl || smsPreviewDirty) return;
     const dateInput = document.querySelector('input[name="load_date"]');
-    const loadDate = dateInput && dateInput.value ? dateInput.value : '';
+    const rawLoadDate = dateInput && dateInput.value ? dateInput.value : '';
+    const loadDate = rawLoadDate && window.DT1LoadDate ? window.DT1LoadDate.formatLoadDate(rawLoadDate) : rawLoadDate;
     const projOpt = projectSelect && projectSelect.options ? projectSelect.options[projectSelect.selectedIndex] : null;
     const projName = projOpt && projOpt.value ? projOpt.text.replace(/\s*\(\$[0-9.]+\)\s*$/, '').trim() : '';
     const truckSelect = document.querySelector('select[name="truck_id"]');
     const truckOpt = truckSelect && truckSelect.options ? truckSelect.options[truckSelect.selectedIndex] : null;
-    const truckRaw = truckOpt && truckOpt.value ? truckOpt.text.split('—')[0].trim() : '';
-    const truckText = !truckRaw ? '' : (/^hotshot\b/i.test(truckRaw) ? truckRaw : ('Truck ' + truckRaw));
+    const truckText = truckOpt && truckOpt.value ? truckOpt.text.trim() : '';
     const destInput = document.querySelector('input[name="destination"]');
     const dest = destInput && destInput.value ? destInput.value.trim() : '';
+    const pickup = originInput && originInput.value ? originInput.value.trim() : '';
     const details = [];
     if (loadDate) details.push('for ' + loadDate);
     if (projName) details.push(projName);
     if (truckText) details.push(truckText);
-    if (dest) details.push('Destination: ' + dest);
+    if (pickup && dest) details.push(pickup + ' -> ' + dest);
+    else if (dest) details.push('Destination: ' + dest);
+    else if (pickup) details.push('Origin: ' + pickup);
     const detailText = details.length ? (' (' + details.join(' — ') + ')') : '';
     smsPreviewEl.value = 'DT1 Logistics has assigned you a new Load' + detailText + '. Open the DT1 TMS app to review, complete, and submit your load ticket: https://dt1-tms.onrender.com/loads';
   }
-  ['input[name="load_date"]', 'select[name="project_id"]', 'select[name="truck_id"]', 'input[name="destination"]'].forEach((sel) => {
+  applyUberFreightPrefill();
+
+  ['input[name="load_date"]', 'select[name="project_id"]', 'select[name="truck_id"]', 'input[name="origin"]', 'input[name="destination"]'].forEach((sel) => {
     const el = document.querySelector(sel);
     if (el) {
       el.addEventListener('change', buildAssignSmsPreview);
