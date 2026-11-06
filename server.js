@@ -11,6 +11,7 @@ const fuelCalc = require('./lib/fuel-surcharge');
 const loadDate = require('./lib/load-date');
 const loadReview = require('./lib/load-review');
 const loganWebhook = require('./lib/logan-webhook');
+const quoWebhook = require('./lib/quo-webhook');
 const loganApi = require('./lib/logan-api');
 const equipExpenses = require('./lib/equipment-expenses');
 const backup = require('./lib/backup');
@@ -33,6 +34,10 @@ const SNAPSHOT_KEY = 'dt1:sqlite:snapshot:v1';
 let db;
 
 // Middleware
+// Quo signs the exact request bytes. This route is registered before the JSON
+// parser and before the login session, so an inbound text is verified as Quo
+// sent it and does not require a cookie.
+quoWebhook.mount(app);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {

@@ -76,6 +76,46 @@ Reject and accept stay on the admin load page (`POST /loads/:id/review-decision`
 
 On Render, set `LOGAN_WEBHOOK_URL`, `LOGAN_WEBHOOK_KEY`, and `LOGAN_API_TOKEN` in the service dashboard. They are listed in `render.yaml` with `sync: false`, so a Blueprint sync does not fill them in and preview environments do not receive them.
 
+## Quo inbound texts
+
+Quo (formerly OpenPhone) can notify this app when a text arrives on the DT1 line. The app checks Quo's signature, then forwards a short summary to Logan's Grok Bot routine. The message text is not written to the database.
+
+`POST /webhooks/quo/message-received`
+
+No login is required. Quo signs the raw body, so the app reads those exact bytes before it parses the JSON.
+
+Current Quo webhooks (API `2026-03-30`) send three headers: `webhook-id`, `webhook-timestamp`, and `webhook-signature`. The signature is a space-separated list of `v1,<base64 HMAC-SHA256>` values over `{webhook-id}.{webhook-timestamp}.{raw body}`. The signing secret looks like `whsec_<base64>`; the HMAC key is the base64-decoded part after `whsec_`. Older OpenPhone webhooks send one header, `openphone-signature`, formatted `hmac;1;<timestamp>;<base64 signature>`, over `{timestamp}.{raw body}` with the base64-decoded secret as the key. This endpoint accepts either scheme. A signature that does not match, or a timestamp more than 5 minutes from now, returns `401` and nothing is forwarded.
+
+Only a `message.received` event is forwarded. Any other event type returns `200` and is ignored. When `QUO_DT1_PHONE_NUMBER` is set (for example `+18042592256`), only texts whose `to` number is that line are forwarded; other numbers return `200` and are ignored. Leave it unset to forward every inbound text. The same delivery is forwarded once; a retry with the same `webhook-id` or message id is ignored for about 10 minutes.
+
+The JSON posted to Logan is:
+
+```json
+{
+  "source": "quo",
+  "line": "+18042592256",
+  "from": "+15550001111",
+  "to": "+18042592256",
+  "body": "Need a truck at the yard",
+  "receivedAt": "2026-04-13T12:00:00.000Z",
+  "conversationId": "CN123",
+  "messageId": "AC-message"
+}
+```
+
+`LOGAN_QUO_WEBHOOK_KEY` is sent as `Authorization: Bearer <key>`, the same way the load webhook sends `LOGAN_WEBHOOK_KEY`. The app answers Quo with `200` without waiting for Logan. That forward uses one short attempt. The log line includes the message id and whether the forward succeeded or failed. It does not include the text, the signing secret, or the routine key.
+
+If `QUO_WEBHOOK_SECRET`, `LOGAN_QUO_WEBHOOK_URL`, or `LOGAN_QUO_WEBHOOK_KEY` is missing, the endpoint returns `503`.
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `QUO_WEBHOOK_SECRET` | yes | Quo signing secret (`whsec_...`, or the legacy base64 secret) |
+| `LOGAN_QUO_WEBHOOK_URL` | yes | Logan routine URL that receives the summary |
+| `LOGAN_QUO_WEBHOOK_KEY` | yes | Bearer token for that routine |
+| `QUO_DT1_PHONE_NUMBER` | no | Forward only texts to this line, such as `+18042592256` |
+
+On Render, set them in the service dashboard. They are listed in `render.yaml` with `sync: false`, so a Blueprint sync does not fill them in and preview environments do not receive them.
+
 ## Data storage and backups
 
 - `DATA_DIR` (Render: `/var/data`, a 1 GB persistent disk) holds `dt1.db` (SQLite) and `uploads/`.
