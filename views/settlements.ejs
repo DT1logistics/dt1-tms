@@ -86,6 +86,7 @@
             <tr>
               <th>Date</th>
               <th>Ticket #</th>
+              <th>Origin</th>
               <th>Destination</th>
               <th class="num">Qty</th>
               <th class="num">Rate</th>
@@ -98,8 +99,9 @@
           <tbody>
             <% invoice.loads.forEach(function (load) { %>
               <tr>
-                <td><%= load.load_date || '—' %></td>
+                <td><%= formatLoadDate(load.load_date) || '—' %></td>
                 <td><%= load.ticket_number || '—' %></td>
+                <td><%= load.origin || '—' %></td>
                 <td><%= load.destination || load.description || '—' %></td>
                 <td class="num"><%= load.weight_quantity != null ? load.weight_quantity : '—' %></td>
                 <td class="num">$<%= money(load.rate) %></td>

@@ -79,6 +79,38 @@ check('labels distinguish hotshot, sold, total loss, and out of service', () => 
   );
 });
 
+check('load screens label trucks as Truck #unit, with the Ford F350 hotshot suffix', () => {
+  assert.strictEqual(equipment.loadTruckLabel({ type: 'truck', number: '1001', description: 'Cascadia' }), 'Truck #1001');
+  assert.strictEqual(equipment.loadTruckLabel({ type: 'truck', number: '1003', maintenance_status: 'out_of_service' }), 'Truck #1003');
+  assert.strictEqual(
+    equipment.loadTruckLabel({ type: 'hotshot', number: '1006', make: 'Ford', model: 'F350', description: 'Ford F350' }),
+    'Truck #1006 - Ford F350/Hotshot'
+  );
+  assert.strictEqual(
+    equipment.loadTruckLabel({ type: 'hotshot', number: '1006', make: 'ford', model: 'F-350' }),
+    'Truck #1006 - Ford F350/Hotshot'
+  );
+  assert.strictEqual(equipment.loadTruckLabel({ type: 'hotshot', number: '1006' }), 'Truck #1006 - Ford F350/Hotshot');
+  assert.strictEqual(
+    equipment.loadTruckLabel({ truck_number: '1006', truck_type: 'hotshot', truck_make: 'Ford', truck_model: 'F350' }),
+    'Truck #1006 - Ford F350/Hotshot'
+  );
+  assert.strictEqual(
+    equipment.loadTruckLabel({ type: 'hotshot', number: '1008', make: 'Ford', model: 'F350' }),
+    'Truck #1008 - Ford F350/Hotshot'
+  );
+  assert.strictEqual(equipment.loadTruckLabel({ type: 'hotshot', number: '1004', make: 'Ram', model: '2500' }), 'Truck #1004');
+  assert.strictEqual(equipment.loadTruckLabel(null), '');
+  assert.strictEqual(equipment.loadTruckLabel({ type: 'truck', make: 'Ford', model: 'F350' }), '');
+  const row = { type: 'hotshot', number: '1006', make: 'Ford', model: 'F350' };
+  equipment.loadTruckLabel(row);
+  assert.deepStrictEqual(row, { type: 'hotshot', number: '1006', make: 'Ford', model: 'F350' });
+  assert.strictEqual(
+    equipment.equipmentPowerLabel({ type: 'hotshot', number: '1006', description: 'Ford F350' }),
+    'Hotshot 1006 — Ford F350'
+  );
+});
+
 check('new loads can use an active hotshot or out-of-service truck, not sold or total loss', () => {
   const db = oldDatabase();
   const insert = db.prepare(`INSERT INTO equipment (type, number, status, maintenance_status, description) VALUES (?, ?, ?, ?, ?)`);

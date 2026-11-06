@@ -8,6 +8,7 @@ const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 const fuelCalc = require('./lib/fuel-surcharge');
+const loadDate = require('./lib/load-date');
 const loadReview = require('./lib/load-review');
 const loganWebhook = require('./lib/logan-webhook');
 const loganApi = require('./lib/logan-api');
@@ -43,6 +44,7 @@ app.use((req, res, next) => {
 });
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/js/fuel-surcharge.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'fuel-surcharge.js')));
+app.get('/js/load-date.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'load-date.js')));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.locals.money = (n) => (Number(n) || 0).toFixed(2);
@@ -277,12 +279,14 @@ app.locals.loadOriginLabel = loadOriginLabel;
 app.locals.reviewStatusLabel = loadReview.reviewStatusLabel;
 app.locals.reviewStatusClass = loadReview.reviewStatusClass;
 app.locals.settlementWeekLabel = settlementWeekLabel;
+app.locals.formatLoadDate = loadDate.formatLoadDate;
 app.locals.ticketFileKind = ticketFileKind;
 app.locals.formatPlate = equipmentPlate.formatPlate;
 app.locals.equipmentTypeLabel = equipment.equipmentTypeLabel;
 app.locals.equipmentStatusLabel = equipment.equipmentStatusLabel;
 app.locals.equipmentBadges = equipment.equipmentBadges;
 app.locals.equipmentPowerLabel = equipment.equipmentPowerLabel;
+app.locals.loadTruckLabel = equipment.loadTruckLabel;
 app.locals.equipmentChoiceLabel = equipment.equipmentChoiceLabel;
 app.locals.auditStamp = auditStamp;
 
@@ -987,7 +991,7 @@ function readProject(body, customer, existing) {
 
 function activeProjects() {
   return db.prepare(`
-    SELECT p.*
+    SELECT p.*, c.name AS customer_name
     FROM projects p
     JOIN customers c ON c.id = p.customer_id
     WHERE p.status = 'active' AND c.status = 'active'
@@ -1091,7 +1095,7 @@ function resolveLoadEntry(req, existing) {
 
 const loadQuery = `
   SELECT l.*, u.name as driver_name, u.pay_percentage,
-         e.number as truck_number, e.type as truck_type,
+         e.number as truck_number, e.type as truck_type, e.make as truck_make, e.model as truck_model,
          p.display_name as project_display, p.project_name as project_short_name,
          c.name as customer_name, c.address_line1, c.address_line2,
          c.poc_name, c.poc_phone, c.poc_email, c.terms
@@ -1969,11 +1973,31 @@ function findActiveProject(projectId) {
   const id = parseInt(projectId, 10);
   if (!Number.isInteger(id)) return null;
   return db.prepare(`
-    SELECT p.*
+    SELECT p.*, c.name AS customer_name
     FROM projects p
     JOIN customers c ON c.id = p.customer_id
     WHERE p.id = ? AND p.status = 'active' AND c.status = 'active'
   `).get(id) || null;
+}
+
+function isUberFreightCustomer(name) {
+  return String(name || '').trim().toLowerCase() === 'uber freight';
+}
+
+// New loads only. A blank Origin becomes Sandston and a blank Destination becomes the
+// project name when the shipper/customer is Uber Freight. Typed values are kept.
+// Existing loads are never rewritten.
+function applyUberFreightCreateDefaults(values, project, existing) {
+  if (existing || !project || !isUberFreightCustomer(project.customer_name)) return values;
+  if (!values.origin) values.origin = 'Sandston';
+  if (!values.destination) {
+    const projectName = String(project.project_name || '').trim();
+    if (projectName) {
+      values.destination = projectName;
+      if (!values.description) values.description = projectName;
+    }
+  }
+  return values;
 }
 
 function buildLoadValues(req, project, existing) {
@@ -2074,7 +2098,7 @@ function buildLoadValues(req, project, existing) {
     notesVal = blankToNull(rawNotes == null ? rawNotes : String(rawNotes).slice(0, 2000));
   }
 
-  return {
+  return applyUberFreightCreateDefaults({
     ticket_number: keptText(body, 'ticket_number', existing),
     load_date: keptText(body, 'load_date', existing),
     driver_id: driverId || null,
@@ -2095,7 +2119,7 @@ function buildLoadValues(req, project, existing) {
     payType,
     flatRate,
     status: body.action === 'draft' ? 'draft' : 'submitted'
-  };
+  }, project, existing);
 }
 
 function backfillDocumentBlobs() {
@@ -2169,9 +2193,11 @@ function buildAssignedLoadSms(load, customMessage) {
       .replace(`${APP_URL}/loads`, loadLink);
   }
   const parts = [`#${load.id}`];
-  if (load.load_date) parts[0] += ` for ${load.load_date}`;
+  const shownLoadDate = loadDate.formatLoadDate(load.load_date);
+  if (shownLoadDate) parts[0] += ` for ${shownLoadDate}`;
   if (load.project_display) parts.push(load.project_display);
-  if (load.truck_number) parts.push(`${load.truck_type === 'hotshot' ? 'Hotshot' : 'Truck'} ${load.truck_number}`);
+  const truckLabel = equipment.loadTruckLabel(load);
+  if (truckLabel) parts.push(truckLabel);
   const destText = load.destination || load.description || '';
   if (load.origin && destText) {
     parts.push(`${load.origin} -> ${destText}`);
