@@ -145,10 +145,11 @@ function calcDriverPay(load) {
   const base = flat ? (Number(load.driver_flat_rate) || 0) : linehaul * (percentage / 100);
   const drive = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
   const self = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
+  const detention = Number(load.detention) ? (Number(load.detention_amount) || 0) : 0;
   const basis = flat
     ? `Flat Daily Rate: $${base.toFixed(2)}`
     : `${percentage}% of $${linehaul.toFixed(2)}`;
-  return { linehaul, base, drive, self, pay: base + drive + self, percentage, flat, basis };
+  return { linehaul, base, drive, self, detention, pay: base + drive + self + detention, percentage, flat, basis };
 }
 
 function payVisible(load) {
@@ -549,6 +550,8 @@ function initDB() {
       drive_time_amount REAL DEFAULT 0,
       has_self_load INTEGER DEFAULT 0,
       self_load_amount REAL DEFAULT 0,
+      detention INTEGER DEFAULT 0,
+      detention_amount REAL,
       driver_pay_type TEXT DEFAULT 'percentage',
       driver_flat_rate REAL DEFAULT 0,
       status TEXT DEFAULT 'draft',
@@ -737,6 +740,8 @@ function initDB() {
   ensureColumn('loads', 'drive_time_amount', 'REAL DEFAULT 0');
   ensureColumn('loads', 'has_self_load', 'INTEGER DEFAULT 0');
   ensureColumn('loads', 'self_load_amount', 'REAL DEFAULT 0');
+  ensureColumn('loads', 'detention', 'INTEGER DEFAULT 0');
+  ensureColumn('loads', 'detention_amount', 'REAL');
   ensureColumn('loads', 'origin', 'TEXT');
   ensureColumn('loads', 'destination', 'TEXT');
   ensureColumn('loads', 'notes', 'TEXT');
@@ -920,6 +925,35 @@ function initDB() {
 
 function flagValue(value) {
   return value === '1' || value === 'on' || value === 'true' || value === 1 || value === true;
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+// Detention is a yes/no plus an optional dollar amount. Unchecked clears the amount.
+function readDetention(body) {
+  const on = flagValue(body && body.detention);
+  if (!on) return { hasDetention: 0, detentionAmount: null, detentionError: null };
+  const raw = body.detention_amount;
+  if (raw == null || String(raw).trim() === '') {
+    return { hasDetention: 1, detentionAmount: null, detentionError: 'Enter a detention amount of 0.00 or more.' };
+  }
+  const parsed = parseFloat(String(raw).replace(/,/g, ''));
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return { hasDetention: 1, detentionAmount: null, detentionError: 'Detention amount must be 0.00 or more.' };
+  }
+  return { hasDetention: 1, detentionAmount: roundMoney(parsed), detentionError: null };
+}
+
+function recordDetentionAudit(req, loadId, existing, values) {
+  const prevOn = existing && Number(existing.detention) ? 1 : 0;
+  const prevAmt = prevOn && existing.detention_amount != null ? roundMoney(existing.detention_amount) : null;
+  const nextOn = values.hasDetention ? 1 : 0;
+  const nextAmt = nextOn && values.detentionAmount != null ? roundMoney(values.detentionAmount) : null;
+  if (prevOn === nextOn && prevAmt === nextAmt) return;
+  const detail = nextOn ? `Detention $${nextAmt.toFixed(2)}` : 'Detention cleared';
+  logAudit(req, existing ? 'Changed detention' : 'Set detention', 'load', loadId, detail);
 }
 
 function projectNaming(customerName, rawProjectName) {
@@ -2066,6 +2100,7 @@ function buildLoadValues(req, project, existing) {
     if (existing && Number(existing.self_load_amount) > 0) selfAmount = Number(existing.self_load_amount);
     else selfAmount = 20;
   }
+  const detention = readDetention(body);
 
   let weight = existing ? existing.weight_quantity : null;
   if (bodyHas(body, 'weight_quantity') && String(body.weight_quantity).trim() !== '') {
@@ -2140,6 +2175,9 @@ function buildLoadValues(req, project, existing) {
     driveAmount,
     hasSelf,
     selfAmount,
+    hasDetention: detention.hasDetention,
+    detentionAmount: detention.detentionAmount,
+    detentionError: detention.detentionError,
     payType,
     flatRate,
     status: body.action === 'draft' ? 'draft' : 'submitted'
@@ -2413,10 +2451,11 @@ function insertNewLoad(values, entry, actor) {
     INSERT INTO loads (
       ticket_number, load_date, driver_id, truck_id, project_id, description, origin, destination, notes, admin_notes, weight_quantity,
       rate, has_fuel_surcharge, has_drive_time, drive_time_amount, has_self_load, self_load_amount,
+      detention, detention_amount,
       driver_pay_type, driver_flat_rate,
       status, submitted_by, created_by_role, entry_mode,
       review_status, review_set_by, review_set_by_name, review_set_at, created_via
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'needs_review', ?, ?, CURRENT_TIMESTAMP, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'needs_review', ?, ?, CURRENT_TIMESTAMP, ?)
   `).run(
     values.ticket_number,
     values.load_date,
@@ -2435,6 +2474,8 @@ function insertNewLoad(values, entry, actor) {
     values.driveAmount,
     values.hasSelf,
     values.selfAmount,
+    values.hasDetention,
+    values.detentionAmount,
     values.payType,
     values.flatRate,
     entry.status,
@@ -2504,6 +2545,9 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
   const project = findActiveProject(req.body.project_id);
   const values = buildLoadValues(req, project);
   values.status = entry.status;
+  if (values.detentionError) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req), values.detentionError);
+  }
   if (isAdmin && !values.driver_id) {
     return renderLoadForm(req, res, 400, loadFormErrorView(req), 'Select a driver');
   }
@@ -2514,6 +2558,7 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
   stampLoadApproval(loadId, req, entry);
   saveTicketFiles(loadId, req.files, req.session.user.id);
   logAudit(req, entry.auditAction, 'load', loadId, entry.auditDetail);
+  recordDetentionAudit(req, loadId, null, values);
   if (isAdmin && entry.entryMode === 'assigned' && values.driver_id) {
     await notifyAssignedLoadDriver(req, loadId);
     return res.redirect(`/loads/${loadId}?saved=assigned`);
@@ -2534,13 +2579,17 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), 'Select an active project');
   }
   const values = buildLoadValues(req, project, existing);
+  if (values.detentionError) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), values.detentionError);
+  }
   const rejectionReason = entry.status === 'submitted' || entry.status === 'approved' ? null : (existing.rejection_reason || null);
   db.prepare(`
     UPDATE loads
     SET ticket_number = ?, load_date = ?, driver_id = ?, truck_id = ?, project_id = ?, description = ?,
         origin = ?, destination = ?, notes = ?, admin_notes = ?,
         weight_quantity = ?, rate = ?, has_fuel_surcharge = ?, has_drive_time = ?, drive_time_amount = ?,
-        has_self_load = ?, self_load_amount = ?, driver_pay_type = ?, driver_flat_rate = ?, status = ?, rejection_reason = ?,
+        has_self_load = ?, self_load_amount = ?, detention = ?, detention_amount = ?,
+        driver_pay_type = ?, driver_flat_rate = ?, status = ?, rejection_reason = ?,
         created_by_role = ?, entry_mode = ?,
         updated_by = ?, updated_by_name = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ? ${isAdmin ? '' : "AND status = 'draft'"}
@@ -2562,6 +2611,8 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     values.driveAmount,
     values.hasSelf,
     values.selfAmount,
+    values.hasDetention,
+    values.detentionAmount,
     values.payType,
     values.flatRate,
     entry.status,
@@ -2576,6 +2627,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
   removeSelectedTickets(existing.id, req.body);
   saveTicketFiles(existing.id, req.files, req.session.user.id);
   logAudit(req, entry.auditAction, 'load', existing.id, entry.auditDetail);
+  recordDetentionAudit(req, existing.id, existing, values);
   if (isAdmin && entry.entryMode === 'assigned' && entry.status === 'draft' && values.driver_id && req.body.send_assign_sms) {
     await notifyAssignedLoadDriver(req, existing.id);
     return res.redirect(`/loads/${existing.id}?saved=assigned`);
@@ -4246,7 +4298,8 @@ function approvedSettlementWeeks(driverId) {
       total: loads.reduce((sum, load) => sum + load.payInfo.pay, 0),
       base: loads.reduce((sum, load) => sum + load.payInfo.base, 0),
       drive: loads.reduce((sum, load) => sum + load.payInfo.drive, 0),
-      self: loads.reduce((sum, load) => sum + load.payInfo.self, 0)
+      self: loads.reduce((sum, load) => sum + load.payInfo.self, 0),
+      detention: loads.reduce((sum, load) => sum + load.payInfo.detention, 0)
     };
   });
 }
@@ -4607,7 +4660,8 @@ loganApi.mountLoganApi(app, {
   resolveLoadEntry,
   insertNewLoad,
   applyLoadReview,
-  logAudit
+  logAudit,
+  recordDetentionAudit
 });
 
 boot().catch((err) => {

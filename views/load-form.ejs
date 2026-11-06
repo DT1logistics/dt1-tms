@@ -1,4 +1,4 @@
-<%- include('partials/open', { title: load && load.id ? 'Edit Load' : 'New Load', user: user, active: load && load.id ? 'loads' : 'new-load', headerTitle: load && load.id ? 'Edit Load' : 'New Load', backHref: '/loads' }) %>
+<%- include('partials/open', { title: load && load.id ? 'Edit Load' : 'New Load', user: user, active: load && load.id ? 'loads' : 'new-load', headerTitle: load && load.id ? 'Edit Load' : 'New Load', backHref: '/loads', bodyClass: 'load-screen' }) %>
 <h1><%= load && load.id ? 'Edit Load' : 'New Load' %></h1>
 <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
 <% if (load && load.status === 'draft' && load.rejection_reason) { %>
@@ -68,12 +68,18 @@
       </option>
     <% }) %>
   </select>
-  <label for="origin">Origin</label>
-  <input type="text" name="origin" id="origin" value="<%= load.origin || '' %>" placeholder="Pickup location">
-  <label for="destination">Destination</label>
-  <input type="text" name="destination" id="destination" value="<%= load.destination || load.description || '' %>" placeholder="Delivery location / jobsite destination">
+  <div class="origin-destination-row">
+    <div>
+      <label for="origin">Origin</label>
+      <input type="text" name="origin" id="origin" value="<%= load.origin || '' %>" placeholder="Pickup location">
+    </div>
+    <div>
+      <label for="destination">Destination</label>
+      <input type="text" name="destination" id="destination" value="<%= load.destination || load.description || '' %>" placeholder="Delivery location / jobsite destination">
+    </div>
+  </div>
   <label for="load_notes">Notes <span class="shared-notes-badge">Visible to Admin &amp; Driver</span></label>
-  <textarea name="notes" id="load_notes" class="load-notes-input" rows="3" maxlength="2000" placeholder="Notes for this load (Admin and Driver can both see these)"><%= load.notes || load.admin_notes || '' %></textarea>
+  <textarea name="notes" id="load_notes" class="load-notes-input" rows="2" maxlength="2000" placeholder="Notes for this load (Admin and Driver can both see these)"><%= load.notes || load.admin_notes || '' %></textarea>
   <% if (trucks && trucks.length) { %>
     <label>Truck</label>
     <select name="truck_id">
@@ -99,17 +105,19 @@
         <input type="checkbox" name="has_self_load" id="has_self_load" value="1" <%= load.has_self_load ? 'checked' : '' %>>
         <span>Self Load ($)</span>
       </label>
-      <div id="self_load_wrap" class="self-amount-inline" style="<%= load.has_self_load ? 'display:inline-flex;' : 'display:none;' %>">
-        <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="20.00" name="self_load_amount" id="self_load_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.self_load_amount != null && Number(load.self_load_amount) > 0 ? Number(load.self_load_amount).toFixed(2) : '20.00' %>">
-      </div>
     </div>
-    <div class="self-load-group drive-time-group">
-      <label class="self-check-label" for="has_drive_time">
-        <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
-        <span>Drive Time ($)</span>
-      </label>
-      <div id="drive_time_wrap" class="self-amount-inline" style="<%= load.has_drive_time ? 'display:inline-flex;' : 'display:none;' %>">
-        <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="drive_time_amount" class="input-num-4dec" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null && load.drive_time_amount !== '' ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
+    <div class="drive-detention-pair">
+      <div class="self-load-group drive-time-group">
+        <label class="self-check-label" for="has_drive_time">
+          <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
+          <span>Drive Time ($)</span>
+        </label>
+      </div>
+      <div class="self-load-group">
+        <label class="self-check-label" for="detention">
+          <input type="checkbox" name="detention" id="detention" value="1" <%= load.detention ? 'checked' : '' %>>
+          <span>Detention</span>
+        </label>
       </div>
     </div>
     <% if (user.role === 'admin') { %>
@@ -122,13 +130,26 @@
     </div>
     <% } %>
   </div>
+  <div class="addon-amount-row">
+    <div id="self_load_wrap" class="addon-amount" style="<%= load.has_self_load ? '' : 'display:none;' %>">
+      <label for="self_load_amount">Self Load $</label>
+      <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="20.00" name="self_load_amount" id="self_load_amount" data-four-dec="1" value="<%= load.self_load_amount != null && Number(load.self_load_amount) > 0 ? Number(load.self_load_amount).toFixed(2) : '20.00' %>">
+    </div>
+    <div id="drive_time_wrap" class="addon-amount" style="<%= load.has_drive_time ? '' : 'display:none;' %>">
+      <label for="drive_time_amount">Drive Time $</label>
+      <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="drive_time_amount" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null && load.drive_time_amount !== '' ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
+    </div>
+    <div id="detention_wrap" class="addon-amount" style="<%= load.detention ? '' : 'display:none;' %>">
+      <label for="detention_amount">Detention $</label>
+      <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
+    </div>
+  </div>
   <div class="load-totals-row">
     <div class="load-total-under" id="load_total">Load Total: $0.00</div>
     <% if (user.role === 'admin') { %>
     <div class="load-total-under fuel-total-under" id="fuel_surcharge_total" title="Uses the fuel rate for the Load Date's week: Load Rate × FSC % × Wet Tons"><% const fscNow = loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []); %><%= !Number(load.has_fuel_surcharge) ? 'Fuel Surcharge Total: $0.00' : (fscNow.pending ? 'Fuel Surcharge Total: Rate pending ($0.00)' : 'Fuel Surcharge Total: $' + money(fscNow.total) + ' @ ' + Number(fscNow.percent).toFixed(2) + '%') %></div>
     <% } %>
   </div>
-  <% if (user.role !== 'admin') { %><p class="muted compact-hint">Rate comes from the project. An admin can change it.</p><% } %>
   <% if (user.role === 'admin') { %>
     <label for="driver_pay_type">Driver Pay Basis / Type</label>
     <select name="driver_pay_type" id="driver_pay_type">
@@ -139,7 +160,7 @@
       <label for="driver_flat_rate">Driver Flat / Daily Rate ($)</label>
       <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" name="driver_flat_rate" id="driver_flat_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.driver_flat_rate != null && load.driver_flat_rate !== '' ? load.driver_flat_rate : '0.00' %>">
     </div>
-    <p class="muted" id="pay_basis_help">Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load. Fuel surcharge is not included.</p>
+    <p class="muted" id="pay_basis_help">Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load + Detention. Detention is added in full, not as a percentage. Fuel surcharge is not included.</p>
   <% } %>
   <% if (user.role === 'admin' && drivers && drivers.length) { %>
     <label>Driver</label>
@@ -231,7 +252,7 @@
   }
 
   function syncDriveWrap() {
-    driveWrap.style.display = driveInput.checked ? 'inline-flex' : 'none';
+    driveWrap.style.display = driveInput.checked ? 'block' : 'none';
   }
 
   function syncFuelAmount() {
@@ -272,7 +293,7 @@
     if (selfInput.checked && (!selfAmount.value || Number(selfAmount.value) === 0)) {
       selfAmount.value = '20.00';
     }
-    selfWrap.style.display = selfInput.checked ? 'inline-flex' : 'none';
+    selfWrap.style.display = selfInput.checked ? 'block' : 'none';
   }
 
   const isNewLoad = <%= load && load.id ? 'false' : 'true' %>;
@@ -460,6 +481,25 @@
   syncSelfWrap();
   syncLoadTotal();
 
+  const detentionBox = document.getElementById('detention');
+  const detentionAmount = document.getElementById('detention_amount');
+  const detentionWrap = document.getElementById('detention_wrap');
+  function syncDetention() {
+    if (!detentionBox || !detentionWrap) return;
+    const on = detentionBox.checked;
+    detentionWrap.style.display = on ? 'block' : 'none';
+    if (!on && detentionAmount) detentionAmount.value = '';
+  }
+  if (detentionBox) detentionBox.addEventListener('change', syncDetention);
+  if (detentionAmount) {
+    detentionAmount.addEventListener('input', () => {
+      const raw = String(detentionAmount.value || '');
+      const dot = raw.indexOf('.');
+      if (dot >= 0 && raw.length - dot - 1 > 2) detentionAmount.value = raw.slice(0, dot + 3);
+    });
+  }
+  syncDetention();
+
   function syncPayType() {
     const payType = document.getElementById('driver_pay_type');
     const flatWrap = document.getElementById('flat_rate_wrap');
@@ -469,8 +509,8 @@
     flatWrap.style.display = flat ? 'block' : 'none';
     if (payHelp) {
       payHelp.textContent = flat
-        ? 'Driver Pay = Driver Flat / Daily Rate + Drive Time + Self Load. Fuel surcharge is not included. Qty/Wet Ton can be left blank and defaults to 1.'
-        : 'Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load. Fuel surcharge is not included.';
+        ? 'Driver Pay = Driver Flat / Daily Rate + Drive Time + Self Load + Detention. Detention is added in full, not as a percentage. Fuel surcharge is not included. Qty/Wet Ton can be left blank and defaults to 1.'
+        : 'Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load + Detention. Detention is added in full, not as a percentage. Fuel surcharge is not included.';
     }
   }
   const payTypeInput = document.getElementById('driver_pay_type');

@@ -475,6 +475,12 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   .tabbar svg { width: 18px; height: 18px; }
   .main { margin-left: 0; padding-top: 56px; padding-bottom: 108px; }
   .content { padding: 16px 16px 8px; }
+  /* Load forms only: don't stretch to the viewport, and leave just enough
+     room for the fixed tab bar (about its height plus 12px). */
+  body.load-screen .main {
+    min-height: 0;
+    padding-bottom: 59px;
+  }
 }
 
 .assign-sms-box {
@@ -583,6 +589,26 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   flex: 1 1 auto;
   min-width: 0;
 }
+.origin-destination-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+.origin-destination-row > div {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.origin-destination-row label {
+  margin-top: 0;
+  white-space: nowrap;
+}
+.origin-destination-row input {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
 .load-rate-qty-drive-row {
   display: flex;
   flex-wrap: nowrap;
@@ -622,12 +648,44 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 }
 .load-self-row {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 14px;
   margin-top: 12px;
   margin-bottom: 16px;
   padding: 4px 0;
+}
+.drive-detention-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  flex: 0 1 auto;
+}
+.addon-amount-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 16px;
+  width: 100%;
+  margin: 0 0 12px;
+}
+.addon-amount {
+  flex: 0 0 auto;
+}
+.addon-amount label {
+  display: block;
+  margin: 0 0 4px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.addon-amount input {
+  width: 10ch;
+  min-width: 8ch;
+  max-width: 10ch;
+  margin-top: 0;
+  padding: 8px 6px;
+  box-sizing: content-box;
+  text-align: right;
 }
 .self-load-group {
   display: inline-flex;
@@ -688,9 +746,13 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
     font-size: 13px;
   }
   #loadForm .load-date-ticket-row label,
+  #loadForm .origin-destination-row label,
   #loadForm .load-rate-qty-drive-row label,
   #loadForm .load-self-row label {
     margin-top: 0;
+  }
+  .origin-destination-row {
+    gap: 8px;
   }
   #loadForm input,
   #loadForm select,
@@ -718,6 +780,18 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
     margin-top: 10px;
     margin-bottom: 14px;
     padding: 4px 0;
+  }
+  .drive-detention-pair {
+    gap: 8px;
+  }
+  .addon-amount-row {
+    gap: 10px 12px;
+    margin-top: 0;
+  }
+  #loadForm .addon-amount input {
+    width: 10ch;
+    min-width: 8ch;
+    max-width: 10ch;
   }
   #loadForm .self-load-group {
     gap: 5px;
@@ -773,7 +847,7 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   border-radius: 999px;
   vertical-align: middle;
 }
-.load-notes-input { min-height: 72px; resize: vertical; }
+.load-notes-input { min-height: 48px; resize: vertical; }
 .load-notes-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .load-notes-view .load-notes-text { margin-top: 4px; }
 

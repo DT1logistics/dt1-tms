@@ -7,7 +7,7 @@
   <%- include('./head-icons') %>
   <link rel="stylesheet" href="/app.css">
 </head>
-<body>
+<body<% if (typeof bodyClass !== 'undefined' && bodyClass) { %> class="<%= bodyClass %>"<% } %>>
   <% var mobileHeading = (typeof headerTitle !== 'undefined' && headerTitle) ? headerTitle : ''; %>
   <% var mobileBack = (typeof backHref !== 'undefined' && backHref) ? backHref : '/'; %>
   <div class="app-shell">
