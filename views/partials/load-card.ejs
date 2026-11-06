@@ -44,7 +44,7 @@
   <% } %>
   <% if (load.showPay) { %>
     <div class="pay-line">Driver Pay: $<%= money(load.payInfo.pay) %></div>
-    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %></div>
+    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %> · Detention $<%= money(load.payInfo.detention) %></div>
   <% } %>
   <div>Load Ticket/BOL:
     <% if (load.tickets && load.tickets.length) { %>
@@ -66,6 +66,9 @@
   <% } %>
   <% if (Number(load.has_self_load) === 1) { %>
     <div>Self Load: $<%= money(load.self_load_amount) %></div>
+  <% } %>
+  <% if (Number(load.detention) === 1) { %>
+    <div>Detention: $<%= money(load.detention_amount) %></div>
   <% } %>
   <% if (user.role === 'admin') { %><div class="muted">Driver: <%= load.driver_name || 'Unassigned' %></div><% } %>
   <p>

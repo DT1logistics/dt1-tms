@@ -47,7 +47,7 @@
         · Driver Pay $<%= money(group.total) %>
         · Approved
       </div>
-      <div class="muted">Base $<%= money(group.base) %> · Drive Time $<%= money(group.drive) %> · Self Load $<%= money(group.self) %></div>
+      <div class="muted">Base $<%= money(group.base) %> · Drive Time $<%= money(group.drive) %> · Self Load $<%= money(group.self) %> · Detention $<%= money(group.detention) %></div>
       <% if (group.approved_by_name) { %>
         <div class="muted">Approved by <%= group.approved_by_name %><% if (group.approved_at) { %> on <%= auditStamp(group.approved_at) %><% } %></div>
       <% } %>

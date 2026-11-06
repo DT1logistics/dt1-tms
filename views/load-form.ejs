@@ -122,6 +122,18 @@
     </div>
     <% } %>
   </div>
+  <div class="load-self-row">
+    <div class="self-load-group">
+      <label class="self-check-label" for="detention">
+        <input type="checkbox" name="detention" id="detention" value="1" <%= load.detention ? 'checked' : '' %>>
+        <span>Detention</span>
+      </label>
+      <div id="detention_wrap" class="self-amount-inline" style="<%= load.detention ? 'display:inline-flex;' : 'display:none;' %>">
+        <label for="detention_amount">Detention Amount ($)</label>
+        <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
+      </div>
+    </div>
+  </div>
   <div class="load-totals-row">
     <div class="load-total-under" id="load_total">Load Total: $0.00</div>
     <% if (user.role === 'admin') { %>
@@ -139,7 +151,7 @@
       <label for="driver_flat_rate">Driver Flat / Daily Rate ($)</label>
       <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" name="driver_flat_rate" id="driver_flat_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.driver_flat_rate != null && load.driver_flat_rate !== '' ? load.driver_flat_rate : '0.00' %>">
     </div>
-    <p class="muted" id="pay_basis_help">Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load. Fuel surcharge is not included.</p>
+    <p class="muted" id="pay_basis_help">Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load + Detention. Detention is added in full, not as a percentage. Fuel surcharge is not included.</p>
   <% } %>
   <% if (user.role === 'admin' && drivers && drivers.length) { %>
     <label>Driver</label>
@@ -460,6 +472,25 @@
   syncSelfWrap();
   syncLoadTotal();
 
+  const detentionBox = document.getElementById('detention');
+  const detentionAmount = document.getElementById('detention_amount');
+  const detentionWrap = document.getElementById('detention_wrap');
+  function syncDetention() {
+    if (!detentionBox || !detentionWrap) return;
+    const on = detentionBox.checked;
+    detentionWrap.style.display = on ? 'inline-flex' : 'none';
+    if (!on && detentionAmount) detentionAmount.value = '';
+  }
+  if (detentionBox) detentionBox.addEventListener('change', syncDetention);
+  if (detentionAmount) {
+    detentionAmount.addEventListener('input', () => {
+      const raw = String(detentionAmount.value || '');
+      const dot = raw.indexOf('.');
+      if (dot >= 0 && raw.length - dot - 1 > 2) detentionAmount.value = raw.slice(0, dot + 3);
+    });
+  }
+  syncDetention();
+
   function syncPayType() {
     const payType = document.getElementById('driver_pay_type');
     const flatWrap = document.getElementById('flat_rate_wrap');
@@ -469,8 +500,8 @@
     flatWrap.style.display = flat ? 'block' : 'none';
     if (payHelp) {
       payHelp.textContent = flat
-        ? 'Driver Pay = Driver Flat / Daily Rate + Drive Time + Self Load. Fuel surcharge is not included. Qty/Wet Ton can be left blank and defaults to 1.'
-        : 'Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load. Fuel surcharge is not included.';
+        ? 'Driver Pay = Driver Flat / Daily Rate + Drive Time + Self Load + Detention. Detention is added in full, not as a percentage. Fuel surcharge is not included. Qty/Wet Ton can be left blank and defaults to 1.'
+        : 'Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load + Detention. Detention is added in full, not as a percentage. Fuel surcharge is not included.';
     }
   }
   const payTypeInput = document.getElementById('driver_pay_type');

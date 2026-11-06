@@ -107,13 +107,14 @@
   <% } %>
   <% if (load.showPay) { %>
     <div class="pay-line"><strong>Driver Pay</strong> $<%= money(load.payInfo.pay) %></div>
-    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %>. Fuel surcharge is not included.</div>
+    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %> · Detention $<%= money(load.payInfo.detention) %>. Detention is added in full. Fuel surcharge is not included.</div>
   <% } %>
   <% if (user.role === 'admin') { %>
     <div><strong>Fuel Surcharge</strong> <%= Number(load.has_fuel_surcharge) === 1 ? ((function (f) { return f.pending ? 'Yes (Rate pending — $0.00 until this week\'s fuel rate is posted)' : ('Yes ($' + money(f.total) + ' @ ' + Number(f.percent).toFixed(2) + '%, week rate $' + Number(f.dieselRate).toFixed(3) + ' effective ' + f.effectiveDate + ')'); })(loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []))) : 'No' %></div>
   <% } %>
   <div><strong>Drive Time</strong> <%= Number(load.has_drive_time) === 1 ? '$' + money(load.drive_time_amount) : 'No' %></div>
   <div><strong>Self Load</strong> <%= Number(load.has_self_load) === 1 ? '$' + money(load.self_load_amount) : 'No' %></div>
+  <div><strong>Detention</strong> <%= Number(load.detention) === 1 ? '$' + money(load.detention_amount) : 'No' %></div>
   <div class="load-notes-view"><strong>Notes</strong> <span class="shared-notes-badge">Visible to Admin &amp; Driver</span>
     <div class="load-notes-text"><%= load.notes || load.admin_notes || '—' %></div>
   </div>
@@ -222,6 +223,18 @@
             <span>Fuel Surcharge</span>
           </label>
           <input type="hidden" name="fuel_surcharge_amount" id="review_fuel_amount" value="<%= Number(load.has_fuel_surcharge) ? money(loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []).total) : '0.00' %>">
+        </div>
+      </div>
+      <div class="load-self-row">
+        <div class="self-load-group">
+          <label class="self-check-label" for="review_detention">
+            <input type="checkbox" name="detention" id="review_detention" value="1" <%= load.detention ? 'checked' : '' %>>
+            <span>Detention</span>
+          </label>
+          <div id="review_detention_wrap" class="self-amount-inline" style="<%= load.detention ? 'display:inline-flex;' : 'display:none;' %>">
+            <label for="review_detention_amount">Detention Amount ($)</label>
+            <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="review_detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
+          </div>
         </div>
       </div>
       <div class="load-totals-row">
@@ -470,8 +483,8 @@
     flatWrap.style.display = flat ? 'block' : 'none';
     if (payHelp) {
       payHelp.textContent = flat
-        ? 'Driver Pay = Driver Flat / Daily Rate + Drive Time + Self Load. Fuel surcharge is not included.'
-        : 'Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load. Fuel surcharge is not included.';
+        ? 'Driver Pay = Driver Flat / Daily Rate + Drive Time + Self Load + Detention. Detention is added in full, not as a percentage. Fuel surcharge is not included.'
+        : 'Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load + Detention. Detention is added in full, not as a percentage. Fuel surcharge is not included.';
     }
     syncReviewLoadTotal();
   }
@@ -482,5 +495,24 @@
   syncReviewDriveWrap();
   syncReviewSelfWrap();
   syncReviewLoadTotal();
+
+  const reviewDetention = document.getElementById('review_detention');
+  const reviewDetentionAmount = document.getElementById('review_detention_amount');
+  const reviewDetentionWrap = document.getElementById('review_detention_wrap');
+  function syncReviewDetention() {
+    if (!reviewDetention || !reviewDetentionWrap) return;
+    const on = reviewDetention.checked;
+    reviewDetentionWrap.style.display = on ? 'inline-flex' : 'none';
+    if (!on && reviewDetentionAmount) reviewDetentionAmount.value = '';
+  }
+  if (reviewDetention) reviewDetention.addEventListener('change', syncReviewDetention);
+  if (reviewDetentionAmount) {
+    reviewDetentionAmount.addEventListener('input', () => {
+      const raw = String(reviewDetentionAmount.value || '');
+      const dot = raw.indexOf('.');
+      if (dot >= 0 && raw.length - dot - 1 > 2) reviewDetentionAmount.value = raw.slice(0, dot + 3);
+    });
+  }
+  syncReviewDetention();
 </script>
 <%- include('partials/close') %>
