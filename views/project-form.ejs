@@ -2,16 +2,16 @@
 <h1><%= project && project.id ? 'Edit Project' : 'Add Project' %></h1>
 <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
     <form method="POST" action="<%= project && project.id ? '/projects/' + project.id : '/projects' %>">
-      <label>Customer</label>
+      <label>Shipper</label>
       <select name="customer_id" required>
-        <option value="">-- Select Customer --</option>
+        <option value="">-- Select Shipper --</option>
         <% customers.forEach(customer => { %>
           <option value="<%= customer.id %>" <%= String(project.customer_id) === String(customer.id) ? 'selected' : '' %>><%= customer.name %></option>
         <% }) %>
       </select>
       <label>Project Name</label>
       <input type="text" name="project_name" required placeholder="e.g. Hunters Pad" value="<%= project.project_name || '' %>">
-      <p class="muted">Display name is Customer - Project. A typed prefix such as "Synagro - Hunters Pad" is kept once.</p>
+      <p class="muted">Display name is Shipper - Project. A typed prefix such as "Synagro - Hunters Pad" is kept once.</p>
       <label>Default Rate ($)</label>
       <input type="number" step="0.01" name="default_rate" required value="<%= project.default_rate != null ? project.default_rate : '' %>">
       <label>Default Driver Pay Basis</label>

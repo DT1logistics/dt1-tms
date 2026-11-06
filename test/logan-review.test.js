@@ -241,12 +241,23 @@ async function waitUntil(fn, ms) {
     let driverId = 0;
     let driverPassword = '';
     await check('admin can add a project and a driver used by the load API', async () => {
+      const legacyList = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/customers' });
+      assert.strictEqual(legacyList.status, 302);
+      assert.strictEqual(legacyList.headers.location, '/shippers');
       const customer = form({ name: 'Acme Haul' });
-      const created = await request(srv.port, { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader(admin) }, { method: 'POST', path: '/customers', body: customer });
+      const created = await request(srv.port, { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader(admin) }, { method: 'POST', path: '/shippers', body: customer });
       assert.strictEqual(created.status, 302);
+      assert.match(String(created.headers.location || ''), /^\/shippers\/\d+$/);
       const customerId = String(created.headers.location || '').split('/').pop();
+      const legacyDetail = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: `/customers/${customerId}` });
+      assert.strictEqual(legacyDetail.status, 302);
+      assert.strictEqual(legacyDetail.headers.location, `/shippers/${customerId}`);
+      const shipperPage = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/shippers' });
+      assert.strictEqual(shipperPage.status, 200);
+      assert.ok(shipperPage.body.includes('Shippers'));
+      assert.ok(!/\bCustomers?\b/.test(shipperPage.body));
       const project = form({ project_name: 'River', default_rate: '10', status: 'active' });
-      const projectRes = await request(srv.port, { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader(admin) }, { method: 'POST', path: `/customers/${customerId}/projects`, body: project });
+      const projectRes = await request(srv.port, { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader(admin) }, { method: 'POST', path: `/shippers/${customerId}/projects`, body: project });
       assert.strictEqual(projectRes.status, 302);
       projectId = readRows(dataDir, 'SELECT id FROM projects ORDER BY id DESC LIMIT 1')[0].id;
 
