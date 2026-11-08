@@ -318,6 +318,9 @@ function originBeforeDestination(html, originMark, destinationMark) {
       originBeforeDestination(invoices.body, '<th>Origin</th>', '<th>Destination</th>');
       assert.ok(invoices.body.includes('Richmond Yard'));
       assert.ok(invoices.body.includes('11-04-2026'));
+      assert.ok(invoices.body.includes('>Detention</th>'));
+      assert.ok(invoices.body.includes('<span>Detention</span><span>$0.00</span>'));
+      assert.ok(invoices.body.includes('<span>TOTAL</span><span>$120.00</span>'));
     });
 
     await check('load register and forms show Trucks and the shared truck labels', async () => {

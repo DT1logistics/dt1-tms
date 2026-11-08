@@ -144,6 +144,23 @@
       <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
     </div>
   </div>
+  <% if (user.role === 'admin') { %>
+  <div class="load-self-row">
+    <div class="self-load-group">
+      <label class="self-check-label" for="shipper_detention">
+        <input type="checkbox" name="shipper_detention" id="shipper_detention" value="1" <%= load.shipper_detention ? 'checked' : '' %>>
+        <span>Bill shipper for detention</span>
+      </label>
+    </div>
+    <p class="muted" style="margin:0;">Billed to the customer. Separate from the driver Detention checkbox above.</p>
+  </div>
+  <div class="addon-amount-row">
+    <div id="shipper_detention_wrap" class="addon-amount" style="<%= load.shipper_detention ? '' : 'display:none;' %>">
+      <label for="shipper_detention_amount">Shipper detention $ (billed to customer)</label>
+      <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="shipper_detention_amount" id="shipper_detention_amount" value="<%= load.shipper_detention && load.shipper_detention_amount != null && load.shipper_detention_amount !== '' ? Number(load.shipper_detention_amount).toFixed(2) : '' %>">
+    </div>
+  </div>
+  <% } %>
   <div class="load-totals-row">
     <div class="load-total-under" id="load_total">Load Total: $0.00</div>
     <% if (user.role === 'admin') { %>
@@ -499,6 +516,27 @@
     });
   }
   syncDetention();
+
+  <% if (user.role === 'admin') { %>
+  const shipperDetentionBox = document.getElementById('shipper_detention');
+  const shipperDetentionAmount = document.getElementById('shipper_detention_amount');
+  const shipperDetentionWrap = document.getElementById('shipper_detention_wrap');
+  function syncShipperDetention() {
+    if (!shipperDetentionBox || !shipperDetentionWrap) return;
+    const on = shipperDetentionBox.checked;
+    shipperDetentionWrap.style.display = on ? 'block' : 'none';
+    if (!on && shipperDetentionAmount) shipperDetentionAmount.value = '';
+  }
+  if (shipperDetentionBox) shipperDetentionBox.addEventListener('change', syncShipperDetention);
+  if (shipperDetentionAmount) {
+    shipperDetentionAmount.addEventListener('input', () => {
+      const raw = String(shipperDetentionAmount.value || '');
+      const dot = raw.indexOf('.');
+      if (dot >= 0 && raw.length - dot - 1 > 2) shipperDetentionAmount.value = raw.slice(0, dot + 3);
+    });
+  }
+  syncShipperDetention();
+  <% } %>
 
   function syncPayType() {
     const payType = document.getElementById('driver_pay_type');

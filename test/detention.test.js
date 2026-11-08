@@ -1,4 +1,5 @@
-// Detention is added in full to driver pay and is not part of the percentage or the shipper invoice.
+// Driver detention is added in full to driver pay and is not part of the shipper invoice.
+// Shipper detention is billed to the customer on the invoice and is not part of driver pay.
 // Run: npm test
 const assert = require('assert');
 const fs = require('fs');
@@ -114,6 +115,8 @@ function writeDb(dataDir, fn) {
           destination TEXT,
           weight_quantity REAL,
           rate REAL DEFAULT 0,
+          detention INTEGER DEFAULT 0,
+          detention_amount REAL,
           status TEXT DEFAULT 'draft',
           submitted_by INTEGER,
           approved_by INTEGER,
@@ -121,22 +124,38 @@ function writeDb(dataDir, fn) {
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         INSERT INTO loads (ticket_number, rate, weight_quantity, status) VALUES ('OLD-DET', 10, 2, 'submitted');
+        INSERT INTO loads (ticket_number, rate, weight_quantity, status, detention, detention_amount)
+          VALUES ('OLD-COPY', 10, 2, 'approved', 1, 40);
       `);
     });
     const srv = await startServer({ DATA_DIR: dataDir, LOGAN_TMS_PASSWORD: adminPassword, LOGAN_API_TOKEN: '' });
     try {
-      const cols = readRows(dataDir, 'SELECT name, "notnull" AS required, dflt_value FROM pragma_table_info(\'loads\') WHERE name IN (\'detention\', \'detention_amount\')');
+      const cols = readRows(dataDir, 'SELECT name, "notnull" AS required, dflt_value FROM pragma_table_info(\'loads\') WHERE name IN (\'detention\', \'detention_amount\', \'shipper_detention\', \'shipper_detention_amount\')');
       const detention = cols.find((col) => col.name === 'detention');
       const amount = cols.find((col) => col.name === 'detention_amount');
+      const shipper = cols.find((col) => col.name === 'shipper_detention');
+      const shipperAmount = cols.find((col) => col.name === 'shipper_detention_amount');
       assert.ok(detention);
       assert.strictEqual(detention.required, 0);
       assert.ok(String(detention.dflt_value).includes('0'));
       assert.ok(amount);
       assert.strictEqual(amount.dflt_value, null);
-      const row = readRows(dataDir, 'SELECT ticket_number, rate, detention, detention_amount FROM loads WHERE ticket_number = ?', ['OLD-DET'])[0];
+      assert.ok(shipper);
+      assert.strictEqual(shipper.required, 0);
+      assert.ok(String(shipper.dflt_value).includes('0'));
+      assert.ok(shipperAmount);
+      assert.strictEqual(shipperAmount.dflt_value, null);
+      const row = readRows(dataDir, 'SELECT ticket_number, rate, detention, detention_amount, shipper_detention, shipper_detention_amount FROM loads WHERE ticket_number = ?', ['OLD-DET'])[0];
       assert.strictEqual(row.rate, 10);
       assert.strictEqual(row.detention, 0);
       assert.strictEqual(row.detention_amount, null);
+      assert.strictEqual(row.shipper_detention, 0);
+      assert.strictEqual(row.shipper_detention_amount, null);
+      const copied = readRows(dataDir, 'SELECT detention, detention_amount, shipper_detention, shipper_detention_amount FROM loads WHERE ticket_number = ?', ['OLD-COPY'])[0];
+      assert.strictEqual(copied.detention, 1);
+      assert.strictEqual(copied.detention_amount, 40);
+      assert.strictEqual(copied.shipper_detention, 0);
+      assert.strictEqual(copied.shipper_detention_amount, null);
     } finally {
       await stop(srv.child);
     }
@@ -180,6 +199,10 @@ function writeDb(dataDir, fn) {
     assert.ok(newForm.body.includes('Detention $'));
     assert.ok(newForm.body.includes('id="detention_wrap"'));
     assert.ok(newForm.body.includes('display:none'));
+    assert.ok(newForm.body.includes('Bill shipper for detention'));
+    assert.ok(newForm.body.includes('Billed to the customer'));
+    assert.ok(newForm.body.includes('id="shipper_detention_wrap"'));
+    assert.ok(newForm.body.includes('name="shipper_detention"'));
 
     async function postLoad(fields) {
       return request(srv.port, auth, {
@@ -282,15 +305,16 @@ function writeDb(dataDir, fn) {
       assert.strictEqual(audit[0].detail, 'Detention cleared');
     });
 
-    await check('settlement driver pay includes detention once and the shipper invoice does not', async () => {
+    await check('settlement driver pay includes driver detention once and a load with no shipper detention keeps the same invoice total', async () => {
       const page = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/settlements' });
       assert.strictEqual(page.status, 200);
       assert.ok(page.body.includes('Driver Pay $55.24'), page.body.slice(page.body.indexOf('Driver Pay'), 80));
       assert.ok(page.body.includes('Detention $25.24'));
       assert.ok(!page.body.includes('Driver Pay $80.48'));
-      assert.ok(page.body.includes('TOTAL'));
-      assert.ok(page.body.includes('$100.00'));
-      assert.ok(!page.body.includes('<th>Detention</th>'));
+      assert.ok(page.body.includes('>Detention</th>'));
+      assert.ok(page.body.includes('<span>Detention</span><span>$0.00</span>'));
+      assert.ok(page.body.includes('<span>TOTAL</span><span>$100.00</span>'));
+      assert.ok(!page.body.includes('$125.24'));
     });
 
     const apiAuth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -308,6 +332,8 @@ function writeDb(dataDir, fn) {
           rate: 10,
           detention: true,
           detention_amount: 12.5,
+          shipper_detention: 1,
+          shipper_detention_amount: 77,
           origin: 'Yard'
         })
       });
@@ -315,6 +341,9 @@ function writeDb(dataDir, fn) {
       const load = JSON.parse(created.body).load;
       assert.strictEqual(load.detention, true);
       assert.strictEqual(load.detention_amount, 12.5);
+      const stored = readRows(dataDir, 'SELECT detention, detention_amount, shipper_detention, shipper_detention_amount FROM loads WHERE ticket_number = ?', ['API-DET'])[0];
+      assert.strictEqual(stored.shipper_detention, 0);
+      assert.strictEqual(stored.shipper_detention_amount, null);
       assert.strictEqual(load.origin, 'Yard');
       assert.strictEqual(load.rate, 10);
       assert.strictEqual(load.destination, null);
@@ -343,6 +372,216 @@ function writeDb(dataDir, fn) {
       });
       assert.strictEqual(bad.status, 400);
       assert.ok(JSON.parse(bad.body).error.includes('Detention'));
+    });
+
+    await check('the customer invoice includes shipper detention and driver pay stays the same', async () => {
+      const res = await postLoad({
+        ticket_number: 'SHIP-DET',
+        detention: '1',
+        detention_amount: '25.24',
+        shipper_detention: '1',
+        shipper_detention_amount: '15.505',
+        has_fuel_surcharge: '1'
+      });
+      assert.strictEqual(res.status, 302, res.body.slice(0, 400));
+      const row = readRows(dataDir, 'SELECT id, detention, detention_amount, shipper_detention, shipper_detention_amount, has_fuel_surcharge FROM loads WHERE ticket_number = ?', ['SHIP-DET'])[0];
+      assert.strictEqual(row.detention, 1);
+      assert.strictEqual(Number(row.detention_amount).toFixed(2), '25.24');
+      assert.strictEqual(row.shipper_detention, 1);
+      assert.strictEqual(Number(row.shipper_detention_amount).toFixed(2), '15.51');
+      assert.strictEqual(row.has_fuel_surcharge, 1);
+      const audit = readRows(dataDir, "SELECT action, detail FROM audit_log WHERE entity_id = ? AND action = 'Set shipper detention'", [row.id]);
+      assert.strictEqual(audit.length, 1);
+      assert.strictEqual(audit[0].detail, 'Shipper detention $15.51');
+
+      const detail = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: `/loads/${row.id}` });
+      assert.ok(detail.body.includes('<strong>Load Total</strong> $100.00'));
+      assert.ok(detail.body.includes('<strong>Driver Pay</strong> $55.24'));
+      assert.ok(detail.body.includes('billed to the customer'));
+      assert.ok(detail.body.includes('$15.51'));
+      assert.ok(!detail.body.includes('$115.51'));
+      assert.ok(!detail.body.includes('$70.75'));
+
+      const page = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/settlements' });
+      assert.strictEqual(page.status, 200);
+      assert.ok(page.body.includes('>Detention</th>'));
+      assert.ok(page.body.includes('$15.51'));
+      assert.ok(page.body.includes('<span>Detention</span><span>$15.51</span>'));
+      assert.ok(page.body.includes('$25.08'));
+      assert.ok(page.body.includes('<span>TOTAL</span><span>$240.59</span>'), page.body.slice(page.body.indexOf('TOTAL'), 80));
+      assert.ok(!page.body.includes('$28.97'));
+      assert.ok(!page.body.includes('$244.48'));
+      assert.ok(page.body.includes('Driver Pay $55.24'));
+      assert.ok(page.body.includes('Driver Pay $110.48'));
+      assert.ok(!page.body.includes('Driver Pay $125.99'));
+    });
+
+    await check('a missing or negative shipper detention amount is rejected and unchecking clears it', async () => {
+      const before = readRows(dataDir, 'SELECT COUNT(*) AS n FROM loads')[0].n;
+      const blank = await postLoad({ ticket_number: 'SHIP-BLANK', shipper_detention: '1', shipper_detention_amount: '  ' });
+      assert.strictEqual(blank.status, 400);
+      assert.ok(blank.body.includes('Enter a shipper detention amount of 0.00 or more.'));
+      const negative = await postLoad({ ticket_number: 'SHIP-NEG', shipper_detention: '1', shipper_detention_amount: '-1' });
+      assert.strictEqual(negative.status, 400);
+      assert.ok(negative.body.includes('Shipper detention amount must be 0.00 or more.'));
+      assert.strictEqual(readRows(dataDir, 'SELECT COUNT(*) AS n FROM loads')[0].n, before);
+
+      const created = await postLoad({ action: 'draft', ticket_number: 'SHIP-CLEAR', shipper_detention: '1', shipper_detention_amount: '18.00' });
+      assert.strictEqual(created.status, 302);
+      const id = readRows(dataDir, "SELECT id FROM loads WHERE ticket_number = 'SHIP-CLEAR'")[0].id;
+      const cleared = await request(srv.port, auth, {
+        method: 'POST',
+        path: `/loads/${id}`,
+        body: form({
+          action: 'save',
+          driver_id: driverId,
+          project_id: projectId,
+          load_date: '2026-11-05',
+          weight_quantity: '10',
+          rate: '10',
+          shipper_detention_amount: '18.00'
+        })
+      });
+      assert.strictEqual(cleared.status, 302, cleared.body.slice(0, 300));
+      const row = readRows(dataDir, 'SELECT shipper_detention, shipper_detention_amount FROM loads WHERE id = ?', [id])[0];
+      assert.strictEqual(row.shipper_detention, 0);
+      assert.strictEqual(row.shipper_detention_amount, null);
+      const audit = readRows(dataDir, "SELECT action, detail FROM audit_log WHERE entity_id = ? AND action = 'Changed shipper detention'", [id]);
+      assert.strictEqual(audit.length, 1);
+      assert.strictEqual(audit[0].detail, 'Shipper detention cleared');
+    });
+
+    await check('a driver cannot see or set shipper detention', async () => {
+      const driverRes2 = await request(srv.port, auth, {
+        method: 'POST',
+        path: '/drivers',
+        body: form({ first_name: 'Dee', last_name: 'Driver', email: 'dee.detention@example.com', phone: '5555550188', pay_percentage: '30' })
+      });
+      assert.strictEqual(driverRes2.status, 200, driverRes2.body.slice(0, 300));
+      const temp = driverRes2.body.match(/<div class="temp">([^<]+)<\/div>/);
+      assert.ok(temp, 'temp password rendered');
+      const deeId = readRows(dataDir, "SELECT id FROM users WHERE email = 'dee.detention@example.com'")[0].id;
+      const kept = await postLoad({
+        action: 'draft',
+        ticket_number: 'SHIP-KEEP',
+        driver_id: deeId,
+        shipper_detention: '1',
+        shipper_detention_amount: '22.00'
+      });
+      assert.strictEqual(kept.status, 302);
+      const keptId = readRows(dataDir, "SELECT id, driver_id FROM loads WHERE ticket_number = 'SHIP-KEEP'")[0].id;
+      const driverJar = {};
+      const login = await request(srv.port, { 'Content-Type': 'application/x-www-form-urlencoded' }, {
+        method: 'POST',
+        path: '/login',
+        body: form({ email: 'dee.detention@example.com', password: temp[1] })
+      });
+      assert.strictEqual(login.status, 302);
+      remember(driverJar, login);
+      const changed = await request(srv.port, { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader(driverJar) }, {
+        method: 'POST',
+        path: '/change-password',
+        body: form({ new_password: 'Driver-Ship-1', confirm_password: 'Driver-Ship-1' })
+      });
+      assert.strictEqual(changed.status, 302, changed.body.slice(0, 200));
+      remember(driverJar, changed);
+      const driverAuth = { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: cookieHeader(driverJar) };
+
+      const formPage = await request(srv.port, { Cookie: cookieHeader(driverJar) }, { path: '/loads/new' });
+      assert.strictEqual(formPage.status, 200);
+      assert.ok(formPage.body.includes('name="detention"'));
+      assert.ok(!formPage.body.includes('Bill shipper for detention'));
+      assert.ok(!formPage.body.includes('shipper_detention'));
+      assert.ok(!formPage.body.includes('billed to the customer'));
+
+      const assigned = await postLoad({ action: 'draft', ticket_number: 'SHIP-DRV', driver_id: deeId });
+      assert.strictEqual(assigned.status, 302);
+      const assignedId = Number(String(assigned.headers.location || '').match(/\/loads\/(\d+)/)[1]);
+      const edit = await request(srv.port, { Cookie: cookieHeader(driverJar) }, { path: `/loads/${assignedId}/edit` });
+      assert.strictEqual(edit.status, 200);
+      assert.ok(!edit.body.includes('Bill shipper for detention'));
+      assert.ok(!edit.body.includes('name="shipper_detention"'));
+      const review = await request(srv.port, { Cookie: cookieHeader(driverJar) }, { path: `/loads/${keptId}` });
+      assert.strictEqual(review.status, 200);
+      assert.ok(review.body.includes('SHIP-KEEP'));
+      assert.ok(!review.body.includes('Bill shipper for detention'));
+      assert.ok(!review.body.includes('billed to the customer'));
+      assert.ok(!review.body.includes('$22.00'));
+
+      const attempted = await request(srv.port, driverAuth, {
+        method: 'POST',
+        path: `/loads/${assignedId}`,
+        body: form({
+          action: 'draft',
+          project_id: projectId,
+          load_date: '2026-11-05',
+          weight_quantity: '10',
+          rate: '10',
+          ticket_number: 'SHIP-DRV',
+          shipper_detention: '1',
+          shipper_detention_amount: '80'
+        })
+      });
+      assert.strictEqual(attempted.status, 302, attempted.body.slice(0, 300));
+      const untouched = readRows(dataDir, 'SELECT shipper_detention, shipper_detention_amount, detention FROM loads WHERE id = ?', [assignedId])[0];
+      assert.strictEqual(untouched.shipper_detention, 0);
+      assert.strictEqual(untouched.shipper_detention_amount, null);
+
+      const overwrite = await request(srv.port, driverAuth, {
+        method: 'POST',
+        path: `/loads/${keptId}`,
+        body: form({
+          action: 'draft',
+          project_id: projectId,
+          load_date: '2026-11-05',
+          weight_quantity: '10',
+          rate: '10',
+          ticket_number: 'SHIP-KEEP',
+          shipper_detention_amount: '99'
+        })
+      });
+      assert.strictEqual(overwrite.status, 302, overwrite.body.slice(0, 300));
+      const still = readRows(dataDir, 'SELECT shipper_detention, shipper_detention_amount FROM loads WHERE id = ?', [keptId])[0];
+      assert.strictEqual(still.shipper_detention, 1);
+      assert.strictEqual(Number(still.shipper_detention_amount).toFixed(2), '22.00');
+
+      const created = await request(srv.port, driverAuth, {
+        method: 'POST',
+        path: '/loads',
+        body: form({
+          action: 'draft',
+          project_id: projectId,
+          load_date: '2026-11-05',
+          weight_quantity: '4',
+          ticket_number: 'SHIP-NEWDRV',
+          shipper_detention: '1',
+          shipper_detention_amount: '80'
+        })
+      });
+      assert.strictEqual(created.status, 302, created.body.slice(0, 300));
+      const made = readRows(dataDir, 'SELECT shipper_detention, shipper_detention_amount, driver_id FROM loads WHERE ticket_number = ?', ['SHIP-NEWDRV'])[0];
+      assert.strictEqual(made.driver_id, deeId);
+      assert.strictEqual(made.shipper_detention, 0);
+      assert.strictEqual(made.shipper_detention_amount, null);
+    });
+
+    await check('an assigned load with both notification boxes unchecked does not trigger a text', async () => {
+      const beforeLog = readRows(dataDir, 'SELECT COUNT(*) AS n FROM communications_log')[0].n;
+      const beforeAudit = readRows(dataDir, "SELECT COUNT(*) AS n FROM audit_log WHERE action = 'Sent load assignment notification'")[0].n;
+      const res = await postLoad({ action: 'draft', ticket_number: 'SMS-OFF' });
+      assert.strictEqual(res.status, 302, res.body.slice(0, 400));
+      assert.ok(String(res.headers.location || '').includes('saved=assigned'));
+      remember(admin, res);
+      const page = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: res.headers.location });
+      assert.strictEqual(page.status, 200);
+      assert.ok(page.body.includes('Load assigned to'));
+      assert.ok(page.body.includes('saved to their Drafts.'));
+      assert.ok(!page.body.includes('Text message notification triggered'));
+      assert.strictEqual(readRows(dataDir, 'SELECT COUNT(*) AS n FROM communications_log')[0].n, beforeLog);
+      assert.strictEqual(readRows(dataDir, "SELECT COUNT(*) AS n FROM audit_log WHERE action = 'Sent load assignment notification'")[0].n, beforeAudit);
+      const output = srv.output();
+      assert.ok(!output.includes('Welcome SMS'));
+      assert.ok(!output.includes('api.twilio.com'));
     });
   } finally {
     await stop(srv.child);
