@@ -11,7 +11,8 @@
   <% } %>
 </p>
 <% if (saved === 'assigned') { %>
-  <div class="all-clear">Load assigned to <%= load.driver_name || 'driver' %> and saved to their Drafts. Text message notification triggered: &ldquo;DT1 Logistics has assigned you a new Load&rdquo;.</div>
+  <% const textNotice = typeof assignedLoadNotice !== 'undefined' && assignedLoadNotice && assignedLoadNotice.smsStatus && assignedLoadNotice.smsStatus !== 'Not selected'; %>
+  <div class="all-clear">Load assigned to <%= load.driver_name || 'driver' %> and saved to their Drafts.<% if (textNotice) { %> Text message notification triggered: &ldquo;DT1 Logistics has assigned you a new Load&rdquo;.<% } %></div>
 <% } %>
 <% if (typeof assignedLoadNotice !== 'undefined' && assignedLoadNotice) { %>
   <div class="card assigned-sms-card" id="assigned-sms-card">
@@ -115,6 +116,9 @@
   <div><strong>Drive Time</strong> <%= Number(load.has_drive_time) === 1 ? '$' + money(load.drive_time_amount) : 'No' %></div>
   <div><strong>Self Load</strong> <%= Number(load.has_self_load) === 1 ? '$' + money(load.self_load_amount) : 'No' %></div>
   <div><strong>Detention</strong> <%= Number(load.detention) === 1 ? '$' + money(load.detention_amount) : 'No' %></div>
+  <% if (user.role === 'admin') { %>
+    <div><strong>Shipper detention</strong> (billed to the customer) <%= Number(load.shipper_detention) === 1 ? '$' + money(load.shipper_detention_amount) : 'No' %></div>
+  <% } %>
   <div class="load-notes-view"><strong>Notes</strong> <span class="shared-notes-badge">Visible to Admin &amp; Driver</span>
     <div class="load-notes-text"><%= load.notes || load.admin_notes || '—' %></div>
   </div>
@@ -245,6 +249,21 @@
         <div id="review_detention_wrap" class="addon-amount" style="<%= load.detention ? '' : 'display:none;' %>">
           <label for="review_detention_amount">Detention $</label>
           <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="review_detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
+        </div>
+      </div>
+      <div class="load-self-row">
+        <div class="self-load-group">
+          <label class="self-check-label" for="review_shipper_detention">
+            <input type="checkbox" name="shipper_detention" id="review_shipper_detention" value="1" <%= load.shipper_detention ? 'checked' : '' %>>
+            <span>Bill shipper for detention</span>
+          </label>
+        </div>
+        <p class="muted" style="margin:0;">Billed to the customer. Separate from the driver Detention checkbox above.</p>
+      </div>
+      <div class="addon-amount-row">
+        <div id="review_shipper_detention_wrap" class="addon-amount" style="<%= load.shipper_detention ? '' : 'display:none;' %>">
+          <label for="review_shipper_detention_amount">Shipper detention $ (billed to customer)</label>
+          <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="shipper_detention_amount" id="review_shipper_detention_amount" value="<%= load.shipper_detention && load.shipper_detention_amount != null && load.shipper_detention_amount !== '' ? Number(load.shipper_detention_amount).toFixed(2) : '' %>">
         </div>
       </div>
       <div class="load-totals-row">
@@ -524,5 +543,26 @@
     });
   }
   syncReviewDetention();
+
+  <% if (user.role === 'admin') { %>
+  const reviewShipperDetention = document.getElementById('review_shipper_detention');
+  const reviewShipperDetentionAmount = document.getElementById('review_shipper_detention_amount');
+  const reviewShipperDetentionWrap = document.getElementById('review_shipper_detention_wrap');
+  function syncReviewShipperDetention() {
+    if (!reviewShipperDetention || !reviewShipperDetentionWrap) return;
+    const on = reviewShipperDetention.checked;
+    reviewShipperDetentionWrap.style.display = on ? 'block' : 'none';
+    if (!on && reviewShipperDetentionAmount) reviewShipperDetentionAmount.value = '';
+  }
+  if (reviewShipperDetention) reviewShipperDetention.addEventListener('change', syncReviewShipperDetention);
+  if (reviewShipperDetentionAmount) {
+    reviewShipperDetentionAmount.addEventListener('input', () => {
+      const raw = String(reviewShipperDetentionAmount.value || '');
+      const dot = raw.indexOf('.');
+      if (dot >= 0 && raw.length - dot - 1 > 2) reviewShipperDetentionAmount.value = raw.slice(0, dot + 3);
+    });
+  }
+  syncReviewShipperDetention();
+  <% } %>
 </script>
 <%- include('partials/close') %>

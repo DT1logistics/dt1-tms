@@ -552,6 +552,8 @@ function initDB() {
       self_load_amount REAL DEFAULT 0,
       detention INTEGER DEFAULT 0,
       detention_amount REAL,
+      shipper_detention INTEGER DEFAULT 0,
+      shipper_detention_amount REAL,
       driver_pay_type TEXT DEFAULT 'percentage',
       driver_flat_rate REAL DEFAULT 0,
       status TEXT DEFAULT 'draft',
@@ -742,6 +744,8 @@ function initDB() {
   ensureColumn('loads', 'self_load_amount', 'REAL DEFAULT 0');
   ensureColumn('loads', 'detention', 'INTEGER DEFAULT 0');
   ensureColumn('loads', 'detention_amount', 'REAL');
+  ensureColumn('loads', 'shipper_detention', 'INTEGER DEFAULT 0');
+  ensureColumn('loads', 'shipper_detention_amount', 'REAL');
   ensureColumn('loads', 'origin', 'TEXT');
   ensureColumn('loads', 'destination', 'TEXT');
   ensureColumn('loads', 'notes', 'TEXT');
@@ -954,6 +958,42 @@ function recordDetentionAudit(req, loadId, existing, values) {
   if (prevOn === nextOn && prevAmt === nextAmt) return;
   const detail = nextOn ? `Detention $${nextAmt.toFixed(2)}` : 'Detention cleared';
   logAudit(req, existing ? 'Changed detention' : 'Set detention', 'load', loadId, detail);
+}
+
+// Shipper detention is billed to the customer. It is separate from driver detention and is not driver pay.
+function readShipperDetention(body) {
+  const on = flagValue(body && body.shipper_detention);
+  if (!on) return { hasShipperDetention: 0, shipperDetentionAmount: null, shipperDetentionError: null };
+  const raw = body.shipper_detention_amount;
+  if (raw == null || String(raw).trim() === '') {
+    return { hasShipperDetention: 1, shipperDetentionAmount: null, shipperDetentionError: 'Enter a shipper detention amount of 0.00 or more.' };
+  }
+  const parsed = parseFloat(String(raw).replace(/,/g, ''));
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return { hasShipperDetention: 1, shipperDetentionAmount: null, shipperDetentionError: 'Shipper detention amount must be 0.00 or more.' };
+  }
+  return { hasShipperDetention: 1, shipperDetentionAmount: roundMoney(parsed), shipperDetentionError: null };
+}
+
+function preservedShipperDetention(existing) {
+  const on = existing && Number(existing.shipper_detention) ? 1 : 0;
+  const amount = on && existing.shipper_detention_amount != null ? roundMoney(existing.shipper_detention_amount) : null;
+  return { hasShipperDetention: on, shipperDetentionAmount: amount, shipperDetentionError: null };
+}
+
+function recordShipperDetentionAudit(req, loadId, existing, values) {
+  const prevOn = existing && Number(existing.shipper_detention) ? 1 : 0;
+  const prevAmt = prevOn && existing.shipper_detention_amount != null ? roundMoney(existing.shipper_detention_amount) : null;
+  const nextOn = values.hasShipperDetention ? 1 : 0;
+  const nextAmt = nextOn && values.shipperDetentionAmount != null ? roundMoney(values.shipperDetentionAmount) : null;
+  if (prevOn === nextOn && prevAmt === nextAmt) return;
+  const detail = nextOn ? `Shipper detention $${nextAmt.toFixed(2)}` : 'Shipper detention cleared';
+  logAudit(req, existing ? 'Changed shipper detention' : 'Set shipper detention', 'load', loadId, detail);
+}
+
+function assignmentChannelSelected(body) {
+  const on = (value) => value === '1' || value === 'on';
+  return on(body && body.send_assign_sms) || on(body && body.send_assign_email);
 }
 
 function projectNaming(customerName, rawProjectName) {
@@ -2101,6 +2141,10 @@ function buildLoadValues(req, project, existing) {
     else selfAmount = 20;
   }
   const detention = readDetention(body);
+  // Drivers and other non-admin roles cannot set shipper detention. Keep the stored value.
+  const shipperDetention = req.session.user.role === 'admin'
+    ? readShipperDetention(body)
+    : preservedShipperDetention(existing);
 
   let weight = existing ? existing.weight_quantity : null;
   if (bodyHas(body, 'weight_quantity') && String(body.weight_quantity).trim() !== '') {
@@ -2178,6 +2222,9 @@ function buildLoadValues(req, project, existing) {
     hasDetention: detention.hasDetention,
     detentionAmount: detention.detentionAmount,
     detentionError: detention.detentionError,
+    hasShipperDetention: shipperDetention.hasShipperDetention,
+    shipperDetentionAmount: shipperDetention.shipperDetentionAmount,
+    shipperDetentionError: shipperDetention.shipperDetentionError,
     payType,
     flatRate,
     status: body.action === 'draft' ? 'draft' : 'submitted'
@@ -2387,18 +2434,22 @@ app.get('/loads/:id', requireAuth, (req, res) => {
         driverPhone: driver.phone || '',
         driverEmail: driver.email || '',
         smsText: lastComm ? lastComm.message_body : smsText,
-        smsStatus: lastComm ? lastComm.sms_status : 'Ready',
+        smsStatus: lastComm ? lastComm.sms_status : 'Not selected',
         emailStatus: lastComm ? lastComm.email_status : 'Not selected',
         smsHref: smsHref(driver.phone, lastComm ? lastComm.message_body : smsText),
         mailto: `mailto:${encodeURIComponent(driver.email || '')}?subject=${encodeURIComponent('DT1 Logistics has assigned you a new Load')}&body=${encodeURIComponent(lastComm ? lastComm.message_body : smsText)}`
       };
     }
   }
+  const audit = loadAudit(load.id).filter((entry) => {
+    if (req.session.user.role === 'admin') return true;
+    return !/shipper detention/i.test(`${entry.action || ''} ${entry.detail || ''}`);
+  });
   res.render('load-review', {
     user: req.session.user,
     load,
     tickets: ticketRows(load.id),
-    audit: loadAudit(load.id),
+    audit,
     saved: req.query.saved || '',
     assignedLoadNotice,
     ...form
@@ -2451,11 +2502,11 @@ function insertNewLoad(values, entry, actor) {
     INSERT INTO loads (
       ticket_number, load_date, driver_id, truck_id, project_id, description, origin, destination, notes, admin_notes, weight_quantity,
       rate, has_fuel_surcharge, has_drive_time, drive_time_amount, has_self_load, self_load_amount,
-      detention, detention_amount,
+      detention, detention_amount, shipper_detention, shipper_detention_amount,
       driver_pay_type, driver_flat_rate,
       status, submitted_by, created_by_role, entry_mode,
       review_status, review_set_by, review_set_by_name, review_set_at, created_via
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'needs_review', ?, ?, CURRENT_TIMESTAMP, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'needs_review', ?, ?, CURRENT_TIMESTAMP, ?)
   `).run(
     values.ticket_number,
     values.load_date,
@@ -2476,6 +2527,8 @@ function insertNewLoad(values, entry, actor) {
     values.selfAmount,
     values.hasDetention,
     values.detentionAmount,
+    values.hasShipperDetention,
+    values.shipperDetentionAmount,
     values.payType,
     values.flatRate,
     entry.status,
@@ -2545,8 +2598,8 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
   const project = findActiveProject(req.body.project_id);
   const values = buildLoadValues(req, project);
   values.status = entry.status;
-  if (values.detentionError) {
-    return renderLoadForm(req, res, 400, loadFormErrorView(req), values.detentionError);
+  if (values.detentionError || values.shipperDetentionError) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req), values.detentionError || values.shipperDetentionError);
   }
   if (isAdmin && !values.driver_id) {
     return renderLoadForm(req, res, 400, loadFormErrorView(req), 'Select a driver');
@@ -2559,8 +2612,9 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
   saveTicketFiles(loadId, req.files, req.session.user.id);
   logAudit(req, entry.auditAction, 'load', loadId, entry.auditDetail);
   recordDetentionAudit(req, loadId, null, values);
+  recordShipperDetentionAudit(req, loadId, null, values);
   if (isAdmin && entry.entryMode === 'assigned' && values.driver_id) {
-    await notifyAssignedLoadDriver(req, loadId);
+    if (assignmentChannelSelected(req.body)) await notifyAssignedLoadDriver(req, loadId);
     return res.redirect(`/loads/${loadId}?saved=assigned`);
   }
   res.redirect(isAdmin ? `/loads/${loadId}` : '/loads');
@@ -2579,8 +2633,8 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), 'Select an active project');
   }
   const values = buildLoadValues(req, project, existing);
-  if (values.detentionError) {
-    return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), values.detentionError);
+  if (values.detentionError || values.shipperDetentionError) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), values.detentionError || values.shipperDetentionError);
   }
   const rejectionReason = entry.status === 'submitted' || entry.status === 'approved' ? null : (existing.rejection_reason || null);
   db.prepare(`
@@ -2589,6 +2643,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
         origin = ?, destination = ?, notes = ?, admin_notes = ?,
         weight_quantity = ?, rate = ?, has_fuel_surcharge = ?, has_drive_time = ?, drive_time_amount = ?,
         has_self_load = ?, self_load_amount = ?, detention = ?, detention_amount = ?,
+        shipper_detention = ?, shipper_detention_amount = ?,
         driver_pay_type = ?, driver_flat_rate = ?, status = ?, rejection_reason = ?,
         created_by_role = ?, entry_mode = ?,
         updated_by = ?, updated_by_name = ?, updated_at = CURRENT_TIMESTAMP
@@ -2613,6 +2668,8 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     values.selfAmount,
     values.hasDetention,
     values.detentionAmount,
+    values.hasShipperDetention,
+    values.shipperDetentionAmount,
     values.payType,
     values.flatRate,
     entry.status,
@@ -2628,6 +2685,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
   saveTicketFiles(existing.id, req.files, req.session.user.id);
   logAudit(req, entry.auditAction, 'load', existing.id, entry.auditDetail);
   recordDetentionAudit(req, existing.id, existing, values);
+  recordShipperDetentionAudit(req, existing.id, existing, values);
   if (isAdmin && entry.entryMode === 'assigned' && entry.status === 'draft' && values.driver_id && req.body.send_assign_sms) {
     await notifyAssignedLoadDriver(req, existing.id);
     return res.redirect(`/loads/${existing.id}?saved=assigned`);
@@ -4332,6 +4390,7 @@ app.get('/settlements', requireAuth, (req, res) => {
         fuelSurcharge: 0,
         travelTime: 0,
         selfLoad: 0,
+        shipperDetention: 0,
         total: 0
       };
     }
@@ -4340,11 +4399,12 @@ app.get('/settlements', requireAuth, (req, res) => {
     const hauling = qty * rate;
     const travelTime = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
     const selfLoad = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
+    const shipperDetention = Number(load.shipper_detention) ? (Number(load.shipper_detention_amount) || 0) : 0;
     // Each load uses its own week's fuel rate, so an invoice spanning weeks can mix percents.
     const fsc = loadFuelSurcharge(load, fuelRates);
     const lineFsc = fsc.total;
     byProject[key].loads.push({
-      ...load, hauling, travelTime, selfLoad, lineFsc,
+      ...load, hauling, travelTime, selfLoad, shipperDetention, lineFsc,
       fscPerTon: fsc.perTon, fscFlat: fsc.flat, fscPercent: fsc.percent, fscPending: fsc.pending,
       fscDiesel: fsc.dieselRate, fscEffective: fsc.effectiveDate
     });
@@ -4360,11 +4420,13 @@ app.get('/settlements', requireAuth, (req, res) => {
     }
     byProject[key].travelTime += travelTime;
     byProject[key].selfLoad += selfLoad;
+    byProject[key].shipperDetention += shipperDetention;
   });
 
     customerInvoices = Object.values(byProject).map((invoice) => {
       invoice.fuelSurcharge = fuelCalc.round(invoice.fuelSurcharge, 2);
-      invoice.total = invoice.hauling + invoice.fuelSurcharge + invoice.travelTime + invoice.selfLoad;
+      invoice.shipperDetention = fuelCalc.round(invoice.shipperDetention, 2);
+      invoice.total = invoice.hauling + invoice.fuelSurcharge + invoice.travelTime + invoice.selfLoad + invoice.shipperDetention;
       return invoice;
     });
   }
