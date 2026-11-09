@@ -106,19 +106,11 @@
         <span>Self Load ($)</span>
       </label>
     </div>
-    <div class="drive-detention-pair">
-      <div class="self-load-group drive-time-group">
-        <label class="self-check-label" for="has_drive_time">
-          <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
-          <span>Drive Time ($)</span>
-        </label>
-      </div>
-      <div class="self-load-group">
-        <label class="self-check-label" for="detention">
-          <input type="checkbox" name="detention" id="detention" value="1" <%= load.detention ? 'checked' : '' %>>
-          <span>Detention</span>
-        </label>
-      </div>
+    <div class="self-load-group">
+      <label class="self-check-label" for="detention">
+        <input type="checkbox" name="detention" id="detention" value="1" <%= load.detention ? 'checked' : '' %>>
+        <span>Detention</span>
+      </label>
     </div>
     <% if (user.role === 'admin') { %>
     <div class="self-load-group fuel-surcharge-group">
@@ -135,13 +127,21 @@
       <label for="self_load_amount">Self Load $</label>
       <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="20.00" name="self_load_amount" id="self_load_amount" data-four-dec="1" value="<%= load.self_load_amount != null && Number(load.self_load_amount) > 0 ? Number(load.self_load_amount).toFixed(2) : '20.00' %>">
     </div>
-    <div id="drive_time_wrap" class="addon-amount" style="<%= load.has_drive_time ? '' : 'display:none;' %>">
-      <label for="drive_time_amount">Drive Time $</label>
-      <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="drive_time_amount" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null && load.drive_time_amount !== '' ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
-    </div>
     <div id="detention_wrap" class="addon-amount" style="<%= load.detention ? '' : 'display:none;' %>">
       <label for="detention_amount">Detention $</label>
       <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
+    </div>
+  </div>
+  <div class="load-self-row">
+    <div class="self-load-group drive-time-group">
+      <label class="self-check-label" for="has_drive_time">
+        <input type="checkbox" name="has_drive_time" id="has_drive_time" value="1" <%= load.has_drive_time ? 'checked' : '' %>>
+        <span>Drive Time ($)</span>
+      </label>
+    </div>
+    <div id="drive_time_wrap" class="addon-amount" style="<%= load.has_drive_time ? '' : 'display:none;' %>">
+      <label for="drive_time_amount">Drive Time $</label>
+      <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="drive_time_amount" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null && load.drive_time_amount !== '' ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
     </div>
   </div>
   <% if (user.role === 'admin') { %>
@@ -177,7 +177,7 @@
       <label for="driver_flat_rate">Driver Flat / Daily Rate ($)</label>
       <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" name="driver_flat_rate" id="driver_flat_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.driver_flat_rate != null && load.driver_flat_rate !== '' ? load.driver_flat_rate : '0.00' %>">
     </div>
-    <p class="muted" id="pay_basis_help">Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load + Detention. Detention is added in full, not as a percentage. Fuel surcharge is not included.</p>
+    <p class="muted" id="pay_basis_help">Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + (Drive Time × Driver Pay %) + Self Load + Detention. Self Load and Detention are added in full. Fuel surcharge is not included.</p>
   <% } %>
   <% if (user.role === 'admin' && drivers && drivers.length) { %>
     <label>Driver</label>
@@ -547,8 +547,8 @@
     flatWrap.style.display = flat ? 'block' : 'none';
     if (payHelp) {
       payHelp.textContent = flat
-        ? 'Driver Pay = Driver Flat / Daily Rate + Drive Time + Self Load + Detention. Detention is added in full, not as a percentage. Fuel surcharge is not included. Qty/Wet Ton can be left blank and defaults to 1.'
-        : 'Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + Drive Time + Self Load + Detention. Detention is added in full, not as a percentage. Fuel surcharge is not included.';
+        ? 'Driver Pay = Driver Flat / Daily Rate + Drive Time + Self Load + Detention. Drive Time, Self Load, and Detention are added in full. Fuel surcharge is not included. Qty/Wet Ton can be left blank and defaults to 1.'
+        : 'Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + (Drive Time × Driver Pay %) + Self Load + Detention. Self Load and Detention are added in full. Fuel surcharge is not included.';
     }
   }
   const payTypeInput = document.getElementById('driver_pay_type');

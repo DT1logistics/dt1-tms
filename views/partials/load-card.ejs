@@ -44,7 +44,7 @@
   <% } %>
   <% if (load.showPay) { %>
     <div class="pay-line">Driver Pay: $<%= money(load.payInfo.pay) %></div>
-    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %> · Detention $<%= money(load.payInfo.detention) %></div>
+    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %> · Detention $<%= money(load.payInfo.detention) %>. <% if (load.payInfo.flat) { %>Drive Time, Self Load, and Detention are added in full.<% } else { %>Drive Time is the driver's pay percentage of the drive-time fee. Self Load and Detention are added in full.<% } %></div>
   <% } %>
   <div>Load Ticket/BOL:
     <% if (load.tickets && load.tickets.length) { %>
