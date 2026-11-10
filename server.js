@@ -44,6 +44,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
   res.on('finish', () => {
+    if (!redisSqliteSnapshotsEnabled()) return;
     persistDatabaseSnapshot().catch((err) => console.error('SQLite snapshot failed:', err.message));
   });
   next();
@@ -4645,15 +4646,22 @@ async function restoreDatabaseSnapshot() {
   return true;
 }
 
+// Opt-in writes of dt1.db into Redis. Off unless REDIS_SQLITE_SNAPSHOT is 1, true, yes, or on.
+// Request, boot, and shutdown writes all honor this flag. Restore-on-boot does not.
+function redisSqliteSnapshotsEnabled() {
+  const flag = String(process.env.REDIS_SQLITE_SNAPSHOT || '').trim().toLowerCase();
+  return flag === '1' || flag === 'true' || flag === 'yes' || flag === 'on';
+}
+
 async function writeDatabaseSnapshot() {
-  if (!process.env.REDIS_URL || !db) return;
+  if (!redisSqliteSnapshotsEnabled() || !process.env.REDIS_URL || !db) return;
   const payload = db.serialize().toString('base64');
   const client = await redis();
   await client.command(['SET', SNAPSHOT_KEY, payload]);
 }
 
 function persistDatabaseSnapshot() {
-  if (!process.env.REDIS_URL || !db) return Promise.resolve();
+  if (!redisSqliteSnapshotsEnabled() || !process.env.REDIS_URL || !db) return Promise.resolve();
   const job = snapshotChain.then(writeDatabaseSnapshot, writeDatabaseSnapshot);
   snapshotChain = job.catch(() => {});
   return job;
@@ -4678,7 +4686,7 @@ async function boot() {
   db = new Database(dbPath);
   db.pragma('foreign_keys = ON');
   initDB();
-  if (process.env.REDIS_URL) {
+  if (process.env.REDIS_URL && redisSqliteSnapshotsEnabled()) {
     try {
       await persistDatabaseSnapshot();
       console.log('Saved SQLite snapshot to Redis');
@@ -4698,6 +4706,11 @@ async function boot() {
     const done = () => process.exit(0);
     const timer = setTimeout(done, 4000);
     timer.unref();
+    // Same flag as the request and boot writes. A disabled snapshot must not run on the way out.
+    if (!redisSqliteSnapshotsEnabled()) {
+      done();
+      return;
+    }
     persistDatabaseSnapshot()
       .catch((err) => console.error('Shutdown snapshot failed:', err.message))
       .finally(done);
