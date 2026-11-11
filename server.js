@@ -720,6 +720,7 @@ function initDB() {
       sms_status TEXT,
       sent_by INTEGER,
       sent_by_name TEXT,
+      load_id INTEGER,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
@@ -782,6 +783,7 @@ function initDB() {
   ensureColumn('projects', 'default_driver_pay_type', "TEXT DEFAULT 'percentage'");
   ensureColumn('projects', 'default_driver_flat_rate', 'REAL DEFAULT 0');
   ensureColumn('documents', 'file_blob', 'BLOB');
+  ensureColumn('communications_log', 'load_id', 'INTEGER');
   // Equipment Expenses / Maintenance Log (new table; existing equipment rows are untouched).
   db.exec(`
     CREATE TABLE IF NOT EXISTS equipment_expenses (
@@ -2303,6 +2305,11 @@ app.get('/loads/:id/edit', requireAuth, (req, res) => {
   res.render('load-form', { user: req.session.user, load, tickets: ticketRows(existing.id), ...form });
 });
 
+function previewCitesOtherLoad(load, customMessage) {
+  const cites = String(customMessage || '').match(/#(\d+)/g) || [];
+  return cites.some((token) => token.slice(1) !== String(load.id));
+}
+
 function buildAssignedLoadSms(load, customMessage) {
   const loadLink = `${APP_URL}/loads/${load.id}/edit`;
   const trimmedCustom = String(customMessage || '').trim();
@@ -2335,18 +2342,18 @@ function buildAssignedLoadSms(load, customMessage) {
 async function notifyAssignedLoadDriver(req, loadId) {
   const load = db.prepare(loadQuery + ' WHERE l.id = ?').get(loadId);
   if (!load || !load.driver_id) return null;
+  // Unchecked boxes are omitted from the form body. Do not log, text, email, or flash.
+  if (!assignmentChannelSelected(req.body)) return null;
   const driver = db.prepare('SELECT * FROM users WHERE id = ?').get(load.driver_id);
   if (!driver) return null;
 
-  const formSubmitted = bodyHas(req.body, 'assign_sms_message') || bodyHas(req.body, 'admin_mode');
-  const sendSms = formSubmitted
-    ? (req.body.send_assign_sms === '1' || req.body.send_assign_sms === 'on')
-    : true;
-  const sendEmail = formSubmitted
-    ? (req.body.send_assign_email === '1' || req.body.send_assign_email === 'on')
-    : false;
+  const sendSms = req.body.send_assign_sms === '1' || req.body.send_assign_sms === 'on';
+  const sendEmail = req.body.send_assign_email === '1' || req.body.send_assign_email === 'on';
+  if (!sendSms && !sendEmail) return null;
 
-  const rawText = buildAssignedLoadSms(load, req.body ? req.body.assign_sms_message : '');
+  const postedPreview = req.body ? req.body.assign_sms_message : '';
+  const customMessage = previewCitesOtherLoad(load, postedPreview) ? '' : postedPreview;
+  const rawText = buildAssignedLoadSms(load, customMessage);
   const smsText = personalizeMessage(rawText, driver);
   const subject = 'DT1 Logistics has assigned you a new Load';
 
@@ -2384,8 +2391,8 @@ async function notifyAssignedLoadDriver(req, loadId) {
     db.prepare(`
       INSERT INTO communications_log (
         driver_id, driver_name, driver_email, driver_phone, channels, subject, message_body,
-        email_status, sms_status, sent_by, sent_by_name
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        email_status, sms_status, sent_by, sent_by_name, load_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       driver.id,
       driver.name || 'Unnamed',
@@ -2397,12 +2404,13 @@ async function notifyAssignedLoadDriver(req, loadId) {
       emailStatus,
       smsStatus,
       req.session.user ? req.session.user.id : null,
-      actorName(req)
+      actorName(req),
+      load.id
     );
     logAudit(req, 'Sent load assignment notification', 'load', load.id, `To ${driver.name || driver.email}: "DT1 Logistics has assigned you a new Load" (${smsStatus})`);
   }
 
-  const notice = {
+  return {
     loadId: load.id,
     driverId: driver.id,
     driverName: driver.name || driver.email,
@@ -2411,11 +2419,43 @@ async function notifyAssignedLoadDriver(req, loadId) {
     smsText,
     smsStatus,
     emailStatus,
-    smsHref: smsHref(driver.phone, smsText),
-    mailto: `mailto:${encodeURIComponent(driver.email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(smsText)}`
+    smsHref: sendSms ? smsHref(driver.phone, smsText) : '',
+    mailto: sendEmail
+      ? `mailto:${encodeURIComponent(driver.email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(smsText)}`
+      : ''
   };
-  req.session.assignedLoadNotice = notice;
-  return notice;
+}
+
+function assignmentNoticeForLoad(load) {
+  if (!load || load.id == null) return null;
+  // Scope to this load. The driver's newest assignment text often belongs to a different load.
+  const row = db.prepare(`
+    SELECT * FROM communications_log
+    WHERE load_id = ?
+      AND subject = 'DT1 Logistics has assigned you a new Load'
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(load.id);
+  if (!row) return null;
+  const smsOn = row.sms_status && row.sms_status !== 'Not selected';
+  const emailOn = row.email_status && row.email_status !== 'Not selected';
+  if (!smsOn && !emailOn) return null;
+  const smsText = row.message_body || '';
+  const subject = row.subject || 'DT1 Logistics has assigned you a new Load';
+  return {
+    loadId: load.id,
+    driverId: row.driver_id,
+    driverName: row.driver_name || load.driver_name || '',
+    driverPhone: row.driver_phone || '',
+    driverEmail: row.driver_email || '',
+    smsText,
+    smsStatus: row.sms_status || 'Not selected',
+    emailStatus: row.email_status || 'Not selected',
+    smsHref: smsOn ? smsHref(row.driver_phone, smsText) : '',
+    mailto: emailOn
+      ? `mailto:${encodeURIComponent(row.driver_email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(smsText)}`
+      : ''
+  };
 }
 
 app.get('/loads/:id', requireAuth, (req, res) => {
@@ -2427,33 +2467,10 @@ app.get('/loads/:id', requireAuth, (req, res) => {
     const current = db.prepare('SELECT * FROM projects WHERE id = ?').get(load.project_id);
     if (current) form.projects = [current].concat(form.projects);
   }
-  let assignedLoadNotice = null;
-  if (req.session.assignedLoadNotice && String(req.session.assignedLoadNotice.loadId) === String(load.id)) {
-    assignedLoadNotice = req.session.assignedLoadNotice;
-    delete req.session.assignedLoadNotice;
-  } else if (req.session.user.role === 'admin' && load.entry_mode === 'assigned' && load.driver_id) {
-    const driver = db.prepare('SELECT * FROM users WHERE id = ?').get(load.driver_id);
-    if (driver) {
-      const smsText = buildAssignedLoadSms(load, '');
-      const lastComm = db.prepare(`
-        SELECT * FROM communications_log
-        WHERE driver_id = ? AND subject = 'DT1 Logistics has assigned you a new Load'
-        ORDER BY id DESC LIMIT 1
-      `).get(driver.id);
-      assignedLoadNotice = {
-        loadId: load.id,
-        driverId: driver.id,
-        driverName: driver.name || driver.email,
-        driverPhone: driver.phone || '',
-        driverEmail: driver.email || '',
-        smsText: lastComm ? lastComm.message_body : smsText,
-        smsStatus: lastComm ? lastComm.sms_status : 'Not selected',
-        emailStatus: lastComm ? lastComm.email_status : 'Not selected',
-        smsHref: smsHref(driver.phone, lastComm ? lastComm.message_body : smsText),
-        mailto: `mailto:${encodeURIComponent(driver.email || '')}?subject=${encodeURIComponent('DT1 Logistics has assigned you a new Load')}&body=${encodeURIComponent(lastComm ? lastComm.message_body : smsText)}`
-      };
-    }
-  }
+  // Drop a leftover flash. It can name this load while still carrying another load's text,
+  // and a query string is not a source for the message.
+  if (req.session && req.session.assignedLoadNotice) delete req.session.assignedLoadNotice;
+  const assignedLoadNotice = req.session.user.role === 'admin' ? assignmentNoticeForLoad(load) : null;
   const audit = loadAudit(load.id).filter((entry) => {
     if (req.session.user.role === 'admin') return true;
     return !/shipper detention/i.test(`${entry.action || ''} ${entry.detail || ''}`);
@@ -2699,7 +2716,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
   logAudit(req, entry.auditAction, 'load', existing.id, entry.auditDetail);
   recordDetentionAudit(req, existing.id, existing, values);
   recordShipperDetentionAudit(req, existing.id, existing, values);
-  if (isAdmin && entry.entryMode === 'assigned' && entry.status === 'draft' && values.driver_id && req.body.send_assign_sms) {
+  if (isAdmin && entry.entryMode === 'assigned' && entry.status === 'draft' && values.driver_id && assignmentChannelSelected(req.body)) {
     await notifyAssignedLoadDriver(req, existing.id);
     return res.redirect(`/loads/${existing.id}?saved=assigned`);
   }
