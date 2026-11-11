@@ -15,40 +15,9 @@
   <%- include('partials/week-summaries', { weekGroups: weekGroups, undatedLoads: undatedLoads, user: user }) %>
 <% } else { %>
   <h1>Home</h1>
-  <p class="muted">Items that are yellow or red and need attention.</p>
-  <% if (!alerts.length) { %>
-    <div class="all-clear">All Clear — No Yellow or Red Items</div>
-  <% } else { %>
-    <h2>Action Required — Red &amp; Yellow Alerts</h2>
-    <div class="counts">
-      <span class="badge red"><%= redCount %> Red</span>
-      <span class="badge yellow"><%= yellowCount %> Yellow</span>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Level</th>
-            <th>Category</th>
-            <th>Item</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <% alerts.forEach(function (alert) { %>
-            <tr>
-              <td><span class="badge <%= alert.level %>"><%= alert.level === 'red' ? 'Red' : 'Yellow' %></span></td>
-              <td><%= alert.category %></td>
-              <td><%= alert.name %></td>
-              <td><%= alert.detail %></td>
-              <td><a href="<%= alert.href %>">Open</a></td>
-            </tr>
-          <% }) %>
-        </tbody>
-      </table>
-    </div>
-  <% } %>
+  <h2>Compliance</h2>
+  <p class="muted">Red is out of compliance. Yellow is expiring soon or another warning. A tile turns red only when its out-of-compliance count is above zero.</p>
+  <%- include('partials/compliance-tiles', { complianceTiles: complianceTiles }) %>
   <h2>Quick Access</h2>
   <div class="cards">
     <a class="quick" href="/shippers"><strong>Shippers &amp; Projects</strong><span>Billing contacts, project rates, fuel surcharge, and drive time.</span></a>

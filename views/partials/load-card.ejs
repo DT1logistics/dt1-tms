@@ -25,8 +25,10 @@
   <% if (user.role === 'admin' && load.review_decision === 'rejected' && load.review_decision_reason) { %>
     <div class="reject-note"><strong>Rejected:</strong> <%= load.review_decision_reason %></div>
   <% } %>
-  <div>Date: <%= load.load_date || '—' %></div>
+  <div>Date: <%= formatLoadDate(load.load_date) || '—' %></div>
   <div>Project: <%= load.project_display || '—' %></div>
+  <div>Trucks: <%= loadTruckLabel(load) || '—' %></div>
+  <div>Origin: <%= load.origin || '—' %></div>
   <div>Destination: <%= load.destination || load.description || '—' %></div>
   <% if (load.notes || load.admin_notes) { %>
     <div class="load-notes-card"><strong>Notes:</strong> <span class="load-notes-text"><%= load.notes || load.admin_notes %></span></div>
@@ -42,7 +44,7 @@
   <% } %>
   <% if (load.showPay) { %>
     <div class="pay-line">Driver Pay: $<%= money(load.payInfo.pay) %></div>
-    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %></div>
+    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %> · Detention $<%= money(load.payInfo.detention) %></div>
   <% } %>
   <div>Load Ticket/BOL:
     <% if (load.tickets && load.tickets.length) { %>
@@ -64,6 +66,9 @@
   <% } %>
   <% if (Number(load.has_self_load) === 1) { %>
     <div>Self Load: $<%= money(load.self_load_amount) %></div>
+  <% } %>
+  <% if (Number(load.detention) === 1) { %>
+    <div>Detention: $<%= money(load.detention_amount) %></div>
   <% } %>
   <% if (user.role === 'admin') { %><div class="muted">Driver: <%= load.driver_name || 'Unassigned' %></div><% } %>
   <p>

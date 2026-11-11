@@ -47,7 +47,7 @@
         · Driver Pay $<%= money(group.total) %>
         · Approved
       </div>
-      <div class="muted">Base $<%= money(group.base) %> · Drive Time $<%= money(group.drive) %> · Self Load $<%= money(group.self) %></div>
+      <div class="muted">Base $<%= money(group.base) %> · Drive Time $<%= money(group.drive) %> · Self Load $<%= money(group.self) %> · Detention $<%= money(group.detention) %></div>
       <% if (group.approved_by_name) { %>
         <div class="muted">Approved by <%= group.approved_by_name %><% if (group.approved_at) { %> on <%= auditStamp(group.approved_at) %><% } %></div>
       <% } %>
@@ -67,6 +67,7 @@
     (the latest Fuel Rate effective on or before the Load Date): FSC % = (Weekly Diesel − $4.00) ÷ 10,
     Surcharge/Ton = Load Rate × FSC %, Total Fuel Surcharge = Surcharge/Ton × Wet Tons (flat-rate loads: Flat Amount × FSC %).
     Loads whose week has no fuel rate yet show “Rate pending” at $0.00. Fuel surcharge is a separate invoice line and is not in Load Total or Driver Pay.
+    Detention on this invoice is billed to the customer. Fuel surcharge does not apply to it, and it is not driver pay.
   </p>
   <% if (customerInvoices && customerInvoices.length) { %>
     <% customerInvoices.forEach(function (invoice) { %>
@@ -86,6 +87,7 @@
             <tr>
               <th>Date</th>
               <th>Ticket #</th>
+              <th>Origin</th>
               <th>Destination</th>
               <th class="num">Qty</th>
               <th class="num">Rate</th>
@@ -93,13 +95,15 @@
               <th class="num">Fuel Surcharge</th>
               <th class="num">Self Load</th>
               <th class="num">Travel Time</th>
+              <th class="num" title="Billed to the customer. Fuel surcharge does not apply.">Detention</th>
             </tr>
           </thead>
           <tbody>
             <% invoice.loads.forEach(function (load) { %>
               <tr>
-                <td><%= load.load_date || '—' %></td>
+                <td><%= formatLoadDate(load.load_date) || '—' %></td>
                 <td><%= load.ticket_number || '—' %></td>
+                <td><%= load.origin || '—' %></td>
                 <td><%= load.destination || load.description || '—' %></td>
                 <td class="num"><%= load.weight_quantity != null ? load.weight_quantity : '—' %></td>
                 <td class="num">$<%= money(load.rate) %></td>
@@ -107,6 +111,7 @@
                 <td class="num"><% if (Number(load.has_fuel_surcharge) === 1 && load.fscPending) { %>$0.00<div class="muted" style="font-size:11px;">Rate pending</div><% } else if (Number(load.has_fuel_surcharge) === 1) { %>$<%= money(load.lineFsc) %><div class="muted" style="font-size:11px;"><%= Number(load.fscPercent).toFixed(2) %>% · <%= load.fscFlat ? 'flat amount' : '$' + Number(load.fscPerTon).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') + '/ton' %></div><% } else { %>—<% } %></td>
                 <td class="num">$<%= money(load.selfLoad) %></td>
                 <td class="num">$<%= money(load.travelTime) %></td>
+                <td class="num"><%= Number(load.shipper_detention) === 1 ? '$' + money(load.shipperDetention) : '—' %></td>
               </tr>
             <% }) %>
           </tbody>
@@ -116,6 +121,7 @@
           <div><span>Fuel Surcharge<% const pcts = invoice.fscPercents || []; %><% if (pcts.length === 1) { %> (<%= Number(pcts[0]).toFixed(2) %>%)<% } else if (pcts.length > 1) { %> (weekly rates: <%= pcts.map(function (x) { return Number(x).toFixed(2) + '%'; }).join(', ') %>)<% } %><% if (invoice.fscPendingCount) { %> · <%= invoice.fscPendingCount %> load<%= invoice.fscPendingCount === 1 ? '' : 's' %> rate pending<% } %></span><span>$<%= money(invoice.fuelSurcharge) %></span></div>
           <div><span>Travel Time</span><span>$<%= money(invoice.travelTime) %></span></div>
           <div><span>Self Load</span><span>$<%= money(invoice.selfLoad) %></span></div>
+          <div title="Billed to the customer. Fuel surcharge does not apply."><span>Detention</span><span>$<%= money(invoice.shipperDetention) %></span></div>
           <div class="grand"><span>TOTAL</span><span>$<%= money(invoice.total) %></span></div>
         </div>
       </div>

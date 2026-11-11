@@ -1,0 +1,15 @@
+<div class="cards compliance-tiles">
+  <% complianceTiles.forEach(function (tile) { %>
+    <a class="<%= tile.className %>" href="<%= tile.href %>">
+      <strong><%= tile.title %></strong>
+      <% if (!tile.redCount && !tile.yellowCount) { %>
+        <span class="compliance-clear">All clear</span>
+      <% } else { %>
+        <span class="compliance-counts">
+          <% if (tile.redCount) { %><span class="badge red"><%= tile.redCount %> out of compliance</span><% } %>
+          <% if (tile.yellowCount) { %><span class="badge yellow"><%= tile.yellowCount %> expiring soon</span><% } %>
+        </span>
+      <% } %>
+    </a>
+  <% }) %>
+</div>

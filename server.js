@@ -8,8 +8,10 @@ const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 const fuelCalc = require('./lib/fuel-surcharge');
+const loadDate = require('./lib/load-date');
 const loadReview = require('./lib/load-review');
 const loganWebhook = require('./lib/logan-webhook');
+const quoWebhook = require('./lib/quo-webhook');
 const loganApi = require('./lib/logan-api');
 const equipExpenses = require('./lib/equipment-expenses');
 const backup = require('./lib/backup');
@@ -19,6 +21,7 @@ const equipmentPlate = require('./lib/equipment-plate');
 const equipImport = require('./lib/equipment-import');
 const accountSecurity = require('./lib/account-security');
 const equipment = require('./lib/equipment');
+const complianceTiles = require('./lib/compliance-tiles');
 const crypto = require('crypto');
 
 const app = express();
@@ -32,6 +35,10 @@ const SNAPSHOT_KEY = 'dt1:sqlite:snapshot:v1';
 let db;
 
 // Middleware
+// Quo signs the exact request bytes. This route is registered before the JSON
+// parser and before the login session, so an inbound text is verified as Quo
+// sent it and does not require a cookie.
+quoWebhook.mount(app);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
@@ -43,6 +50,7 @@ app.use((req, res, next) => {
 });
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/js/fuel-surcharge.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'fuel-surcharge.js')));
+app.get('/js/load-date.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'load-date.js')));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.locals.money = (n) => (Number(n) || 0).toFixed(2);
@@ -137,10 +145,11 @@ function calcDriverPay(load) {
   const base = flat ? (Number(load.driver_flat_rate) || 0) : linehaul * (percentage / 100);
   const drive = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
   const self = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
+  const detention = Number(load.detention) ? (Number(load.detention_amount) || 0) : 0;
   const basis = flat
     ? `Flat Daily Rate: $${base.toFixed(2)}`
     : `${percentage}% of $${linehaul.toFixed(2)}`;
-  return { linehaul, base, drive, self, pay: base + drive + self, percentage, flat, basis };
+  return { linehaul, base, drive, self, detention, pay: base + drive + self + detention, percentage, flat, basis };
 }
 
 function payVisible(load) {
@@ -277,12 +286,14 @@ app.locals.loadOriginLabel = loadOriginLabel;
 app.locals.reviewStatusLabel = loadReview.reviewStatusLabel;
 app.locals.reviewStatusClass = loadReview.reviewStatusClass;
 app.locals.settlementWeekLabel = settlementWeekLabel;
+app.locals.formatLoadDate = loadDate.formatLoadDate;
 app.locals.ticketFileKind = ticketFileKind;
 app.locals.formatPlate = equipmentPlate.formatPlate;
 app.locals.equipmentTypeLabel = equipment.equipmentTypeLabel;
 app.locals.equipmentStatusLabel = equipment.equipmentStatusLabel;
 app.locals.equipmentBadges = equipment.equipmentBadges;
 app.locals.equipmentPowerLabel = equipment.equipmentPowerLabel;
+app.locals.loadTruckLabel = equipment.loadTruckLabel;
 app.locals.equipmentChoiceLabel = equipment.equipmentChoiceLabel;
 app.locals.auditStamp = auditStamp;
 
@@ -539,6 +550,10 @@ function initDB() {
       drive_time_amount REAL DEFAULT 0,
       has_self_load INTEGER DEFAULT 0,
       self_load_amount REAL DEFAULT 0,
+      detention INTEGER DEFAULT 0,
+      detention_amount REAL,
+      shipper_detention INTEGER DEFAULT 0,
+      shipper_detention_amount REAL,
       driver_pay_type TEXT DEFAULT 'percentage',
       driver_flat_rate REAL DEFAULT 0,
       status TEXT DEFAULT 'draft',
@@ -727,6 +742,10 @@ function initDB() {
   ensureColumn('loads', 'drive_time_amount', 'REAL DEFAULT 0');
   ensureColumn('loads', 'has_self_load', 'INTEGER DEFAULT 0');
   ensureColumn('loads', 'self_load_amount', 'REAL DEFAULT 0');
+  ensureColumn('loads', 'detention', 'INTEGER DEFAULT 0');
+  ensureColumn('loads', 'detention_amount', 'REAL');
+  ensureColumn('loads', 'shipper_detention', 'INTEGER DEFAULT 0');
+  ensureColumn('loads', 'shipper_detention_amount', 'REAL');
   ensureColumn('loads', 'origin', 'TEXT');
   ensureColumn('loads', 'destination', 'TEXT');
   ensureColumn('loads', 'notes', 'TEXT');
@@ -912,6 +931,71 @@ function flagValue(value) {
   return value === '1' || value === 'on' || value === 'true' || value === 1 || value === true;
 }
 
+function roundMoney(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+// Detention is a yes/no plus an optional dollar amount. Unchecked clears the amount.
+function readDetention(body) {
+  const on = flagValue(body && body.detention);
+  if (!on) return { hasDetention: 0, detentionAmount: null, detentionError: null };
+  const raw = body.detention_amount;
+  if (raw == null || String(raw).trim() === '') {
+    return { hasDetention: 1, detentionAmount: null, detentionError: 'Enter a detention amount of 0.00 or more.' };
+  }
+  const parsed = parseFloat(String(raw).replace(/,/g, ''));
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return { hasDetention: 1, detentionAmount: null, detentionError: 'Detention amount must be 0.00 or more.' };
+  }
+  return { hasDetention: 1, detentionAmount: roundMoney(parsed), detentionError: null };
+}
+
+function recordDetentionAudit(req, loadId, existing, values) {
+  const prevOn = existing && Number(existing.detention) ? 1 : 0;
+  const prevAmt = prevOn && existing.detention_amount != null ? roundMoney(existing.detention_amount) : null;
+  const nextOn = values.hasDetention ? 1 : 0;
+  const nextAmt = nextOn && values.detentionAmount != null ? roundMoney(values.detentionAmount) : null;
+  if (prevOn === nextOn && prevAmt === nextAmt) return;
+  const detail = nextOn ? `Detention $${nextAmt.toFixed(2)}` : 'Detention cleared';
+  logAudit(req, existing ? 'Changed detention' : 'Set detention', 'load', loadId, detail);
+}
+
+// Shipper detention is billed to the customer. It is separate from driver detention and is not driver pay.
+function readShipperDetention(body) {
+  const on = flagValue(body && body.shipper_detention);
+  if (!on) return { hasShipperDetention: 0, shipperDetentionAmount: null, shipperDetentionError: null };
+  const raw = body.shipper_detention_amount;
+  if (raw == null || String(raw).trim() === '') {
+    return { hasShipperDetention: 1, shipperDetentionAmount: null, shipperDetentionError: 'Enter a shipper detention amount of 0.00 or more.' };
+  }
+  const parsed = parseFloat(String(raw).replace(/,/g, ''));
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return { hasShipperDetention: 1, shipperDetentionAmount: null, shipperDetentionError: 'Shipper detention amount must be 0.00 or more.' };
+  }
+  return { hasShipperDetention: 1, shipperDetentionAmount: roundMoney(parsed), shipperDetentionError: null };
+}
+
+function preservedShipperDetention(existing) {
+  const on = existing && Number(existing.shipper_detention) ? 1 : 0;
+  const amount = on && existing.shipper_detention_amount != null ? roundMoney(existing.shipper_detention_amount) : null;
+  return { hasShipperDetention: on, shipperDetentionAmount: amount, shipperDetentionError: null };
+}
+
+function recordShipperDetentionAudit(req, loadId, existing, values) {
+  const prevOn = existing && Number(existing.shipper_detention) ? 1 : 0;
+  const prevAmt = prevOn && existing.shipper_detention_amount != null ? roundMoney(existing.shipper_detention_amount) : null;
+  const nextOn = values.hasShipperDetention ? 1 : 0;
+  const nextAmt = nextOn && values.shipperDetentionAmount != null ? roundMoney(values.shipperDetentionAmount) : null;
+  if (prevOn === nextOn && prevAmt === nextAmt) return;
+  const detail = nextOn ? `Shipper detention $${nextAmt.toFixed(2)}` : 'Shipper detention cleared';
+  logAudit(req, existing ? 'Changed shipper detention' : 'Set shipper detention', 'load', loadId, detail);
+}
+
+function assignmentChannelSelected(body) {
+  const on = (value) => value === '1' || value === 'on';
+  return on(body && body.send_assign_sms) || on(body && body.send_assign_email);
+}
+
 function projectNaming(customerName, rawProjectName) {
   const customer = String(customerName || '').trim();
   let projectName = String(rawProjectName || '').trim();
@@ -987,7 +1071,7 @@ function readProject(body, customer, existing) {
 
 function activeProjects() {
   return db.prepare(`
-    SELECT p.*
+    SELECT p.*, c.name AS customer_name
     FROM projects p
     JOIN customers c ON c.id = p.customer_id
     WHERE p.status = 'active' AND c.status = 'active'
@@ -1091,7 +1175,7 @@ function resolveLoadEntry(req, existing) {
 
 const loadQuery = `
   SELECT l.*, u.name as driver_name, u.pay_percentage,
-         e.number as truck_number, e.type as truck_type,
+         e.number as truck_number, e.type as truck_type, e.make as truck_make, e.model as truck_model,
          p.display_name as project_display, p.project_name as project_short_name,
          c.name as customer_name, c.address_line1, c.address_line2,
          c.poc_name, c.poc_phone, c.poc_email, c.terms
@@ -1221,6 +1305,52 @@ function collectDriverLevels(driverId, hrefs) {
   return levels;
 }
 
+function driverDocumentFlags(driver, docs, href) {
+  return [['cdl', 'CDL License'], ['medical_card', 'Medical Card']].map(([kind, label]) => {
+    const doc = (docs || []).find((item) => item.doc_type === kind);
+    const exp = doc ? doc.expiration_date : null;
+    return {
+      level: getStatusClass(exp),
+      category: 'Driver Document',
+      name: `${driver.name || driver.email} — ${label}`,
+      detail: `${getStatusText(exp)}${exp ? ' · ' + exp : ''}`,
+      href: href || ''
+    };
+  });
+}
+
+function equipmentComplianceFlags(item) {
+  const label = `${equipment.equipmentTypeLabel(item.type)} ${item.number || ''}`.trim();
+  const href = '/equipment';
+  const flags = [];
+  if (item.maintenance_status === 'out_of_service') {
+    flags.push({ level: 'red', category: 'Equipment', name: label, detail: 'Out of service', href });
+  } else if (item.maintenance_status === 'maintenance') {
+    flags.push({ level: 'yellow', category: 'Equipment', name: label, detail: 'In maintenance', href });
+  }
+  // A registration or inspection date is flagged only when one is stored.
+  // Missing dates are not alerts. Unit number does not change that.
+  if (item.registration_expiration) {
+    flags.push({
+      level: getStatusClass(item.registration_expiration),
+      category: 'Equipment',
+      name: `${label} registration`,
+      detail: `${getStatusText(item.registration_expiration)} · ${item.registration_expiration}`,
+      href
+    });
+  }
+  if (item.inspection_expiration) {
+    flags.push({
+      level: getStatusClass(item.inspection_expiration),
+      category: 'Equipment',
+      name: `${label} inspection`,
+      detail: `${getStatusText(item.inspection_expiration)} · ${item.inspection_expiration}`,
+      href
+    });
+  }
+  return flags;
+}
+
 function collectAlerts(user) {
   const alerts = [];
   const drivers = user.role === 'admin'
@@ -1229,18 +1359,9 @@ function collectAlerts(user) {
   const docsFor = db.prepare('SELECT * FROM driver_documents WHERE driver_id = ?');
   drivers.forEach((driver) => {
     const docs = docsFor.all(driver.id);
-    [['cdl', 'CDL License'], ['medical_card', 'Medical Card']].forEach(([kind, label]) => {
-      const doc = docs.find((item) => item.doc_type === kind);
-      const exp = doc ? doc.expiration_date : null;
-      const href = user.role === 'admin' ? `/drivers/${driver.id}` : '/profile';
-      pushAlert(
-        alerts,
-        getStatusClass(exp),
-        'Driver Document',
-        `${driver.name || driver.email} — ${label}`,
-        `${getStatusText(exp)}${exp ? ' · ' + exp : ''}`,
-        href
-      );
+    const href = user.role === 'admin' ? `/drivers/${driver.id}` : '/profile';
+    driverDocumentFlags(driver, docs, href).forEach((flag) => {
+      pushAlert(alerts, flag.level, flag.category, flag.name, flag.detail, flag.href);
     });
   });
 
@@ -1267,32 +1388,9 @@ function collectAlerts(user) {
       );
     });
     db.prepare('SELECT * FROM equipment ORDER BY type, number').all().forEach((item) => {
-      const label = `${equipment.equipmentTypeLabel(item.type)} ${item.number || ''}`.trim();
-      if (item.maintenance_status === 'out_of_service') {
-        pushAlert(alerts, 'red', 'Equipment', label, 'Out of service', '/equipment');
-      } else if (item.maintenance_status === 'maintenance') {
-        pushAlert(alerts, 'yellow', 'Equipment', label, 'In maintenance', '/equipment');
-      }
-      if (item.registration_expiration) {
-        pushAlert(
-          alerts,
-          getStatusClass(item.registration_expiration),
-          'Equipment',
-          `${label} registration`,
-          `${getStatusText(item.registration_expiration)} · ${item.registration_expiration}`,
-          '/equipment'
-        );
-      }
-      if (item.inspection_expiration) {
-        pushAlert(
-          alerts,
-          getStatusClass(item.inspection_expiration),
-          'Equipment',
-          `${label} inspection`,
-          `${getStatusText(item.inspection_expiration)} · ${item.inspection_expiration}`,
-          '/equipment'
-        );
-      }
+      equipmentComplianceFlags(item).forEach((flag) => {
+        pushAlert(alerts, flag.level, flag.category, flag.name, flag.detail, flag.href);
+      });
     });
   }
 
@@ -1371,7 +1469,11 @@ function renderDashboard(req, res) {
     });
   }
   const attention = collectAlerts(req.session.user);
-  res.render('dashboard', { user: req.session.user, ...attention });
+  res.render('dashboard', {
+    user: req.session.user,
+    ...attention,
+    complianceTiles: complianceTiles.buildComplianceTiles(attention.alerts)
+  });
 }
 
 app.get('/', renderDashboard);
@@ -1975,11 +2077,31 @@ function findActiveProject(projectId) {
   const id = parseInt(projectId, 10);
   if (!Number.isInteger(id)) return null;
   return db.prepare(`
-    SELECT p.*
+    SELECT p.*, c.name AS customer_name
     FROM projects p
     JOIN customers c ON c.id = p.customer_id
     WHERE p.id = ? AND p.status = 'active' AND c.status = 'active'
   `).get(id) || null;
+}
+
+function isUberFreightCustomer(name) {
+  return String(name || '').trim().toLowerCase() === 'uber freight';
+}
+
+// New loads only. A blank Origin becomes Sandston and a blank Destination becomes the
+// project name when the shipper/customer is Uber Freight. Typed values are kept.
+// Existing loads are never rewritten.
+function applyUberFreightCreateDefaults(values, project, existing) {
+  if (existing || !project || !isUberFreightCustomer(project.customer_name)) return values;
+  if (!values.origin) values.origin = 'Sandston';
+  if (!values.destination) {
+    const projectName = String(project.project_name || '').trim();
+    if (projectName) {
+      values.destination = projectName;
+      if (!values.description) values.description = projectName;
+    }
+  }
+  return values;
 }
 
 function buildLoadValues(req, project, existing) {
@@ -2024,6 +2146,11 @@ function buildLoadValues(req, project, existing) {
     if (existing && Number(existing.self_load_amount) > 0) selfAmount = Number(existing.self_load_amount);
     else selfAmount = 20;
   }
+  const detention = readDetention(body);
+  // Drivers and other non-admin roles cannot set shipper detention. Keep the stored value.
+  const shipperDetention = req.session.user.role === 'admin'
+    ? readShipperDetention(body)
+    : preservedShipperDetention(existing);
 
   let weight = existing ? existing.weight_quantity : null;
   if (bodyHas(body, 'weight_quantity') && String(body.weight_quantity).trim() !== '') {
@@ -2080,7 +2207,7 @@ function buildLoadValues(req, project, existing) {
     notesVal = blankToNull(rawNotes == null ? rawNotes : String(rawNotes).slice(0, 2000));
   }
 
-  return {
+  return applyUberFreightCreateDefaults({
     ticket_number: keptText(body, 'ticket_number', existing),
     load_date: keptText(body, 'load_date', existing),
     driver_id: driverId || null,
@@ -2098,10 +2225,16 @@ function buildLoadValues(req, project, existing) {
     driveAmount,
     hasSelf,
     selfAmount,
+    hasDetention: detention.hasDetention,
+    detentionAmount: detention.detentionAmount,
+    detentionError: detention.detentionError,
+    hasShipperDetention: shipperDetention.hasShipperDetention,
+    shipperDetentionAmount: shipperDetention.shipperDetentionAmount,
+    shipperDetentionError: shipperDetention.shipperDetentionError,
     payType,
     flatRate,
     status: body.action === 'draft' ? 'draft' : 'submitted'
-  };
+  }, project, existing);
 }
 
 function backfillDocumentBlobs() {
@@ -2175,9 +2308,11 @@ function buildAssignedLoadSms(load, customMessage) {
       .replace(`${APP_URL}/loads`, loadLink);
   }
   const parts = [`#${load.id}`];
-  if (load.load_date) parts[0] += ` for ${load.load_date}`;
+  const shownLoadDate = loadDate.formatLoadDate(load.load_date);
+  if (shownLoadDate) parts[0] += ` for ${shownLoadDate}`;
   if (load.project_display) parts.push(load.project_display);
-  if (load.truck_number) parts.push(`${load.truck_type === 'hotshot' ? 'Hotshot' : 'Truck'} ${load.truck_number}`);
+  const truckLabel = equipment.loadTruckLabel(load);
+  if (truckLabel) parts.push(truckLabel);
   const destText = load.destination || load.description || '';
   if (load.origin && destText) {
     parts.push(`${load.origin} -> ${destText}`);
@@ -2305,18 +2440,22 @@ app.get('/loads/:id', requireAuth, (req, res) => {
         driverPhone: driver.phone || '',
         driverEmail: driver.email || '',
         smsText: lastComm ? lastComm.message_body : smsText,
-        smsStatus: lastComm ? lastComm.sms_status : 'Ready',
+        smsStatus: lastComm ? lastComm.sms_status : 'Not selected',
         emailStatus: lastComm ? lastComm.email_status : 'Not selected',
         smsHref: smsHref(driver.phone, lastComm ? lastComm.message_body : smsText),
         mailto: `mailto:${encodeURIComponent(driver.email || '')}?subject=${encodeURIComponent('DT1 Logistics has assigned you a new Load')}&body=${encodeURIComponent(lastComm ? lastComm.message_body : smsText)}`
       };
     }
   }
+  const audit = loadAudit(load.id).filter((entry) => {
+    if (req.session.user.role === 'admin') return true;
+    return !/shipper detention/i.test(`${entry.action || ''} ${entry.detail || ''}`);
+  });
   res.render('load-review', {
     user: req.session.user,
     load,
     tickets: ticketRows(load.id),
-    audit: loadAudit(load.id),
+    audit,
     saved: req.query.saved || '',
     assignedLoadNotice,
     ...form
@@ -2369,10 +2508,11 @@ function insertNewLoad(values, entry, actor) {
     INSERT INTO loads (
       ticket_number, load_date, driver_id, truck_id, project_id, description, origin, destination, notes, admin_notes, weight_quantity,
       rate, has_fuel_surcharge, has_drive_time, drive_time_amount, has_self_load, self_load_amount,
+      detention, detention_amount, shipper_detention, shipper_detention_amount,
       driver_pay_type, driver_flat_rate,
       status, submitted_by, created_by_role, entry_mode,
       review_status, review_set_by, review_set_by_name, review_set_at, created_via
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'needs_review', ?, ?, CURRENT_TIMESTAMP, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'needs_review', ?, ?, CURRENT_TIMESTAMP, ?)
   `).run(
     values.ticket_number,
     values.load_date,
@@ -2391,6 +2531,10 @@ function insertNewLoad(values, entry, actor) {
     values.driveAmount,
     values.hasSelf,
     values.selfAmount,
+    values.hasDetention,
+    values.detentionAmount,
+    values.hasShipperDetention,
+    values.shipperDetentionAmount,
     values.payType,
     values.flatRate,
     entry.status,
@@ -2460,6 +2604,9 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
   const project = findActiveProject(req.body.project_id);
   const values = buildLoadValues(req, project);
   values.status = entry.status;
+  if (values.detentionError || values.shipperDetentionError) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req), values.detentionError || values.shipperDetentionError);
+  }
   if (isAdmin && !values.driver_id) {
     return renderLoadForm(req, res, 400, loadFormErrorView(req), 'Select a driver');
   }
@@ -2470,8 +2617,10 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
   stampLoadApproval(loadId, req, entry);
   saveTicketFiles(loadId, req.files, req.session.user.id);
   logAudit(req, entry.auditAction, 'load', loadId, entry.auditDetail);
+  recordDetentionAudit(req, loadId, null, values);
+  recordShipperDetentionAudit(req, loadId, null, values);
   if (isAdmin && entry.entryMode === 'assigned' && values.driver_id) {
-    await notifyAssignedLoadDriver(req, loadId);
+    if (assignmentChannelSelected(req.body)) await notifyAssignedLoadDriver(req, loadId);
     return res.redirect(`/loads/${loadId}?saved=assigned`);
   }
   res.redirect(isAdmin ? `/loads/${loadId}` : '/loads');
@@ -2490,13 +2639,18 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), 'Select an active project');
   }
   const values = buildLoadValues(req, project, existing);
+  if (values.detentionError || values.shipperDetentionError) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), values.detentionError || values.shipperDetentionError);
+  }
   const rejectionReason = entry.status === 'submitted' || entry.status === 'approved' ? null : (existing.rejection_reason || null);
   db.prepare(`
     UPDATE loads
     SET ticket_number = ?, load_date = ?, driver_id = ?, truck_id = ?, project_id = ?, description = ?,
         origin = ?, destination = ?, notes = ?, admin_notes = ?,
         weight_quantity = ?, rate = ?, has_fuel_surcharge = ?, has_drive_time = ?, drive_time_amount = ?,
-        has_self_load = ?, self_load_amount = ?, driver_pay_type = ?, driver_flat_rate = ?, status = ?, rejection_reason = ?,
+        has_self_load = ?, self_load_amount = ?, detention = ?, detention_amount = ?,
+        shipper_detention = ?, shipper_detention_amount = ?,
+        driver_pay_type = ?, driver_flat_rate = ?, status = ?, rejection_reason = ?,
         created_by_role = ?, entry_mode = ?,
         updated_by = ?, updated_by_name = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ? ${isAdmin ? '' : "AND status = 'draft'"}
@@ -2518,6 +2672,10 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     values.driveAmount,
     values.hasSelf,
     values.selfAmount,
+    values.hasDetention,
+    values.detentionAmount,
+    values.hasShipperDetention,
+    values.shipperDetentionAmount,
     values.payType,
     values.flatRate,
     entry.status,
@@ -2532,6 +2690,8 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
   removeSelectedTickets(existing.id, req.body);
   saveTicketFiles(existing.id, req.files, req.session.user.id);
   logAudit(req, entry.auditAction, 'load', existing.id, entry.auditDetail);
+  recordDetentionAudit(req, existing.id, existing, values);
+  recordShipperDetentionAudit(req, existing.id, existing, values);
   if (isAdmin && entry.entryMode === 'assigned' && entry.status === 'draft' && values.driver_id && req.body.send_assign_sms) {
     await notifyAssignedLoadDriver(req, existing.id);
     return res.redirect(`/loads/${existing.id}?saved=assigned`);
@@ -2589,12 +2749,20 @@ app.post('/loads/:id/review-decision', requireAuth, (req, res) => {
 // Admin: Drivers management
 app.get('/drivers', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/');
-  const drivers = db.prepare("SELECT id, name, first_name, last_name, email, phone, pay_percentage, status, profile_pic FROM users WHERE role = 'driver' ORDER BY name").all();
+  const complianceFilter = req.query.compliance === 'attention' ? 'attention' : '';
+  let drivers = db.prepare("SELECT id, name, first_name, last_name, email, phone, pay_percentage, status, profile_pic FROM users WHERE role = 'driver' ORDER BY name").all();
+  if (complianceFilter) {
+    const docsFor = db.prepare('SELECT * FROM driver_documents WHERE driver_id = ?');
+    drivers = drivers.filter((driver) => {
+      if ((driver.status || 'active') === 'inactive') return false;
+      return driverDocumentFlags(driver, docsFor.all(driver.id)).some((flag) => flag.level === 'red' || flag.level === 'yellow');
+    });
+  }
   drivers.forEach((driver) => {
     const levels = collectDriverLevels(driver.id, { documentsOnly: true });
     driver.compliance = complianceSummary(levels);
   });
-  res.render('drivers', { user: req.session.user, drivers, notifications: notificationStatus() });
+  res.render('drivers', { user: req.session.user, drivers, notifications: notificationStatus(), complianceFilter });
 });
 
 app.get('/drivers/new', requireAuth, (req, res) => {
@@ -3562,20 +3730,34 @@ function equipmentFormView(req, res, status, equipment, error) {
 app.get('/equipment', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return wantsJson(req) ? res.status(403).json({ error: 'Admin only' }) : res.redirect('/');
   const q = String(req.query.q || '').trim().toLowerCase().replace(/\s+/g, '');
+  const complianceFilter = req.query.compliance === 'attention' ? 'attention' : '';
   const matchesQuery = (item) => {
     if (!q) return true;
     const hay = [item.number, item.vin, item.plate_number, item.plate_state, equipmentPlate.formatPlate(item)]
       .filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, '');
     return hay.includes(q);
   };
-  const trucks = db.prepare("SELECT * FROM equipment WHERE type = 'truck' ORDER BY number").all().filter(matchesQuery);
-  const hotshots = db.prepare("SELECT * FROM equipment WHERE type = 'hotshot' ORDER BY number").all().filter(matchesQuery);
-  const trailers = db.prepare("SELECT * FROM equipment WHERE type = 'trailer' ORDER BY number").all().filter(matchesQuery);
+  const matchesAttention = (item) => {
+    if (!complianceFilter) return true;
+    return equipmentComplianceFlags(item).some((flag) => flag.level === 'red' || flag.level === 'yellow');
+  };
+  const trucks = db.prepare("SELECT * FROM equipment WHERE type = 'truck' ORDER BY number").all().filter((item) => matchesQuery(item) && matchesAttention(item));
+  const hotshots = db.prepare("SELECT * FROM equipment WHERE type = 'hotshot' ORDER BY number").all().filter((item) => matchesQuery(item) && matchesAttention(item));
+  const trailers = db.prepare("SELECT * FROM equipment WHERE type = 'trailer' ORDER BY number").all().filter((item) => matchesQuery(item) && matchesAttention(item));
   if (wantsJson(req)) return res.json({ trucks, hotshots, trailers });
   const expenseYear = expenseReportYear(req);
   const expenseTotals = equipExpenses.totalsByEquipment(
     db.prepare('SELECT equipment_id, expense_date, amount FROM equipment_expenses').all(), expenseYear);
-  res.render('equipment', { user: req.session.user, trucks, hotshots, trailers, expenseTotals, expenseYear, q: req.query.q || '' });
+  res.render('equipment', {
+    user: req.session.user,
+    trucks,
+    hotshots,
+    trailers,
+    expenseTotals,
+    expenseYear,
+    q: req.query.q || '',
+    complianceFilter
+  });
 });
 
 function equipmentRowsForImport() {
@@ -4180,7 +4362,8 @@ function approvedSettlementWeeks(driverId) {
       total: loads.reduce((sum, load) => sum + load.payInfo.pay, 0),
       base: loads.reduce((sum, load) => sum + load.payInfo.base, 0),
       drive: loads.reduce((sum, load) => sum + load.payInfo.drive, 0),
-      self: loads.reduce((sum, load) => sum + load.payInfo.self, 0)
+      self: loads.reduce((sum, load) => sum + load.payInfo.self, 0),
+      detention: loads.reduce((sum, load) => sum + load.payInfo.detention, 0)
     };
   });
 }
@@ -4213,6 +4396,7 @@ app.get('/settlements', requireAuth, (req, res) => {
         fuelSurcharge: 0,
         travelTime: 0,
         selfLoad: 0,
+        shipperDetention: 0,
         total: 0
       };
     }
@@ -4221,11 +4405,12 @@ app.get('/settlements', requireAuth, (req, res) => {
     const hauling = qty * rate;
     const travelTime = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
     const selfLoad = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
+    const shipperDetention = Number(load.shipper_detention) ? (Number(load.shipper_detention_amount) || 0) : 0;
     // Each load uses its own week's fuel rate, so an invoice spanning weeks can mix percents.
     const fsc = loadFuelSurcharge(load, fuelRates);
     const lineFsc = fsc.total;
     byProject[key].loads.push({
-      ...load, hauling, travelTime, selfLoad, lineFsc,
+      ...load, hauling, travelTime, selfLoad, shipperDetention, lineFsc,
       fscPerTon: fsc.perTon, fscFlat: fsc.flat, fscPercent: fsc.percent, fscPending: fsc.pending,
       fscDiesel: fsc.dieselRate, fscEffective: fsc.effectiveDate
     });
@@ -4241,11 +4426,13 @@ app.get('/settlements', requireAuth, (req, res) => {
     }
     byProject[key].travelTime += travelTime;
     byProject[key].selfLoad += selfLoad;
+    byProject[key].shipperDetention += shipperDetention;
   });
 
     customerInvoices = Object.values(byProject).map((invoice) => {
       invoice.fuelSurcharge = fuelCalc.round(invoice.fuelSurcharge, 2);
-      invoice.total = invoice.hauling + invoice.fuelSurcharge + invoice.travelTime + invoice.selfLoad;
+      invoice.shipperDetention = fuelCalc.round(invoice.shipperDetention, 2);
+      invoice.total = invoice.hauling + invoice.fuelSurcharge + invoice.travelTime + invoice.selfLoad + invoice.shipperDetention;
       return invoice;
     });
   }
@@ -4541,7 +4728,8 @@ loganApi.mountLoganApi(app, {
   resolveLoadEntry,
   insertNewLoad,
   applyLoadReview,
-  logAudit
+  logAudit,
+  recordDetentionAudit
 });
 
 boot().catch((err) => {
