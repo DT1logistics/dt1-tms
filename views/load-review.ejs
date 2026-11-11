@@ -8,29 +8,34 @@
     <span class="muted"><%= settlementWeekLabel(load.load_date) %></span>
   <% } %>
 </p>
+<% const assignmentNotice = (typeof assignedLoadNotice !== 'undefined' && assignedLoadNotice) ? assignedLoadNotice : null; %>
+<% const assignmentSmsOn = !!(assignmentNotice && assignmentNotice.smsStatus && assignmentNotice.smsStatus !== 'Not selected'); %>
+<% const assignmentEmailOn = !!(assignmentNotice && assignmentNotice.emailStatus && assignmentNotice.emailStatus !== 'Not selected'); %>
 <% if (saved === 'assigned') { %>
-  <% const textNotice = typeof assignedLoadNotice !== 'undefined' && assignedLoadNotice && assignedLoadNotice.smsStatus && assignedLoadNotice.smsStatus !== 'Not selected'; %>
-  <div class="all-clear">Load assigned to <%= load.driver_name || 'driver' %> and saved to their Drafts.<% if (textNotice) { %> Text message notification triggered: &ldquo;DT1 Logistics has assigned you a new Load&rdquo;.<% } %></div>
+  <div class="all-clear">Load assigned to <%= load.driver_name || 'driver' %> and saved to their Drafts.<% if (assignmentSmsOn) { %> Text message notification triggered: &ldquo;DT1 Logistics has assigned you a new Load&rdquo;.<% } %></div>
 <% } %>
-<% if (typeof assignedLoadNotice !== 'undefined' && assignedLoadNotice) { %>
+<% if (assignmentNotice && (assignmentSmsOn || assignmentEmailOn)) { %>
   <div class="card assigned-sms-card" id="assigned-sms-card">
     <h2>📲 Driver Load Assignment Text Message Notification</h2>
-    <p><strong>Driver:</strong> <%= assignedLoadNotice.driverName || load.driver_name || 'Unassigned' %> (<%= assignedLoadNotice.driverPhone || 'No phone on file' %><% if (assignedLoadNotice.driverEmail) { %> · <%= assignedLoadNotice.driverEmail %><% } %>)</p>
+    <p><strong>Driver:</strong> <%= assignmentNotice.driverName || load.driver_name || 'Unassigned' %> (<%= assignmentNotice.driverPhone || 'No phone on file' %><% if (assignmentNotice.driverEmail) { %> · <%= assignmentNotice.driverEmail %><% } %>)</p>
     <p>
+      <% if (assignmentSmsOn) { %>
       <strong>Text (SMS) Status:</strong>
-      <span class="badge <%= (assignedLoadNotice.smsStatus === 'Sent' || String(assignedLoadNotice.smsStatus).indexOf('Sent via') === 0) ? 'green' : 'yellow' %>"><%= assignedLoadNotice.smsStatus %></span>
-      <% if (assignedLoadNotice.emailStatus && assignedLoadNotice.emailStatus !== 'Not selected') { %>
-        &nbsp;·&nbsp; <strong>Email Status:</strong>
-        <span class="badge <%= assignedLoadNotice.emailStatus === 'Sent' ? 'green' : 'yellow' %>"><%= assignedLoadNotice.emailStatus %></span>
+      <span class="badge <%= (assignmentNotice.smsStatus === 'Sent' || String(assignmentNotice.smsStatus).indexOf('Sent via') === 0) ? 'green' : 'yellow' %>"><%= assignmentNotice.smsStatus %></span>
+      <% } %>
+      <% if (assignmentEmailOn) { %>
+        <% if (assignmentSmsOn) { %>&nbsp;·&nbsp;<% } %>
+        <strong>Email Status:</strong>
+        <span class="badge <%= assignmentNotice.emailStatus === 'Sent' ? 'green' : 'yellow' %>"><%= assignmentNotice.emailStatus %></span>
       <% } %>
     </p>
-    <pre class="sms-preview" id="assigned-sms-text"><%= assignedLoadNotice.smsText %></pre>
+    <pre class="sms-preview" id="assigned-sms-text"><%= assignmentNotice.smsText %></pre>
     <div class="welcome-actions">
-      <% if (assignedLoadNotice.smsHref) { %>
-        <a class="btn" href="<%= assignedLoadNotice.smsHref %>">Open Text Message (SMS)</a>
+      <% if (assignmentSmsOn && assignmentNotice.smsHref) { %>
+        <a class="btn" href="<%= assignmentNotice.smsHref %>">Open Text Message (SMS)</a>
       <% } %>
-      <% if (assignedLoadNotice.mailto) { %>
-        <a class="btn btn-secondary" href="<%= assignedLoadNotice.mailto %>">Open Email</a>
+      <% if (assignmentEmailOn && assignmentNotice.mailto) { %>
+        <a class="btn btn-secondary" href="<%= assignmentNotice.mailto %>">Open Email</a>
       <% } %>
       <a class="btn btn-secondary" href="/communications">View in Communications Log</a>
     </div>
