@@ -1187,6 +1187,9 @@ const loadQuery = `
   LEFT JOIN customers c ON c.id = p.customer_id
 `;
 
+// Newest load date first; NULL or blank dates last. Same date falls back to newer id.
+const loadDateOrderSql = " ORDER BY (l.load_date IS NULL OR l.load_date = ''), l.load_date DESC, l.id DESC";
+
 // Routes
 function blankToNull(value) {
   const text = String(value || '').trim();
@@ -1396,8 +1399,8 @@ function collectAlerts(user) {
   }
 
   const loads = user.role === 'admin'
-    ? db.prepare(loadQuery + ' ORDER BY l.created_at DESC').all()
-    : db.prepare(loadQuery + ' WHERE l.driver_id = ? ORDER BY l.created_at DESC').all(user.id);
+    ? db.prepare(loadQuery + loadDateOrderSql).all()
+    : db.prepare(loadQuery + ' WHERE l.driver_id = ?' + loadDateOrderSql).all(user.id);
   const docMap = {};
   db.prepare('SELECT load_id, COUNT(*) AS n FROM documents GROUP BY load_id').all().forEach((row) => {
     docMap[row.load_id] = row.n;
@@ -2014,7 +2017,7 @@ app.get('/loads', requireAuth, (req, res) => {
   }
   const reviewFilter = req.query.review === 'flagged' ? 'flagged' : '';
   const flaggedClause = reviewFilter ? " WHERE IFNULL(l.review_status, '') = 'flagged_missing_info'" : '';
-  const loads = attachTickets(db.prepare(loadQuery + flaggedClause + ' ORDER BY l.created_at DESC').all()).map(annotatePay);
+  const loads = attachTickets(db.prepare(loadQuery + flaggedClause + loadDateOrderSql).all()).map(annotatePay);
   res.render('loads', {
     user: req.session.user,
     loads,
