@@ -123,6 +123,8 @@ On Render, set them in the service dashboard. They are listed in `render.yaml` w
 - First boot on an empty `DATA_DIR`: the database is restored from the Redis snapshot (if `REDIS_URL`
   is set) or copied from the old `./dt1.db`; old `./uploads` files are copied over. Nothing on the disk
   is ever overwritten.
+- Writing that snapshot back to Redis is off unless `REDIS_SQLITE_SNAPSHOT=1` (`true`, `yes`, and `on`
+  also enable it). The off-site backup is the OneDrive zip from `GET /admin/backup`.
 - Login sessions are stored in SQLite (`sessions` table), so deploys/restarts don't sign users out.
 - `GET /admin/backup` with header `X-Backup-Token: $BACKUP_TOKEN` (or `Authorization: Bearer ...`)
   returns `dt1-tms-backup-YYYY-MM-DD.zip`: a consistent SQLite snapshot (`dt1.db`, sessions removed),
