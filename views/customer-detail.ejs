@@ -1,6 +1,6 @@
-<%- include('partials/open', { title: customer.name, user: user, active: 'customers' }) %>
+<%- include('partials/open', { title: customer.name, user: user, active: 'shippers' }) %>
 <h1><%= customer.name %></h1>
-<p><a href="/customers">All Customers</a> · <a href="/customers/<%= customer.id %>/edit">Edit Customer</a></p>
+<p><a href="/shippers">All Shippers</a> · <a href="/shippers/<%= customer.id %>/edit">Edit Shipper</a></p>
     <div class="card">
       <div><strong>Point of Contact:</strong> <%= customer.poc_name || '—' %></div>
       <div><strong>Phone:</strong> <%= customer.poc_phone || '—' %></div>
@@ -31,7 +31,7 @@
     <div class="card">
       <h3>Add Project</h3>
       <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
-      <form method="POST" action="/customers/<%= customer.id %>/projects" id="projectForm">
+      <form method="POST" action="/shippers/<%= customer.id %>/projects" id="projectForm">
         <label>Project Name</label>
         <input type="text" name="project_name" required placeholder="e.g. Hunters Pad" value="<%= typeof draft !== 'undefined' && draft.project_name ? draft.project_name : '' %>">
         <p class="muted">Saved as <%= customer.name %> - Project Name. If the name already starts with "<%= customer.name %> - ", the prefix is not repeated.</p>

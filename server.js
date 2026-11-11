@@ -44,6 +44,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
   res.on('finish', () => {
+    if (!redisSqliteSnapshotsEnabled()) return;
     persistDatabaseSnapshot().catch((err) => console.error('SQLite snapshot failed:', err.message));
   });
   next();
@@ -1111,7 +1112,7 @@ function submittedLoadGaps(load, hasFile) {
   const gaps = [];
   if (!load.driver_id) gaps.push('Driver');
   if (!load.truck_id) gaps.push('Truck');
-  if (!load.project_id) gaps.push('Customer / Project');
+  if (!load.project_id) gaps.push('Shipper / Project');
   if (!load.load_date) gaps.push('Load Date');
   if (!String(load.ticket_number || '').trim()) gaps.push('Ticket #');
   const flatPay = load.driver_pay_type === 'flat';
@@ -1188,6 +1189,9 @@ const loadQuery = `
   LEFT JOIN projects p ON l.project_id = p.id
   LEFT JOIN customers c ON c.id = p.customer_id
 `;
+
+// Newest load date first; NULL or blank dates last. Same date falls back to newer id.
+const loadDateOrderSql = " ORDER BY (l.load_date IS NULL OR l.load_date = ''), l.load_date DESC, l.id DESC";
 
 // Routes
 function blankToNull(value) {
@@ -1398,8 +1402,8 @@ function collectAlerts(user) {
   }
 
   const loads = user.role === 'admin'
-    ? db.prepare(loadQuery + ' ORDER BY l.created_at DESC').all()
-    : db.prepare(loadQuery + ' WHERE l.driver_id = ? ORDER BY l.created_at DESC').all(user.id);
+    ? db.prepare(loadQuery + loadDateOrderSql).all()
+    : db.prepare(loadQuery + ' WHERE l.driver_id = ?' + loadDateOrderSql).all(user.id);
   const docMap = {};
   db.prepare('SELECT load_id, COUNT(*) AS n FROM documents GROUP BY load_id').all().forEach((row) => {
     docMap[row.load_id] = row.n;
@@ -1762,8 +1766,8 @@ function complianceSummary(levels) {
   return { level: worst, label: labels[worst] || 'Compliant' };
 }
 
-// Customers and projects (admin)
-app.get('/customers', requireAdmin, (req, res) => {
+// Shippers and projects (admin). The `customers` table and `customer_id` column stay as-is.
+app.get('/shippers', requireAdmin, (req, res) => {
   const customers = db.prepare('SELECT * FROM customers ORDER BY name').all();
   const projects = db.prepare('SELECT * FROM projects ORDER BY display_name').all();
   const projectsByCustomer = {};
@@ -1774,41 +1778,41 @@ app.get('/customers', requireAdmin, (req, res) => {
   res.render('customers', { user: req.session.user, customers, projectsByCustomer });
 });
 
-app.get('/customers/new', requireAdmin, (req, res) => {
+app.get('/shippers/new', requireAdmin, (req, res) => {
   res.render('customer-form', { user: req.session.user, customer: { terms: 'Net 30', status: 'active' } });
 });
 
-app.post('/customers', requireAdmin, (req, res) => {
+app.post(['/shippers', '/customers'], requireAdmin, (req, res) => {
   const customer = readCustomer(req.body);
   if (!customer.name) {
-    return res.status(400).render('customer-form', { user: req.session.user, customer, error: 'Customer name is required' });
+    return res.status(400).render('customer-form', { user: req.session.user, customer, error: 'Shipper name is required' });
   }
   const result = db.prepare(`
     INSERT INTO customers (name, address_line1, address_line2, poc_name, poc_phone, poc_email, terms, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(customer.name, customer.address_line1, customer.address_line2, customer.poc_name, customer.poc_phone, customer.poc_email, customer.terms, customer.status);
-  res.redirect('/customers/' + result.lastInsertRowid);
+  res.redirect('/shippers/' + result.lastInsertRowid);
 });
 
-app.get('/customers/:id', requireAdmin, (req, res) => {
+app.get('/shippers/:id', requireAdmin, (req, res) => {
   const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(req.params.id);
-  if (!customer) return res.redirect('/customers');
+  if (!customer) return res.redirect('/shippers');
   const projects = db.prepare('SELECT * FROM projects WHERE customer_id = ? ORDER BY project_name').all(customer.id);
   res.render('customer-detail', { user: req.session.user, customer, projects });
 });
 
-app.get('/customers/:id/edit', requireAdmin, (req, res) => {
+app.get('/shippers/:id/edit', requireAdmin, (req, res) => {
   const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(req.params.id);
-  if (!customer) return res.redirect('/customers');
+  if (!customer) return res.redirect('/shippers');
   res.render('customer-form', { user: req.session.user, customer });
 });
 
-app.post('/customers/:id', requireAdmin, (req, res) => {
+app.post(['/shippers/:id', '/customers/:id'], requireAdmin, (req, res) => {
   const existing = db.prepare('SELECT * FROM customers WHERE id = ?').get(req.params.id);
-  if (!existing) return res.redirect('/customers');
+  if (!existing) return res.redirect('/shippers');
   const customer = { ...readCustomer(req.body, existing), id: existing.id };
   if (!customer.name) {
-    return res.status(400).render('customer-form', { user: req.session.user, customer, error: 'Customer name is required' });
+    return res.status(400).render('customer-form', { user: req.session.user, customer, error: 'Shipper name is required' });
   }
   db.prepare(`
     UPDATE customers
@@ -1816,12 +1820,12 @@ app.post('/customers/:id', requireAdmin, (req, res) => {
     WHERE id = ?
   `).run(customer.name, customer.address_line1, customer.address_line2, customer.poc_name, customer.poc_phone, customer.poc_email, customer.terms, customer.status, existing.id);
   refreshProjectDisplayNames(existing.id);
-  res.redirect('/customers/' + existing.id);
+  res.redirect('/shippers/' + existing.id);
 });
 
-app.post('/customers/:id/projects', requireAdmin, (req, res) => {
+app.post(['/shippers/:id/projects', '/customers/:id/projects'], requireAdmin, (req, res) => {
   const customer = db.prepare('SELECT * FROM customers WHERE id = ?').get(req.params.id);
-  if (!customer) return res.redirect('/customers');
+  if (!customer) return res.redirect('/shippers');
   const parsed = readProject(req.body, customer);
   const projects = db.prepare('SELECT * FROM projects WHERE customer_id = ? ORDER BY project_name').all(customer.id);
   if (parsed.error) {
@@ -1839,7 +1843,13 @@ app.post('/customers/:id/projects', requireAdmin, (req, res) => {
       has_drive_time, default_drive_time_amount, default_driver_pay_type, default_driver_flat_rate, status
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.status);
-  res.redirect('/customers/' + customer.id);
+  res.redirect('/shippers/' + customer.id);
+});
+
+// Bookmarks of the old shipper URLs. POST still uses the handlers above.
+app.get(['/customers/new', '/customers/:id/edit', '/customers/:id', '/customers'], (req, res) => {
+  const query = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+  res.redirect(302, req.path.replace(/^\/customers(?=\/|$)/, '/shippers') + query);
 });
 
 app.get('/projects', requireAdmin, (req, res) => {
@@ -1866,7 +1876,7 @@ app.post('/projects', requireAdmin, (req, res) => {
       user: req.session.user,
       project: req.body,
       customers,
-      error: 'Select a customer'
+      error: 'Select a shipper'
     });
   }
   const parsed = readProject(req.body, customer);
@@ -1884,7 +1894,7 @@ app.post('/projects', requireAdmin, (req, res) => {
       has_drive_time, default_drive_time_amount, default_driver_pay_type, default_driver_flat_rate, status
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.status);
-  res.redirect('/customers/' + customer.id);
+  res.redirect('/shippers/' + customer.id);
 });
 
 app.get('/projects/:id/edit', requireAdmin, (req, res) => {
@@ -1904,7 +1914,7 @@ app.post('/projects/:id', requireAdmin, (req, res) => {
       user: req.session.user,
       project: { ...existing, ...req.body },
       customers,
-      error: 'Select a customer'
+      error: 'Select a shipper'
     });
   }
   const parsed = readProject(req.body, customer, existing);
@@ -1923,7 +1933,7 @@ app.post('/projects/:id', requireAdmin, (req, res) => {
         default_driver_pay_type = ?, default_driver_flat_rate = ?, status = ?
     WHERE id = ?
   `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.status, existing.id);
-  res.redirect('/customers/' + customer.id);
+  res.redirect('/shippers/' + customer.id);
 });
 
 // Loads routes
@@ -2010,7 +2020,7 @@ app.get('/loads', requireAuth, (req, res) => {
   }
   const reviewFilter = req.query.review === 'flagged' ? 'flagged' : '';
   const flaggedClause = reviewFilter ? " WHERE IFNULL(l.review_status, '') = 'flagged_missing_info'" : '';
-  const loads = attachTickets(db.prepare(loadQuery + flaggedClause + ' ORDER BY l.created_at DESC').all()).map(annotatePay);
+  const loads = attachTickets(db.prepare(loadQuery + flaggedClause + loadDateOrderSql).all()).map(annotatePay);
   res.render('loads', {
     user: req.session.user,
     loads,
@@ -4648,15 +4658,22 @@ async function restoreDatabaseSnapshot() {
   return true;
 }
 
+// Opt-in writes of dt1.db into Redis. Off unless REDIS_SQLITE_SNAPSHOT is 1, true, yes, or on.
+// Request, boot, and shutdown writes all honor this flag. Restore-on-boot does not.
+function redisSqliteSnapshotsEnabled() {
+  const flag = String(process.env.REDIS_SQLITE_SNAPSHOT || '').trim().toLowerCase();
+  return flag === '1' || flag === 'true' || flag === 'yes' || flag === 'on';
+}
+
 async function writeDatabaseSnapshot() {
-  if (!process.env.REDIS_URL || !db) return;
+  if (!redisSqliteSnapshotsEnabled() || !process.env.REDIS_URL || !db) return;
   const payload = db.serialize().toString('base64');
   const client = await redis();
   await client.command(['SET', SNAPSHOT_KEY, payload]);
 }
 
 function persistDatabaseSnapshot() {
-  if (!process.env.REDIS_URL || !db) return Promise.resolve();
+  if (!redisSqliteSnapshotsEnabled() || !process.env.REDIS_URL || !db) return Promise.resolve();
   const job = snapshotChain.then(writeDatabaseSnapshot, writeDatabaseSnapshot);
   snapshotChain = job.catch(() => {});
   return job;
@@ -4681,7 +4698,7 @@ async function boot() {
   db = new Database(dbPath);
   db.pragma('foreign_keys = ON');
   initDB();
-  if (process.env.REDIS_URL) {
+  if (process.env.REDIS_URL && redisSqliteSnapshotsEnabled()) {
     try {
       await persistDatabaseSnapshot();
       console.log('Saved SQLite snapshot to Redis');
@@ -4701,6 +4718,11 @@ async function boot() {
     const done = () => process.exit(0);
     const timer = setTimeout(done, 4000);
     timer.unref();
+    // Same flag as the request and boot writes. A disabled snapshot must not run on the way out.
+    if (!redisSqliteSnapshotsEnabled()) {
+      done();
+      return;
+    }
     persistDatabaseSnapshot()
       .catch((err) => console.error('Shutdown snapshot failed:', err.message))
       .finally(done);

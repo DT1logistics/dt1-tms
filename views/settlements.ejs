@@ -59,9 +59,9 @@
 <% } %>
 
 <% if (user.role === 'admin') { %>
-  <h2>Weekly Customer Invoices</h2>
+  <h2>Weekly Shipper Invoices</h2>
   <p class="muted">
-    Approved loads grouped by customer and project.
+    Approved loads grouped by shipper and project.
     Latest EIA surcharge: <%= money(surchargePercent) %>%<% if (fuelRate) { %> (effective <%= fuelRate.effective_date %>)<% } else { %> (no fuel rate saved yet)<% } %>.
     Fuel surcharge applies only to loads marked Includes Fuel Surcharge, and each load uses the fuel rate for its own week
     (the latest Fuel Rate effective on or before the Load Date): FSC % = (Weekly Diesel − $4.00) ÷ 10,

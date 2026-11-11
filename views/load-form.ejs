@@ -5,7 +5,7 @@
   <div class="reject-note"><strong>This load was sent back as a draft.</strong> <%= load.rejection_reason %></div>
 <% } %>
 <% if (!projects || !projects.length) { %>
-  <p>No active projects yet. An admin needs to add a customer and project before a load can be entered.</p>
+  <p>No active projects yet. An admin needs to add a shipper and project before a load can be entered.</p>
 <% } %>
 <form method="POST" action="<%= load && load.id ? '/loads/' + load.id : '/loads' %>" enctype="multipart/form-data" id="loadForm">
   <% const adminModes = user.role === 'admin' && (!load.id || !load.status || load.status === 'draft'); %>

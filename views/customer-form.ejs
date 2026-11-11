@@ -1,8 +1,8 @@
-<%- include('partials/open', { title: (customer && customer.id ? 'Edit Customer' : 'Add Customer'), user: user, active: 'customers' }) %>
-<h1><%= customer && customer.id ? 'Edit Customer' : 'Add Customer' %></h1>
+<%- include('partials/open', { title: (customer && customer.id ? 'Edit Shipper' : 'Add Shipper'), user: user, active: 'shippers' }) %>
+<h1><%= customer && customer.id ? 'Edit Shipper' : 'Add Shipper' %></h1>
 <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
-    <form method="POST" action="<%= customer && customer.id ? '/customers/' + customer.id : '/customers' %>">
-      <label>Customer Name</label>
+    <form method="POST" action="<%= customer && customer.id ? '/shippers/' + customer.id : '/shippers' %>">
+      <label>Shipper Name</label>
       <input type="text" name="name" value="<%= customer.name || '' %>" placeholder="e.g. Synagro" required>
       <label>Billing Address (Street)</label>
       <input type="text" name="address_line1" value="<%= customer.address_line1 || '' %>" placeholder="e.g. 1681 Tappahannock BLVD">
@@ -23,7 +23,7 @@
           <option value="inactive" <%= customer.status === 'inactive' ? 'selected' : '' %>>Inactive</option>
         </select>
       <% } %>
-      <button type="submit">Save Customer</button>
+      <button type="submit">Save Shipper</button>
     </form>
-    <p><a href="<%= customer && customer.id ? '/customers/' + customer.id : '/customers' %>">Back</a></p>
+    <p><a href="<%= customer && customer.id ? '/shippers/' + customer.id : '/shippers' %>">Back</a></p>
 <%- include('partials/close') %>

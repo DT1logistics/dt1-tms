@@ -1,14 +1,14 @@
-<%- include('partials/open', { title: `Customers &amp; Projects`, user: user, active: 'customers' }) %>
-<h1>Customers &amp; Projects</h1>
-<a href="/customers/new" class="btn">+ Add Customer</a>
+<%- include('partials/open', { title: 'Shippers & Projects', user: user, active: 'shippers' }) %>
+<h1>Shippers &amp; Projects</h1>
+<a href="/shippers/new" class="btn">+ Add Shipper</a>
     <a href="/projects" class="btn">All Projects</a>
     <% if (!customers.length) { %>
-      <p>No customers yet.</p>
+      <p>No shippers yet.</p>
     <% } else { %>
       <% customers.forEach(customer => { %>
         <% const projects = projectsByCustomer[customer.id] || []; %>
         <div class="card">
-          <div><a href="/customers/<%= customer.id %>"><strong><%= customer.name %></strong></a> <span class="muted">(<%= customer.status || 'active' %>)</span></div>
+          <div><a href="/shippers/<%= customer.id %>"><strong><%= customer.name %></strong></a> <span class="muted">(<%= customer.status || 'active' %>)</span></div>
           <div class="muted">Point of Contact: <%= customer.poc_name || '—' %></div>
           <div class="muted">Phone: <%= customer.poc_phone || '—' %> · Email: <%= customer.poc_email || '—' %></div>
           <div class="muted">Billing: <%= customer.address_line1 || '—' %><% if (customer.address_line2) { %>, <%= customer.address_line2 %><% } %></div>
