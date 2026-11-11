@@ -13,8 +13,8 @@
       <span class="status cleared">Accepted</span>
     <% } %>
   </div>
-  <% if (load.status === 'approved' && load.settlement_status !== 'approved') { %>
-    <div class="muted">Pending Driver Settlement Approval<%= load.load_date ? ' · ' + settlementWeekLabel(load.load_date) : '' %></div>
+  <% if (load.status === 'approved' && load.settlement_status !== 'approved' && load.load_date) { %>
+    <div class="muted"><%= settlementWeekLabel(load.load_date) %></div>
   <% } %>
   <% if (load.status === 'draft' && load.rejection_reason) { %>
     <div class="reject-note"><strong>Rejected — needs a fix:</strong> <%= load.rejection_reason %></div>

@@ -102,7 +102,7 @@
             <% invoice.loads.forEach(function (load) { %>
               <tr>
                 <td><%= formatLoadDate(load.load_date) || '—' %></td>
-                <td><%= load.ticket_number || '—' %></td>
+                <td><%= load.ticket_number || '—' %><div class="muted"><%= loadStatusLabel(load.status, load.settlement_status) %></div></td>
                 <td><%= load.origin || '—' %></td>
                 <td><%= load.destination || load.description || '—' %></td>
                 <td class="num"><%= load.weight_quantity != null ? load.weight_quantity : '—' %></td>

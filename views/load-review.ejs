@@ -4,10 +4,8 @@
   <span class="status <%= load.status %>"><%= loadStatusLabel(load.status, load.settlement_status) %></span>
   <% const origin = loadOriginLabel(load); %>
   <% if (origin) { %><span class="origin-badge"><%= origin %></span><% } %>
-  <% if (load.status === 'approved' && load.settlement_status !== 'approved') { %>
-    <span class="muted">Pending Driver Settlement Approval<%= load.load_date ? ' · ' + settlementWeekLabel(load.load_date) : '' %></span>
-  <% } else if (load.settlement_status === 'approved') { %>
-    <span class="muted">Included in the approved driver settlement<%= load.load_date ? ' · ' + settlementWeekLabel(load.load_date) : '' %></span>
+  <% if (load.load_date && (load.status === 'approved' || load.settlement_status === 'approved')) { %>
+    <span class="muted"><%= settlementWeekLabel(load.load_date) %></span>
   <% } %>
 </p>
 <% if (saved === 'assigned') { %>
@@ -38,8 +36,8 @@
     </div>
   </div>
 <% } %>
-<% if (saved === 'approved') { %><div class="all-clear">Load approved. It is pending driver settlement approval<%= load.load_date ? ' for the ' + settlementWeekLabel(load.load_date) : '' %>.</div><% } %>
-<% if (saved === 'rejected') { %><div class="reject-note">Load sent back to the driver as a draft.</div><% } %>
+<% if (saved === 'approved') { %><div class="all-clear"><%= loadStatusLabel(load.status, load.settlement_status) %><%= load.load_date ? ' · ' + settlementWeekLabel(load.load_date) : '' %>.</div><% } %>
+<% if (saved === 'rejected') { %><div class="reject-note">Load sent back to the driver as Draft.</div><% } %>
 <% if (saved === 'edited') { %><div class="all-clear">Load saved.</div><% } %>
 <% if (saved === 'flag') { %><div class="all-clear">Missing info flag saved.</div><% } %>
 <% if (saved === 'review') { %><div class="all-clear">Review notes saved.</div><% } %>
@@ -340,7 +338,7 @@
       </form>
     <% } %>
     <% if (load.status === 'submitted' || load.status === 'approved') { %>
-      <form method="POST" action="/loads/<%= load.id %>/reject" onsubmit="return confirm('Send this load back to the driver as a draft?');">
+      <form method="POST" action="/loads/<%= load.id %>/reject" onsubmit="return confirm('Send this load back to the driver as Draft?');">
         <label>Rejection reason</label>
         <textarea name="rejection_reason" rows="3" placeholder="Tell the driver what to fix"></textarea>
         <button class="danger" type="submit">Reject to Draft</button>
