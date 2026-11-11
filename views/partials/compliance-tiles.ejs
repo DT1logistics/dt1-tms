@@ -7,7 +7,7 @@
       <% } else { %>
         <span class="compliance-counts">
           <% if (tile.redCount) { %><span class="badge red"><%= tile.redCount %> out of compliance</span><% } %>
-          <% if (tile.yellowCount) { %><span class="badge yellow"><%= tile.yellowCount %> expiring soon</span><% } %>
+          <% if (tile.yellowCount) { %><span class="badge yellow"><%= tile.yellowCount %> <%= tile.yellowLabel || 'expiring soon' %></span><% } %>
         </span>
       <% } %>
     </a>

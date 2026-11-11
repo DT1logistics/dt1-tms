@@ -1214,13 +1214,11 @@ function assessLoad(load, hasFile) {
     notes.push(note);
   };
   if (load.status === 'submitted') bump('yellow', loadStatusLabel(load.status, load.settlement_status));
-  if (!hasFile && !load.ticket_number) bump('red', 'Missing ticket number and ticket file');
+  if (!hasFile && !load.ticket_number) bump('yellow', 'Missing ticket number and ticket file');
   else if (!hasFile) bump('yellow', 'Missing ticket file');
   else if (!load.ticket_number) bump('yellow', 'Missing ticket number');
   const rateMissing = load.driver_pay_type !== 'flat' && (load.rate == null || Number(load.rate) === 0);
-  if (rateMissing && load.status !== 'draft') {
-    bump(load.status === 'approved' ? 'red' : 'yellow', 'Rate not set');
-  }
+  if (rateMissing && load.status !== 'draft') bump('yellow', 'Rate not set');
   return { level, detail: notes.length ? notes.join(' · ') : 'Active' };
 }
 
@@ -1410,19 +1408,18 @@ function collectAlerts(user) {
     const note = String(load.review_notes || load.missing_info_note || '').trim();
     const flagged = load.review_status === 'flagged_missing_info' || String(load.missing_info_note || '').trim();
     if (user.role === 'admin' && flagged) {
-      pushAlert(alerts, 'red', 'Load', name, `Missing info flag: ${note || 'Missing information'}`, href);
+      pushAlert(alerts, 'yellow', 'Load', name, `Missing info flag: ${note || 'Missing information'}`, href);
     }
     if (user.role === 'admin' && load.review_decision === 'rejected') {
       const why = String(load.review_decision_reason || '').trim();
-      pushAlert(alerts, 'red', 'Load', name, why ? `Rejected: ${why}` : 'Rejected', href);
+      pushAlert(alerts, 'yellow', 'Load', name, why ? `Rejected: ${why}` : 'Rejected', href);
     }
     if (load.status === 'draft') return;
     const hasFile = (docMap[load.id] || 0) > 0;
     if (user.role === 'admin' && load.status === 'submitted') {
       const gaps = submittedLoadGaps(load, hasFile);
       if (gaps.length) {
-        const onlyTruck = gaps.length === 1 && gaps[0] === 'Truck';
-        pushAlert(alerts, onlyTruck ? 'yellow' : 'red', 'Load', name, `Submitted load missing: ${gaps.join(', ')}`, href);
+        pushAlert(alerts, 'yellow', 'Load', name, `Submitted load missing: ${gaps.join(', ')}`, href);
       } else {
         pushAlert(alerts, 'yellow', 'Load', name, loadStatusLabel(load.status, load.settlement_status), href);
       }
@@ -1430,7 +1427,7 @@ function collectAlerts(user) {
     }
     const title = load.ticket_number || name;
     if (!hasFile && !load.ticket_number) {
-      pushAlert(alerts, 'red', 'Load', title, 'Missing ticket number and ticket file', href);
+      pushAlert(alerts, 'yellow', 'Load', title, 'Missing ticket number and ticket file', href);
     } else if (!hasFile) {
       pushAlert(alerts, 'yellow', 'Load', title, 'Missing ticket file', href);
     } else if (!load.ticket_number) {
@@ -1438,7 +1435,7 @@ function collectAlerts(user) {
     }
     const rateMissing = load.driver_pay_type !== 'flat' && (load.rate == null || Number(load.rate) === 0);
     if (rateMissing && load.status !== 'draft') {
-      pushAlert(alerts, load.status === 'approved' ? 'red' : 'yellow', 'Load', title, 'Rate not set', href);
+      pushAlert(alerts, 'yellow', 'Load', title, 'Rate not set', href);
     }
   });
 
