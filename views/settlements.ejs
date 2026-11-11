@@ -2,7 +2,7 @@
 <h1><%= user.role === 'admin' ? 'Settlements & Invoices' : 'Settlements' %></h1>
 <% if (saved === 'week') { %><div class="all-clear">Weekly driver settlement approved. Those loads are now under Driver Settlements.</div><% } %>
 <% if (user.role === 'admin') { %>
-  <p class="muted">Approve a driver’s Monday–Sunday settlement after the loads for that week are approved. Percentage loads and flat daily-rate loads in the same week add together. Fuel surcharge is never included in driver pay.</p>
+  <p class="muted">Approve a driver’s Monday–Sunday settlement after the loads for that week are approved. Percentage loads and flat daily-rate loads in the same week add together. On percentage loads, drive time in driver pay is the driver’s profile pay percentage of the drive-time fee. Flat/daily-rate loads include the full drive-time fee. Self load and detention are added in full. Fuel surcharge is never included in driver pay.</p>
   <h2>Approve Weekly Driver Settlement</h2>
   <% if (pendingWeeks && pendingWeeks.length) { %>
     <% pendingWeeks.forEach(function (group) { %>
@@ -30,7 +30,7 @@
     <p>No approved loads are waiting for weekly settlement approval.</p>
   <% } %>
 <% } else { %>
-  <p class="muted">Approved weekly settlements and the driver pay for each load. Fuel surcharge is not included.</p>
+  <p class="muted">Approved weekly settlements and the driver pay for each load. On percentage loads, the Drive Time line is your pay percentage of the drive-time fee. Flat/daily-rate loads include the full drive-time fee. Self load and detention are added in full. Fuel surcharge is not included.</p>
 <% } %>
 
 <h2>Driver Settlements</h2>

@@ -144,7 +144,10 @@ function calcDriverPay(load) {
   const linehaul = qty * rate;
   const flat = load && load.driver_pay_type === 'flat';
   const base = flat ? (Number(load.driver_flat_rate) || 0) : linehaul * (percentage / 100);
-  const drive = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
+  const driveFee = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
+  // Percentage loads pay the driver's profile percent of the stored drive-time fee.
+  // Flat/daily-rate loads keep the full fee. `drive` is the amount included in driver pay.
+  const drive = flat ? driveFee : roundMoney(driveFee * (percentage / 100));
   const self = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
   const detention = Number(load.detention) ? (Number(load.detention_amount) || 0) : 0;
   const basis = flat

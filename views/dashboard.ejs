@@ -11,7 +11,7 @@
   <%- include('partials/levels', { levels: levels }) %>
   <%- include('partials/assigned-loads-banner', { assignedLoads: typeof assignedLoads !== 'undefined' ? assignedLoads : [] }) %>
   <h2>Your Loads</h2>
-  <p class="muted">Approved loads stay here until an admin approves the weekly driver settlement. Driver pay does not include fuel surcharge.</p>
+  <p class="muted">Approved loads stay here until an admin approves the weekly driver settlement. On percentage loads, drive time in driver pay is your pay percentage of the drive-time fee. Self load and detention are added in full. Driver pay does not include fuel surcharge.</p>
   <%- include('partials/week-summaries', { weekGroups: weekGroups, undatedLoads: undatedLoads, user: user }) %>
 <% } else { %>
   <h1>Home</h1>
