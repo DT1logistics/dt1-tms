@@ -13,7 +13,7 @@
     <% } %>
     <% if (user.role === 'admin') { %>
       <div class="nav-label">Admin</div>
-      <a class="<%= active === 'customers' ? 'active' : '' %>" href="/customers">Customers &amp; Projects</a>
+      <a class="<%= active === 'shippers' ? 'active' : '' %>" href="/shippers">Shippers &amp; Projects</a>
       <a class="<%= active === 'projects' ? 'active' : '' %>" href="/projects">Projects</a>
       <a class="<%= active === 'settlements' ? 'active' : '' %>" href="/settlements">Settlements &amp; Invoices</a>
       <a class="<%= active === 'drivers' ? 'active' : '' %>" href="/drivers">Drivers</a>
