@@ -10,9 +10,9 @@
         <%= week.count %> load<%= week.count === 1 ? '' : 's' %>
         · Qty/Wet Ton <%= week.qty %>
         · Driver Pay $<%= money(week.approvedPay) %>
-        · Approved <%= week.approvedCount %>
-        · Submitted <%= week.submittedCount %>
-        · Draft <%= week.draftCount %>
+        · <%= loadStatusLabel('approved', null) %> <%= week.approvedCount %>
+        · <%= loadStatusLabel('submitted', null) %> <%= week.submittedCount %>
+        · <%= loadStatusLabel('draft', null) %> <%= week.draftCount %>
       </div>
     </summary>
     <div class="week-loads">

@@ -9,6 +9,7 @@ const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 const fuelCalc = require('./lib/fuel-surcharge');
 const loadDate = require('./lib/load-date');
+const { loadStatusLabel } = require('./lib/load-status');
 const loadReview = require('./lib/load-review');
 const loganWebhook = require('./lib/logan-webhook');
 const quoWebhook = require('./lib/quo-webhook');
@@ -79,14 +80,6 @@ function getStatusText(exp) {
 
 app.locals.getStatusClass = getStatusClass;
 app.locals.getStatusText = getStatusText;
-
-function loadStatusLabel(status, settlementStatus) {
-  if (status === 'approved' && settlementStatus === 'approved') return 'Settled';
-  if (status === 'approved') return 'Approved (Pending Settlement)';
-  if (status === 'submitted') return 'Submitted';
-  if (status === 'draft') return 'Draft';
-  return status || 'Draft';
-}
 
 function loadOriginLabel(load) {
   if (!load) return '';
@@ -1220,7 +1213,7 @@ function assessLoad(load, hasFile) {
     if (rankLevel(next) < rankLevel(level)) level = next;
     notes.push(note);
   };
-  if (load.status === 'submitted') bump('yellow', 'Pending review');
+  if (load.status === 'submitted') bump('yellow', loadStatusLabel(load.status, load.settlement_status));
   if (!hasFile && !load.ticket_number) bump('red', 'Missing ticket number and ticket file');
   else if (!hasFile) bump('yellow', 'Missing ticket file');
   else if (!load.ticket_number) bump('yellow', 'Missing ticket number');
@@ -1431,7 +1424,7 @@ function collectAlerts(user) {
         const onlyTruck = gaps.length === 1 && gaps[0] === 'Truck';
         pushAlert(alerts, onlyTruck ? 'yellow' : 'red', 'Load', name, `Submitted load missing: ${gaps.join(', ')}`, href);
       } else {
-        pushAlert(alerts, 'yellow', 'Load', name, 'Pending review', href);
+        pushAlert(alerts, 'yellow', 'Load', name, loadStatusLabel(load.status, load.settlement_status), href);
       }
       return;
     }
@@ -2041,7 +2034,7 @@ app.post('/loads/:id/approve', requireAuth, (req, res) => {
         rejection_reason = NULL, rejected_by = NULL, rejected_by_name = NULL, rejected_at = NULL
     WHERE id = ? AND status = 'submitted'
   `).run(req.session.user.id, actorName(req), req.params.id);
-  if (result.changes) logAudit(req, 'Approved', 'load', req.params.id, 'Load approved');
+  if (result.changes) logAudit(req, 'Approved', 'load', req.params.id, loadStatusLabel('approved', null));
   res.redirect(`/loads/${req.params.id}${result.changes ? '?saved=approved' : ''}`);
 });
 

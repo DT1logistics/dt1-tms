@@ -2,7 +2,7 @@
 <h1><%= load && load.id ? 'Edit Load' : 'New Load' %></h1>
 <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
 <% if (load && load.status === 'draft' && load.rejection_reason) { %>
-  <div class="reject-note"><strong>This load was sent back as a draft.</strong> <%= load.rejection_reason %></div>
+  <div class="reject-note"><strong>This load was sent back as Draft.</strong> <%= load.rejection_reason %></div>
 <% } %>
 <% if (!projects || !projects.length) { %>
   <p>No active projects yet. An admin needs to add a shipper and project before a load can be entered.</p>
