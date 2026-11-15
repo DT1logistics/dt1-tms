@@ -353,7 +353,7 @@
   <div class="review-actions">
     <% if (load.status === 'submitted') { %>
       <form method="POST" action="/loads/<%= load.id %>/approve">
-        <button class="approve" type="submit">Approve</button>
+        <button class="approve" type="submit">Approve for Settlement</button>
       </form>
     <% } %>
     <% if (load.status === 'submitted' || load.status === 'approved') { %>
