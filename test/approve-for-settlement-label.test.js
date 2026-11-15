@@ -1,5 +1,6 @@
 // Item 7 (11/15/2026): the Review Load button that approves a submitted load for settlement
-// reads "Approve for Settlement". Run: npm test
+// reads "Approve for Settlement". The New Load form's approve button reads
+// "Submit & Approve for Settlement" (11/15/2026, with items 5/6/10). Run: npm test
 const assert = require('assert');
 const h = require('./helpers/server');
 
@@ -24,6 +25,17 @@ const h = require('./helpers/server');
       assert.strictEqual(h.readRows(dataDir, 'SELECT status FROM loads WHERE id = ?', [id])[0].status, 'approved');
       const after = await h.request(srv.port, { Cookie: h.cookieHeader(admin) }, { path: `/loads/${id}` });
       assert.ok(!after.body.includes('>Approve for Settlement</button>'), 'button only shows on submitted loads');
+    });
+    await check('New Load form: the approve button reads "Submit & Approve for Settlement"', async () => {
+      const page = await h.request(srv.port, { Cookie: h.cookieHeader(admin) }, { path: '/loads/new' });
+      assert.strictEqual(page.status, 200);
+      assert.ok(page.body.includes('<button type="submit" name="action" value="approve" data-admin-mode="enter">Submit &amp; Approve for Settlement</button>'));
+      assert.ok(!page.body.includes('Submit &amp; Approve Load'));
+      const res = await h.request(srv.port, ids.auth, { method: 'POST', path: '/loads', body: h.form({
+        action: 'approve', load_date: '2026-11-11', ticket_number: 'NEW-APPROVE', project_id: ids.projectId, driver_id: ids.driverId, weight_quantity: '1', rate: '10'
+      }) });
+      assert.strictEqual(res.status, 302);
+      assert.strictEqual(h.readRows(dataDir, "SELECT status FROM loads WHERE ticket_number = 'NEW-APPROVE'")[0].status, 'approved');
     });
   } finally {
     await h.stop(srv.child);

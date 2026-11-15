@@ -241,7 +241,7 @@
     <% } else if (user.role === 'admin') { %>
       <button type="submit" name="action" value="draft" class="btn-draft" data-admin-mode="assign">Assign Load to Driver (Draft)</button>
       <button type="submit" name="action" value="submit" data-admin-mode="enter">Submit Load for Driver</button>
-      <button type="submit" name="action" value="approve" data-admin-mode="enter">Submit &amp; Approve Load</button>
+      <button type="submit" name="action" value="approve" data-admin-mode="enter">Submit &amp; Approve for Settlement</button>
     <% } else if (load && load.id && load.status === 'submitted') { %>
       <button type="submit" name="action" value="submit">Save Changes</button>
     <% } else { %>
