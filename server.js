@@ -366,27 +366,51 @@ const expenseUpload = multer({
 // Nightly backup download: GET /admin/backup with header "X-Backup-Token: <BACKUP_TOKEN>"
 // (or "Authorization: Bearer <BACKUP_TOKEN>"). 404 when BACKUP_TOKEN isn't configured, 401 on a bad token.
 // Streams a .zip with a consistent SQLite snapshot (dt1.db), the uploads folder and manifest.json.
+// The snapshot is a temp file in DATA_DIR (deleted afterwards) and the zip is streamed in chunks, so a
+// backup never holds the database or uploads in memory. Only one backup runs at a time: a second request
+// while one is in progress gets 429 with Retry-After (it used to stack up and run the server out of memory).
+const BACKUP_RETRY_AFTER_SECONDS = 120;
+let backupInProgress = false;
 app.get('/admin/backup', async (req, res) => {
   const expected = process.env.BACKUP_TOKEN;
   res.setHeader('Cache-Control', 'no-store');
   if (!backup.backupEnabled(expected)) return res.status(404).send('Not found');
   if (!backup.tokenMatches(backup.tokenFromRequest(req), expected)) return res.status(401).send('Unauthorized');
+  if (backupInProgress) {
+    res.setHeader('Retry-After', String(BACKUP_RETRY_AFTER_SECONDS));
+    console.log('Backup request refused: another backup is already running');
+    return res.status(429).send('A backup is already running. Try again later.');
+  }
+  backupInProgress = true;
+  const started = Date.now();
   try {
-    const { buffer, manifest } = await backup.buildBackupArchive({
+    const removed = backup.cleanupStaleSnapshots(DATA_DIR);
+    if (removed) console.log(`Removed ${removed} leftover backup snapshot file(s)`);
+    const { manifest, bytes } = await backup.streamBackupArchive({
       db,
       Database,
       uploadDir,
-      meta: { data_dir_is_persistent: DATA_DIR !== path.resolve(LEGACY_DATA_DIR), commit: process.env.RENDER_GIT_COMMIT || null }
+      tmpDir: DATA_DIR,
+      meta: { data_dir_is_persistent: DATA_DIR !== path.resolve(LEGACY_DATA_DIR), commit: process.env.RENDER_GIT_COMMIT || null },
+      out: res,
+      onReady: (m) => {
+        const stamp = m.created_at.slice(0, 10);
+        res.status(200);
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="dt1-tms-backup-${stamp}.zip"`);
+      }
     });
-    const stamp = manifest.created_at.slice(0, 10);
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Length', buffer.length);
-    res.setHeader('Content-Disposition', `attachment; filename="dt1-tms-backup-${stamp}.zip"`);
-    console.log(`Backup served: ${buffer.length} bytes, ${manifest.upload_files} upload files`);
-    return res.end(buffer);
+    // 'close' fires after a normal finish and after a disconnect, so the lock can never get stuck.
+    await new Promise((resolve) => { res.once('close', resolve); res.end(); });
+    console.log(`Backup served (streamed): ${bytes} bytes, ${manifest.upload_files} upload files, ${Date.now() - started} ms`);
+    return undefined;
   } catch (err) {
     console.error('Backup failed:', err.message);
-    return res.status(500).send('Backup failed');
+    if (!res.headersSent) return res.status(500).send('Backup failed');
+    res.destroy(); // mid-stream failure: cut the connection so the client sees a truncated download, not a bad zip
+    return undefined;
+  } finally {
+    backupInProgress = false;
   }
 });
 

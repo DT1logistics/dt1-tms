@@ -129,6 +129,10 @@ On Render, set them in the service dashboard. They are listed in `render.yaml` w
 - `GET /admin/backup` with header `X-Backup-Token: $BACKUP_TOKEN` (or `Authorization: Bearer ...`)
   returns `dt1-tms-backup-YYYY-MM-DD.zip`: a consistent SQLite snapshot (`dt1.db`, sessions removed),
   `uploads/`, and `manifest.json`. 404 if `BACKUP_TOKEN` (min 32 chars) isn't set, 401 on a bad token.
+  The zip is streamed: the snapshot is written to a temp file in `DATA_DIR` (deleted afterwards) and
+  each entry is deflated in chunks straight to the response, so memory stays flat. Only one backup runs
+  at a time; a second request meanwhile gets `429` with `Retry-After: 120`. Callers must not retry on
+  5xx or stack requests (see `run_backup.sh`: at most one retry, after 120 s, on connection failure only).
 - Restore: stop the service, put `dt1.db` and `uploads/` from the zip into `DATA_DIR`, start it.
 
 ## Passwords
