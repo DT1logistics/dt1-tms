@@ -1,0 +1,174 @@
+<%- include('partials/open', { title: 'Invoices', user: user, active: 'invoices' }) %>
+<h1>Invoices</h1>
+<nav class="sub-tabs">
+  <a href="/invoices" class="<%= tab === 'invoices' ? 'filter-on' : '' %>">Weekly Invoices</a>
+  <a href="/invoices?tab=tracker" class="<%= tab === 'tracker' ? 'filter-on' : '' %>">Invoice Tracker</a>
+</nav>
+<% if (saved === 'marked') { %><div class="all-clear">Invoice status saved.</div><% } %>
+<% if (saved === 'received') { %><div class="all-clear">Amount received saved.</div><% } %>
+<% if (saved === 'bad-amount') { %><div class="error">Enter the amount received as a number, e.g. 1250.00.</div><% } %>
+<% function markForm(invoice, mark, label, cls) { %>
+  <form method="POST" action="/invoices/mark" class="inline-form">
+    <input type="hidden" name="customer_id" value="<%= invoice.customerId %>">
+    <input type="hidden" name="week_start" value="<%= invoice.week.start %>">
+    <input type="hidden" name="return_tab" value="<%= tab %>">
+    <button type="submit" name="mark" value="<%= mark %>" class="<%= cls || '' %>"><%= label %></button>
+  </form>
+<% } %>
+
+<% if (tab === 'tracker') { %>
+  <p class="muted">One row per work week (Monday–Sunday, by Load Date), client, and project. Amount Invoiced is the current total of that project's Approved for Settlement loads for the week. Enter Amount Received when the customer pays.</p>
+  <% if (!invoices.length) { %>
+    <p>No loads Approved for Settlement yet.</p>
+  <% } else { %>
+    <div class="table-scroll">
+    <table class="invoice-tracker">
+      <thead>
+        <tr>
+          <th>Work Week</th>
+          <th>Client</th>
+          <th>Project</th>
+          <th class="num">Amount Invoiced</th>
+          <th class="num">Amount Received</th>
+          <th class="num">Balance</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% invoices.forEach(function (invoice) { %>
+          <% invoice.projects.forEach(function (project) { %>
+            <tr>
+              <td><%= invoice.week.range %><% if (invoice.week.start) { %> <span class="muted"><%= invoice.week.start.slice(0, 4) %></span><% } %></td>
+              <td><%= invoice.customer_name %></td>
+              <td><%= project.display_name %></td>
+              <td class="num"><%= usd(project.totals.total) %></td>
+              <td class="num">
+                <% if (invoice.week.start) { %>
+                  <form method="POST" action="/invoices/received" class="inline-form received-form">
+                    <input type="hidden" name="customer_id" value="<%= invoice.customerId %>">
+                    <input type="hidden" name="project_id" value="<%= project.projectId %>">
+                    <input type="hidden" name="week_start" value="<%= invoice.week.start %>">
+                    <input data-money="1" type="number" step="0.01" min="0" inputmode="decimal" name="amount_received" placeholder="0.00" value="<%= project.amountReceived != null ? Number(project.amountReceived).toFixed(2) : '' %>" aria-label="Amount received for <%= project.display_name %>, week of <%= invoice.week.range %>">
+                    <button type="submit" class="btn-small">Save</button>
+                  </form>
+                  <% if (project.receivedBy) { %><div class="muted" style="font-size:11px;">by <%= project.receivedBy %></div><% } %>
+                <% } else { %>—<% } %>
+              </td>
+              <td class="num"><%= usd(project.totals.total - (project.amountReceived || 0)) %></td>
+              <td><span class="status invoice-<%= invoice.status %>"><%= invoiceStatusLabel(invoice.status) %></span></td>
+            </tr>
+          <% }) %>
+        <% }) %>
+      </tbody>
+    </table>
+    </div>
+  <% } %>
+<% } else { %>
+  <p class="muted">
+    Loads Approved for Settlement, grouped by customer and Monday–Sunday work week (by Load Date), one section per project.
+    Amounts update when an admin edits an approved load. Mark each customer week Invoiced when it is sent and Paid when payment arrives.
+    Latest EIA surcharge: <%= money(surchargePercent) %>%<% if (fuelRate) { %> (effective <%= fuelRate.effective_date %>)<% } else { %> (no fuel rate saved yet)<% } %>.
+    Fuel surcharge applies only to loads marked Includes Fuel Surcharge, and each load uses the fuel rate for its own week.
+    Loads with a Total Load Pay are billed that amount with no fuel surcharge. Detention here is billed to the customer and is not driver pay.
+  </p>
+  <p class="load-filters">
+    <a href="/invoices" class="<%= !statusFilter ? 'filter-on' : '' %>">All</a>
+    <a href="/invoices?status=open" class="<%= statusFilter === 'open' ? 'filter-on' : '' %>">Not invoiced</a>
+    <a href="/invoices?status=invoiced" class="<%= statusFilter === 'invoiced' ? 'filter-on' : '' %>">Invoiced</a>
+    <a href="/invoices?status=paid" class="<%= statusFilter === 'paid' ? 'filter-on' : '' %>">Paid</a>
+  </p>
+  <% if (!invoices.length) { %>
+    <p><%= statusFilter ? 'No invoices with that status.' : 'No loads Approved for Settlement to invoice yet.' %></p>
+  <% } %>
+  <% invoices.forEach(function (invoice) { %>
+    <div class="card invoice-card" id="invoice-<%= invoice.customerId %>-<%= invoice.week.start %>">
+      <h3 style="margin-top:0;"><%= invoice.customer_name %> · Week of <%= invoice.week.range %></h3>
+      <p>
+        <span class="status invoice-<%= invoice.status %>"><%= invoiceStatusLabel(invoice.status) %></span>
+        <% if (invoice.number) { %><span class="muted">Invoice # <%= invoice.number %></span><% } %>
+        <% if (invoice.mark && invoice.mark.invoiced_at) { %><span class="muted"> · Invoiced by <%= invoice.mark.invoiced_by_name %> on <%= auditStamp(invoice.mark.invoiced_at) %> (<%= usd(invoice.mark.invoiced_amount) %>)</span><% } %>
+        <% if (invoice.mark && invoice.mark.paid_at) { %><span class="muted"> · Paid, marked by <%= invoice.mark.paid_by_name %> on <%= auditStamp(invoice.mark.paid_at) %></span><% } %>
+      </p>
+      <% if (invoice.changedSinceInvoiced) { %>
+        <div class="reject-note">The total changed after this invoice was marked Invoiced (was <%= usd(invoice.mark.invoiced_amount) %>, now <%= usd(invoice.totals.total) %>). Send a corrected invoice if needed.</div>
+      <% } %>
+      <div><strong>Bill To:</strong> <%= invoice.customer_name %></div>
+      <div class="muted">
+        <%= invoice.address_line1 || '' %><% if (invoice.address_line2) { %>, <%= invoice.address_line2 %><% } %>
+        <% if (invoice.poc_name) { %> · Attn: <%= invoice.poc_name %><% } %>
+        <% if (invoice.poc_phone) { %> · <%= invoice.poc_phone %><% } %>
+        <% if (invoice.poc_email) { %> · <%= invoice.poc_email %><% } %>
+        · Terms: <%= invoice.terms || 'Net 30' %>
+      </div>
+      <% invoice.projects.forEach(function (project) { %>
+        <h4>Project: <%= project.display_name %></h4>
+        <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Ticket #</th>
+              <th>Driver</th>
+              <th>Origin</th>
+              <th>Destination</th>
+              <th class="num">Qty</th>
+              <th class="num">Rate</th>
+              <th class="num" title="Paid to the driver. Not billed on the invoice.">Driver Pay</th>
+              <th class="num">Price</th>
+              <th class="num">Fuel Surcharge</th>
+              <th class="num">Self Load</th>
+              <th class="num">Travel Time</th>
+              <th class="num" title="Billed to the customer. Fuel surcharge does not apply.">Detention</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% project.loads.forEach(function (load) { %>
+              <tr>
+                <td><a href="/loads/<%= load.id %>"><%= formatLoadDate(load.load_date) || '—' %></a></td>
+                <td><%= load.ticket_number || '—' %><div class="muted"><%= loadStatusLabel(load.status, load.settlement_status) %></div></td>
+                <td><%= load.driver_name || '—' %></td>
+                <td><%= load.origin || '—' %></td>
+                <td><%= load.destination || load.description || '—' %></td>
+                <td class="num"><%= load.weight_quantity != null ? load.weight_quantity : '—' %></td>
+                <td class="num"><%= usd(load.rate) %></td>
+                <td class="num muted"><%= usd(load.payInfo ? load.payInfo.pay : 0) %></td>
+                <td class="num"><%= usd(load.hauling) %><% if (load.usesTotalLoadPay) { %><div class="muted" style="font-size:11px;">Total Load Pay</div><% } %></td>
+                <td class="num"><% if (load.usesTotalLoadPay) { %>—<div class="muted" style="font-size:11px;">in Total Load Pay</div><% } else if (load.fscApplies && load.fscPending) { %>$0.00<div class="muted" style="font-size:11px;">Rate pending</div><% } else if (load.fscApplies) { %><%= usd(load.lineFsc) %><div class="muted" style="font-size:11px;"><%= Number(load.fscPercent).toFixed(2) %>% · <%= load.fscFlat ? 'flat amount' : '$' + Number(load.fscPerTon).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') + '/ton' %></div><% } else { %>—<% } %></td>
+                <td class="num"><%= usd(load.selfLoad) %></td>
+                <td class="num"><%= usd(load.travelTime) %></td>
+                <td class="num"><%= Number(load.shipper_detention) === 1 ? usd(load.shipperDetention) : '—' %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+        </div>
+        <div class="muted project-subtotal">Project total <%= usd(project.totals.total) %></div>
+      <% }) %>
+      <% const t = invoice.totals; %>
+      <div class="totals">
+        <div class="muted driver-pay-total" title="Paid to drivers. Not part of the invoice total."><span>Driver Pay (not billed)</span><span><%= usd(t.driverPay) %></span></div>
+        <div><span>Hauling</span><span><%= usd(t.hauling) %></span></div>
+        <div><span>Fuel Surcharge<% const pcts = t.fscPercents || []; %><% if (pcts.length === 1) { %> (<%= Number(pcts[0]).toFixed(2) %>%)<% } else if (pcts.length > 1) { %> (weekly rates: <%= pcts.map(function (x) { return Number(x).toFixed(2) + '%'; }).join(', ') %>)<% } %><% if (t.fscPendingCount) { %> · <%= t.fscPendingCount %> load<%= t.fscPendingCount === 1 ? '' : 's' %> rate pending<% } %></span><span><%= usd(t.fuelSurcharge) %></span></div>
+        <div><span>Travel Time</span><span><%= usd(t.travelTime) %></span></div>
+        <div><span>Self Load</span><span><%= usd(t.selfLoad) %></span></div>
+        <div title="Billed to the customer. Fuel surcharge does not apply."><span>Detention</span><span><%= usd(t.shipperDetention) %></span></div>
+        <div class="grand"><span>TOTAL</span><span><%= usd(t.total) %></span></div>
+      </div>
+      <% if (invoice.week.start) { %>
+        <div class="invoice-actions">
+          <a class="btn btn-secondary" href="/invoices/pdf?customer_id=<%= invoice.customerId %>&amp;week_start=<%= invoice.week.start %>">Download PDF</a>
+          <% if (invoice.status === 'open') { %>
+            <% markForm(invoice, 'invoiced', 'Mark Invoiced'); %>
+            <% markForm(invoice, 'paid', 'Mark Paid', 'approve'); %>
+          <% } else if (invoice.status === 'invoiced') { %>
+            <% markForm(invoice, 'paid', 'Mark Paid', 'approve'); %>
+            <% markForm(invoice, 'open', 'Undo Invoiced', 'btn-draft'); %>
+          <% } else { %>
+            <% markForm(invoice, 'unpaid', 'Undo Paid', 'btn-draft'); %>
+          <% } %>
+        </div>
+      <% } %>
+    </div>
+  <% }) %>
+<% } %>
+<%- include('partials/close') %>

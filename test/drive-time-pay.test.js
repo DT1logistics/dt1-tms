@@ -260,18 +260,21 @@ function assertOrder(html, markers) {
       remember(driverJar, driverLogin);
       const week = await request(srv.port, { Cookie: cookieHeader(driverJar) }, { path: '/loads' });
       assert.strictEqual(week.status, 200);
-      assert.ok(week.body.includes('Driver Pay $79.74'), week.body.slice(week.body.indexOf('Driver Pay'), 80));
-      assert.ok(week.body.includes('Drive Time $4.50'));
+      // Item 5: drivers see their pay only after the weekly settlement is finalized.
+      assert.ok(!week.body.includes('$79.74'), 'driver pay hidden until the week is finalized');
+      assert.ok(!week.body.includes('Drive Time $4.50'));
       assert.ok(week.body.includes('Load Total: $135.00'));
       assert.ok(week.body.includes('Drive Time: $15.00'));
 
       const pending = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/settlements' });
       assert.strictEqual(pending.status, 200);
-      assert.ok(pending.body.includes('Driver Pay $79.74'));
-      assert.ok(pending.body.includes('<span>Travel Time</span><span>$15.00</span>'));
-      assert.ok(pending.body.includes('<span>Self Load</span><span>$20.00</span>'));
-      assert.ok(pending.body.includes('<span>TOTAL</span><span>$135.00</span>'));
-      assert.ok(pending.body.includes('<span>Detention</span><span>$0.00</span>'));
+      assert.ok(pending.body.includes('Driver Pay $79.74') || pending.body.includes('<strong>Driver Pay</strong> $79.74'));
+      // Item 5: the weekly customer invoice moved to /invoices.
+      const invoice = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/invoices' });
+      assert.ok(invoice.body.includes('<span>Travel Time</span><span>$15.00</span>'));
+      assert.ok(invoice.body.includes('<span>Self Load</span><span>$20.00</span>'));
+      assert.ok(invoice.body.includes('<span>TOTAL</span><span>$135.00</span>'));
+      assert.ok(invoice.body.includes('<span>Detention</span><span>$0.00</span>'));
       assert.ok(!pending.body.includes('Drive Time $15.00'));
       assert.ok(!pending.body.includes('$4.50</span>'));
 
@@ -288,8 +291,11 @@ function assertOrder(html, markers) {
       assert.ok(settled.body.includes('Driver Pay $79.74'));
       assert.ok(!settled.body.includes('Drive Time $15.00'));
       assert.ok(!settled.body.includes('Drive Time $15.00 ×'));
-      assert.ok(settled.body.includes('<span>Travel Time</span><span>$15.00</span>'));
-      assert.ok(settled.body.includes('<span>TOTAL</span><span>$135.00</span>'));
+      const settledInvoice = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/invoices' });
+      assert.ok(settledInvoice.body.includes('<span>Travel Time</span><span>$15.00</span>'));
+      assert.ok(settledInvoice.body.includes('<span>TOTAL</span><span>$135.00</span>'));
+      const driverSettled = await request(srv.port, { Cookie: cookieHeader(driverJar) }, { path: '/settlements' });
+      assert.ok(driverSettled.body.includes('$79.74'), 'driver sees the finalized week pay');
     });
 
     await check('a flat daily-rate load keeps the full drive-time fee in driver pay and on an approved week', async () => {
@@ -320,12 +326,16 @@ function assertOrder(html, markers) {
         body: form({ driver_id: driverId, week_start: '2026-11-09' })
       });
       assert.strictEqual(approved.status, 302, approved.body.slice(0, 200));
-      const settled = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/settlements' });
+      // Item 5: the weekly invoice moved from /settlements to /invoices.
+      const settled = { body: (await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/settlements' })).body
+        + (await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/invoices' })).body };
       assert.ok(settled.body.includes('Drive Time $4.50'));
       assert.ok(settled.body.includes('Driver Pay $79.74'));
       assert.ok(settled.body.includes('Drive Time $15.00'));
       assert.ok(settled.body.includes('Driver Pay $95.00'));
-      assert.ok(settled.body.includes('<span>Travel Time</span><span>$30.00</span>'));
+      // Item 5: invoices are per customer + work week, so the two loads (weeks of Nov 2 and Nov 9)
+      // are on two weekly invoices with $15.00 Travel Time each (previously one $30.00 project total).
+      assert.strictEqual(settled.body.split('<span>Travel Time</span><span>$15.00</span>').length - 1, 2);
     });
   } finally {
     await stop(srv.child);

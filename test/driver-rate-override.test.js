@@ -62,7 +62,7 @@ const h = require('./helpers/server');
       const settlements = await h.request(srv.port, { Cookie: h.cookieHeader(admin) }, { path: '/settlements' });
       // 30% of 20 x $13.00 = $78.00
       assert.ok(settlements.body.includes('Driver Pay $78.00'), 'settlement uses the load rate');
-      const invoices = await h.request(srv.port, { Cookie: h.cookieHeader(admin) }, { path: '/settlements' });
+      const invoices = await h.request(srv.port, { Cookie: h.cookieHeader(admin) }, { path: '/invoices' });
       assert.strictEqual(invoices.status, 200);
       assert.ok(invoices.body.includes('$260.00'), 'invoice hauling 20 x $13.00');
       assert.strictEqual(Number(h.readRows(dataDir, 'SELECT default_rate FROM projects WHERE id = ?', [ids.projectId])[0].default_rate), 10);
