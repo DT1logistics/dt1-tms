@@ -4,6 +4,12 @@
 <% if (load && load.status === 'draft' && load.rejection_reason) { %>
   <div class="reject-note"><strong>This load was sent back as Draft.</strong> <%= load.rejection_reason %></div>
 <% } %>
+<% if (user.role !== 'admin' && load && load.id && load.status === 'submitted') { %>
+  <p class="muted">This load is Submitted. You can edit it until the admin approves it for settlement; it stays Submitted when you save.</p>
+<% } %>
+<% if (user.role === 'admin' && load && load.status === 'approved') { %>
+  <p class="muted edit-after-approval-note">This load is Approved for Settlement. Every change is written to the load history and flows to the driver settlement and the invoice.</p>
+<% } %>
 <% if (!projects || !projects.length) { %>
   <p>No active projects yet. An admin needs to add a shipper and project before a load can be entered.</p>
 <% } %>
@@ -214,7 +220,7 @@
             <% } else { %>
               <%= ticket.original_name %>
             <% } %>
-            <% if (ticket.id) { %>
+            <% if (ticket.id && load.status !== 'approved') { %>
               <label class="check"><input type="checkbox" name="remove_tickets" value="<%= ticket.id %>"> Remove</label>
             <% } %>
           </li>
@@ -236,6 +242,8 @@
       <button type="submit" name="action" value="draft" class="btn-draft" data-admin-mode="assign">Assign Load to Driver (Draft)</button>
       <button type="submit" name="action" value="submit" data-admin-mode="enter">Submit Load for Driver</button>
       <button type="submit" name="action" value="approve" data-admin-mode="enter">Submit &amp; Approve Load</button>
+    <% } else if (load && load.id && load.status === 'submitted') { %>
+      <button type="submit" name="action" value="submit">Save Changes</button>
     <% } else { %>
       <button type="submit" name="action" value="draft" class="btn-draft">Save as Draft</button>
       <button type="submit" name="action" value="submit">Submit Load</button>

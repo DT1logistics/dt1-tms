@@ -1203,13 +1203,22 @@ function resolveLoadEntry(req, existing) {
   const isAdmin = req.session.user.role === 'admin';
   const action = req.body.action || 'submit';
   if (!isAdmin) {
+    const editingSubmitted = !!(existing && existing.status === 'submitted');
+    let auditAction = action === 'draft' ? 'Saved draft' : 'Submitted';
+    let auditDetail = action === 'draft' ? 'Driver saved a draft' : 'Submitted by Driver';
+    if (editingSubmitted && action !== 'draft') {
+      auditAction = 'Edited';
+      auditDetail = 'Driver edited the submitted load (still pending approval)';
+    } else if (editingSubmitted) {
+      auditDetail = 'Driver moved the submitted load back to Draft';
+    }
     return {
       status: action === 'draft' ? 'draft' : 'submitted',
       entryMode: existing && existing.entry_mode ? existing.entry_mode : 'driver',
       createdByRole: existing && existing.created_by_role ? existing.created_by_role : 'driver',
       approveNow: false,
-      auditAction: action === 'draft' ? 'Saved draft' : 'Submitted',
-      auditDetail: action === 'draft' ? 'Driver saved a draft' : 'Submitted by Driver'
+      auditAction,
+      auditDetail
     };
   }
   if (action === 'save') {
@@ -2127,9 +2136,12 @@ app.post('/loads/:id/reject', requireAuth, (req, res) => {
     UPDATE loads
     SET status = 'draft', rejection_reason = ?, approved_by = NULL, approved_by_name = NULL, approved_at = NULL,
         settlement_status = NULL, rejected_by = ?, rejected_by_name = ?, rejected_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND status IN ('submitted', 'approved')
+    WHERE id = ? AND status IN ('submitted', 'approved') AND IFNULL(settlement_status, '') != 'approved'
   `).run(reason || null, req.session.user.id, actorName(req), req.params.id);
   if (result.changes) logAudit(req, 'Rejected', 'load', req.params.id, reason || 'Sent back to draft');
+  if (!result.changes && settlementFinalized(db.prepare('SELECT settlement_status FROM loads WHERE id = ?').get(req.params.id))) {
+    return res.redirect(`/loads/${req.params.id}?saved=locked`);
+  }
   res.redirect(`/loads/${req.params.id}${result.changes ? '?saved=rejected' : ''}`);
 });
 
@@ -2424,13 +2436,113 @@ function saveTicketFiles(loadId, files, userId) {
   });
 }
 
+// Item 6 (11/15/2026) editing and locking rules:
+// - Draft or Submitted: the assigned driver (and the admin) may edit, up until admin approval.
+// - Approved for Settlement: admin only; every change is written to the load history.
+// - Settled (the driver's weekly settlement is finalized): locked. No edits, no reject, no delete.
+function settlementFinalized(load) {
+  return !!load && String(load.settlement_status || '') === 'approved';
+}
+app.locals.settlementFinalized = settlementFinalized;
+
+function loadEditableBy(user, load) {
+  if (!user || !load) return false;
+  if (settlementFinalized(load)) return false;
+  if (user.role === 'admin') return true;
+  if (load.status !== 'draft' && load.status !== 'submitted') return false;
+  return String(load.driver_id) === String(user.id);
+}
+app.locals.loadEditableBy = loadEditableBy;
+
+function finalizedSettlementFor(driverId, loadDate) {
+  const week = weekBounds(loadDate);
+  if (!driverId || !week) return null;
+  return db.prepare(`
+    SELECT * FROM driver_settlements WHERE driver_id = ? AND week_start = ? AND status = 'approved'
+  `).get(driverId, week.start) || null;
+}
+
 function editableLoad(req, id) {
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(id);
   if (!load) return null;
-  if (req.session.user.role === 'admin') return load;
-  if (load.status !== 'draft') return null;
-  if (String(load.driver_id) !== String(req.session.user.id)) return null;
-  return load;
+  return loadEditableBy(req.session.user, load) ? load : null;
+}
+
+// Item 6: one history entry per admin save after approval, listing every changed field (old -> new).
+const POST_APPROVAL_FIELDS = [
+  ['ticket_number', 'ticket_number', 'Ticket #', 'text'],
+  ['load_date', 'load_date', 'Load Date', 'text'],
+  ['driver_id', 'driver_id', 'Driver', 'driver'],
+  ['truck_id', 'truck_id', 'Truck', 'truck'],
+  ['project_id', 'project_id', 'Project', 'project'],
+  ['origin', 'origin', 'Origin', 'text'],
+  ['destination', 'destination', 'Destination', 'text'],
+  ['notes', 'notes', 'Notes', 'text'],
+  ['weight_quantity', 'weight', 'Qty/Wet Ton', 'number'],
+  ['rate', 'rate', 'Load Rate', 'money'],
+  ['has_fuel_surcharge', 'hasFuel', 'Fuel Surcharge', 'flag'],
+  ['has_drive_time', 'hasDrive', 'Drive Time', 'flag'],
+  ['drive_time_amount', 'driveAmount', 'Drive Time amount', 'money'],
+  ['has_self_load', 'hasSelf', 'Self Load', 'flag'],
+  ['self_load_amount', 'selfAmount', 'Self Load amount', 'money'],
+  ['detention', 'hasDetention', 'Detention', 'flag'],
+  ['detention_amount', 'detentionAmount', 'Detention amount', 'money'],
+  ['shipper_detention', 'hasShipperDetention', 'Shipper detention', 'flag'],
+  ['shipper_detention_amount', 'shipperDetentionAmount', 'Shipper detention amount', 'money'],
+  ['driver_pay_type', 'payType', 'Driver Pay Basis', 'text'],
+  ['driver_flat_rate', 'flatRate', 'Driver Flat / Daily Rate', 'money'],
+  ['total_load_pay', 'totalLoadPay', 'Total Load Pay', 'optmoney']
+];
+
+function describeEditValue(kind, value) {
+  if (kind === 'flag') return Number(value) ? 'Yes' : 'No';
+  if (kind === 'money') return moneyInput.usd(Number(value) || 0);
+  if (kind === 'optmoney') return value == null || value === '' ? 'not set' : moneyInput.usd(Number(value) || 0);
+  if (value == null || String(value).trim() === '') return '—';
+  if (kind === 'driver') {
+    const row = db.prepare('SELECT name FROM users WHERE id = ?').get(value);
+    return row ? row.name : `#${value}`;
+  }
+  if (kind === 'project') {
+    const row = db.prepare('SELECT display_name FROM projects WHERE id = ?').get(value);
+    return row ? row.display_name : `#${value}`;
+  }
+  if (kind === 'truck') {
+    const row = db.prepare('SELECT number FROM equipment WHERE id = ?').get(value);
+    return row ? row.number : `#${value}`;
+  }
+  return String(value);
+}
+
+function sameEditValue(kind, a, b) {
+  if (kind === 'flag') return (Number(a) ? 1 : 0) === (Number(b) ? 1 : 0);
+  if (kind === 'money') return roundMoney(Number(a) || 0) === roundMoney(Number(b) || 0);
+  if (kind === 'optmoney') {
+    const blankA = a == null || a === '';
+    const blankB = b == null || b === '';
+    if (blankA || blankB) return blankA === blankB;
+    return roundMoney(Number(a)) === roundMoney(Number(b));
+  }
+  if (kind === 'number') {
+    const blankA = a == null || a === '';
+    const blankB = b == null || b === '';
+    if (blankA || blankB) return blankA === blankB;
+    return Number(a) === Number(b);
+  }
+  const textA = a == null ? '' : String(a).trim();
+  const textB = b == null ? '' : String(b).trim();
+  return textA === textB;
+}
+
+function postApprovalChanges(existing, values) {
+  const changes = [];
+  POST_APPROVAL_FIELDS.forEach(([column, key, label, kind]) => {
+    const before = existing[column];
+    const after = values[key];
+    if (sameEditValue(kind, before, after)) return;
+    changes.push(`${label}: ${describeEditValue(kind, before)} → ${describeEditValue(kind, after)}`);
+  });
+  return changes;
 }
 
 function renderLoadForm(req, res, status, load, error) {
@@ -2452,7 +2564,11 @@ app.get('/loads/new', requireAuth, (req, res) => {
 
 app.get('/loads/:id/edit', requireAuth, (req, res) => {
   const existing = editableLoad(req, req.params.id);
-  if (!existing) return res.redirect('/loads');
+  if (!existing) {
+    const found = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+    if (found && canViewLoad(req, found)) return res.redirect(`/loads/${found.id}${settlementFinalized(found) ? '?saved=locked' : ''}`);
+    return res.redirect('/loads');
+  }
   const load = db.prepare(loadQuery + ' WHERE l.id = ?').get(existing.id);
   const form = loadFormData(req.session.user, load);
   res.render('load-form', { user: req.session.user, load, tickets: ticketRows(existing.id), ...form });
@@ -2764,6 +2880,7 @@ function decideLoadReview(loadId, input) {
   const decision = input.decision === 'accepted' || input.decision === 'rejected' ? input.decision : '';
   if (!decision) return { error: 'Invalid decision', code: 400 };
   const reason = String(input.reason || '').trim().slice(0, 2000);
+  if (decision === 'rejected' && settlementFinalized(load)) return { error: 'Settlement finalized; the load is locked', code: 409 };
   if (decision === 'rejected' && !reason) return { error: 'A rejection reason is required', code: 400 };
   const auditReq = { session: { user: { id: input.actorId || null, name: input.actorName, role: 'admin' } } };
   // Item 8 (11/15/2026): the separate "Reject to Draft" box was removed from the Review Load page,
@@ -2782,7 +2899,7 @@ function decideLoadReview(loadId, input) {
         UPDATE loads
         SET status = 'draft', rejection_reason = ?, approved_by = NULL, approved_by_name = NULL, approved_at = NULL,
             settlement_status = NULL, rejected_by = ?, rejected_by_name = ?, rejected_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND status IN ('submitted', 'approved')
+        WHERE id = ? AND status IN ('submitted', 'approved') AND IFNULL(settlement_status, '') != 'approved'
       `).run(reason || null, input.actorId || null, input.actorName, load.id);
     }
   })();
@@ -2825,7 +2942,16 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
 
 app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res) => {
   const existing = editableLoad(req, req.params.id);
-  if (!existing) return res.redirect('/loads');
+  if (!existing) {
+    const found = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+    if (found && canViewLoad(req, found)) {
+      if (settlementFinalized(found) && req.session.user.role === 'admin') {
+        logAudit(req, 'Edit blocked', 'load', found.id, 'Weekly settlement is finalized; the load is locked');
+      }
+      return res.redirect(`/loads/${found.id}${settlementFinalized(found) ? '?saved=locked' : ''}`);
+    }
+    return res.redirect('/loads');
+  }
   const isAdmin = req.session.user.role === 'admin';
   const entry = resolveLoadEntry(req, existing);
   const project = findActiveProject(req.body.project_id);
@@ -2842,8 +2968,19 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
   if (values.detentionError || values.shipperDetentionError) {
     return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), values.detentionError || values.shipperDetentionError);
   }
+  const afterApproval = existing.status === 'approved';
+  if (afterApproval && entry.status === 'approved') {
+    const finalized = finalizedSettlementFor(values.driver_id, values.load_date);
+    const movesWeek = String(values.driver_id) !== String(existing.driver_id)
+      || (weekBounds(values.load_date) || {}).start !== (weekBounds(existing.load_date) || {}).start;
+    if (finalized && movesWeek) {
+      return renderLoadForm(req, res, 400, loadFormErrorView(req, existing),
+        `That driver's settlement for the week of ${weekBounds(values.load_date).range} is already finalized. Pick another driver or Load Date.`);
+    }
+  }
+  const editChanges = afterApproval && isAdmin ? postApprovalChanges(existing, values) : [];
   const rejectionReason = entry.status === 'submitted' || entry.status === 'approved' ? null : (existing.rejection_reason || null);
-  db.prepare(`
+  const saved = db.prepare(`
     UPDATE loads
     SET ticket_number = ?, load_date = ?, driver_id = ?, truck_id = ?, project_id = ?, description = ?,
         origin = ?, destination = ?, notes = ?, admin_notes = ?,
@@ -2853,7 +2990,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
         driver_pay_type = ?, driver_flat_rate = ?, total_load_pay = ?, status = ?, rejection_reason = ?,
         created_by_role = ?, entry_mode = ?,
         updated_by = ?, updated_by_name = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ? ${isAdmin ? '' : "AND status = 'draft'"}
+    WHERE id = ? AND IFNULL(settlement_status, '') != 'approved' ${isAdmin ? '' : "AND status IN ('draft', 'submitted')"}
   `).run(
     values.ticket_number,
     values.load_date,
@@ -2887,10 +3024,22 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     actorName(req),
     existing.id
   );
+  if (!saved.changes) {
+    // Approved or finalized between opening the form and saving: nothing was changed.
+    return res.redirect(isAdmin ? `/loads/${existing.id}?saved=locked` : `/loads/${existing.id}`);
+  }
   stampLoadApproval(existing.id, req, entry);
-  removeSelectedTickets(existing.id, req.body);
+  // Standing rule: ticket files are not removed once a load is Approved for Settlement.
+  if (!afterApproval) removeSelectedTickets(existing.id, req.body);
   saveTicketFiles(existing.id, req.files, req.session.user.id);
-  logAudit(req, entry.auditAction, 'load', existing.id, entry.auditDetail);
+  if (afterApproval && isAdmin) {
+    const added = (Array.isArray(req.files) ? req.files : []).filter((file) => file && file.filename);
+    if (added.length) editChanges.push(`Added ${added.length} ticket file${added.length === 1 ? '' : 's'}`);
+    logAudit(req, 'Edited after approval', 'load', existing.id,
+      editChanges.length ? editChanges.join('; ') : 'Saved with no field changes');
+  } else {
+    logAudit(req, entry.auditAction, 'load', existing.id, entry.auditDetail);
+  }
   recordDetentionAudit(req, existing.id, existing, values);
   recordShipperDetentionAudit(req, existing.id, existing, values);
   recordRateAudit(req, existing.id, existing, values, project || findProjectById(values.project_id));
@@ -2942,6 +3091,7 @@ app.post('/loads/:id/review-decision', requireAuth, (req, res) => {
   });
   if (result.error) {
     if (result.code === 404) return res.redirect('/loads');
+    if (result.code === 409) return res.redirect(`/loads/${req.params.id}?saved=locked`);
     return res.redirect(`/loads/${req.params.id}?saved=need-reason`);
   }
   const saved = req.body.decision === 'rejected' ? 'review-rejected' : 'accepted';
