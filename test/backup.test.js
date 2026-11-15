@@ -127,6 +127,39 @@ function waitFor(fn, timeoutMs) {
   });
 }
 
+function peakRssKb(pid) {
+  try {
+    const m = /VmHWM:\s+(\d+)\s+kB/.exec(fs.readFileSync(`/proc/${pid}/status`, 'utf8'));
+    return m ? Number(m[1]) : null;
+  } catch (e) { return null; }
+}
+
+// Opens GET /admin/backup and resolves once the response headers arrive, with the body still paused.
+function openPaused(port, headers) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: 'GET', path: '/admin/backup', headers }, (res) => {
+      res.pause();
+      resolve({ req, res });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+function drain(res) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    res.on('data', (c) => chunks.push(c));
+    res.on('end', () => resolve(Buffer.concat(chunks)));
+    res.on('error', reject);
+    res.resume();
+  });
+}
+
+function snapshotLeftovers(dir) {
+  return fs.readdirSync(dir).filter((n) => n.startsWith(backup.SNAPSHOT_PREFIX));
+}
+
 async function postLogin(port) {
   const body = 'email=nobody%40example.com&password=nope';
   return request(port, {
@@ -161,6 +194,35 @@ function stop(child) {
     assert.deepStrictEqual(files.map((f) => f.name), ['a.txt', 'uploads/r.bin']);
     assert.ok(files[0].data.equals(big));
     assert.ok(files[1].data.equals(rnd));
+  });
+
+  await check('streamZip: streamed entries (file + buffer) read back with CRC checks', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dt1-zip-'));
+    const big = require('crypto').randomBytes(3 * 1024 * 1024 + 17);
+    const bigPath = path.join(dir, 'big.bin');
+    fs.writeFileSync(bigPath, big);
+    const text = Buffer.from('DT1 '.repeat(5000));
+    const chunks = [];
+    const { PassThrough } = require('stream');
+    const out = new PassThrough();
+    out.on('data', (c) => chunks.push(c));
+    const { bytes } = await backup.streamZip([
+      { name: 'dt1.db', file: bigPath },
+      { name: 'uploads/a.txt', data: text },
+      { name: 'manifest.json', data: '{}' },
+      { name: 'uploads/empty.txt', data: Buffer.alloc(0) }
+    ], out);
+    out.end();
+    const zip = Buffer.concat(chunks);
+    assert.strictEqual(bytes, zip.length);
+    const files = backup.readZip(zip);
+    assert.deepStrictEqual(files.map((f) => f.name), ['dt1.db', 'uploads/a.txt', 'manifest.json', 'uploads/empty.txt']);
+    assert.ok(files[0].data.equals(big));
+    assert.ok(files[1].data.equals(text));
+    assert.strictEqual(files[2].data.toString(), '{}');
+    assert.strictEqual(files[3].data.length, 0);
+    assert.strictEqual(backup.crc32(big), backup.crc32(big.subarray(1000), backup.crc32(big.subarray(0, 1000))));
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
   await check('migrateLegacyData copies old db + uploads once and never overwrites', () => {
@@ -216,6 +278,7 @@ function stop(child) {
         copy.close();
         fs.unlinkSync(tmp);
       }
+      assert.deepStrictEqual(snapshotLeftovers(dataDir), [], 'snapshot temp file must be deleted after the backup');
     });
     await check('login creates a session row in SQLite', async () => {
       const body = `email=${encodeURIComponent('david.dt1@mail.grokbot.com')}&password=${encodeURIComponent(PW)}`;
@@ -241,6 +304,82 @@ function stop(child) {
     });
   } finally {
     await stop(srv.child);
+  }
+
+  // Big-archive run: one backup at a time (429 + Retry-After), streaming keeps memory flat,
+  // and a client that disconnects mid-download releases the lock and leaves no temp files.
+  const bigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dt1-big-'));
+  fs.mkdirSync(path.join(bigDir, 'uploads'), { recursive: true });
+  const BIG_MB = 96;
+  const bigUpload = require('crypto').randomBytes(BIG_MB * 1024 * 1024);
+  fs.writeFileSync(path.join(bigDir, 'uploads', 'big-scan.pdf'), bigUpload);
+  fs.writeFileSync(path.join(bigDir, 'uploads', 'small.pdf'), '%PDF-1.4 small');
+  srv = await startServer({ DATA_DIR: bigDir, BACKUP_TOKEN: TOKEN });
+  const startPeakKb = peakRssKb(srv.child.pid);
+  try {
+    const auth = { 'X-Backup-Token': TOKEN };
+    await check('GET /admin/backup: second request while one is running gets 429 + Retry-After; lock released after', async () => {
+      const first = await openPaused(srv.port, auth);
+      assert.strictEqual(first.res.statusCode, 200);
+      assert.strictEqual(first.res.headers['content-type'], 'application/zip');
+      const second = await request(srv.port, auth);
+      assert.strictEqual(second.status, 429);
+      assert.strictEqual(second.headers['retry-after'], '120');
+      // Unauthenticated callers still get 401, never the busy signal.
+      assert.strictEqual((await request(srv.port, { 'X-Backup-Token': 'nope' })).status, 401);
+      const body = await drain(first.res);
+      const files = backup.readZip(body);
+      assert.deepStrictEqual(files.map((f) => f.name).sort(), ['dt1.db', 'manifest.json', 'uploads/big-scan.pdf', 'uploads/small.pdf']);
+      assert.ok(files.find((f) => f.name === 'uploads/big-scan.pdf').data.equals(bigUpload));
+      const manifest = JSON.parse(files.find((f) => f.name === 'manifest.json').data.toString());
+      assert.strictEqual(manifest.upload_files, 2);
+      assert.strictEqual(manifest.database_bytes, files.find((f) => f.name === 'dt1.db').data.length);
+      await waitFor(() => snapshotLeftovers(bigDir).length === 0);
+      const third = await request(srv.port, auth);
+      assert.strictEqual(third.status, 200);
+      assert.strictEqual(backup.readZip(third.body).length, 4);
+    });
+
+    await check(`GET /admin/backup streams: a ${BIG_MB} MB upload (three of them by now) never raises server peak memory by its size`, async () => {
+      const before = startPeakKb;
+      if (before === null) { console.log('  (skipped: /proc not available)'); return; }
+      const res = await request(srv.port, auth);
+      assert.strictEqual(res.status, 200);
+      const after = peakRssKb(srv.child.pid);
+      const growthMb = (after - before) / 1024;
+      console.log(`  peak RSS before ${Math.round(before / 1024)} MB, after ${Math.round(after / 1024)} MB (growth ${growthMb.toFixed(1)} MB)`);
+      assert.ok(growthMb < BIG_MB * 0.75, `peak memory grew ${growthMb.toFixed(1)} MB during a ${BIG_MB} MB backup`);
+    });
+
+    await check('GET /admin/backup: client disconnect mid-download frees the lock and deletes the snapshot', async () => {
+      const first = await openPaused(srv.port, auth);
+      assert.strictEqual(first.res.statusCode, 200);
+      await new Promise((resolve) => { first.res.once('data', resolve); first.res.resume(); });
+      first.req.destroy();
+      let next;
+      await waitFor(() => true);
+      for (let i = 0; i < 40; i += 1) {
+        next = await request(srv.port, auth);
+        if (next.status !== 429) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.strictEqual(next.status, 200);
+      assert.strictEqual(backup.readZip(next.body).length, 4);
+      assert.deepStrictEqual(snapshotLeftovers(bigDir), []);
+      assert.ok(!srv.log().includes('Backup served: '), 'old buffered path must not be used');
+    });
+
+    await check('leftover snapshot files from a crash are cleaned up by the next backup', async () => {
+      const stale = path.join(bigDir, `${backup.SNAPSHOT_PREFIX}stale.db`);
+      fs.writeFileSync(stale, 'junk');
+      const res = await request(srv.port, auth);
+      assert.strictEqual(res.status, 200);
+      assert.ok(!fs.existsSync(stale));
+      assert.deepStrictEqual(snapshotLeftovers(bigDir), []);
+    });
+  } finally {
+    await stop(srv.child);
+    fs.rmSync(bigDir, { recursive: true, force: true });
   }
 
   await check('Redis SQLite snapshot writes stay off by default, including shutdown', async () => {
