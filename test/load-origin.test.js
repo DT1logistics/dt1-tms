@@ -361,7 +361,7 @@ function originBeforeDestination(html, originMark, destinationMark) {
       const api = await request(srv.port, { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, {
         method: 'POST',
         path: '/api/logan/loads',
-        body: JSON.stringify({
+        body: JSON.stringify({ load_date: '2026-11-03',
           action: 'draft',
           driver_id: driverId,
           project_id: otherProject.id,
@@ -556,7 +556,7 @@ function originBeforeDestination(html, originMark, destinationMark) {
       const typed = await request(srv.port, auth, {
         method: 'POST',
         path: '/api/logan/loads',
-        body: JSON.stringify({
+        body: JSON.stringify({ load_date: '2026-11-03',
           action: 'draft',
           driver_id: driverId,
           project_id: uberProject.id,
@@ -573,7 +573,7 @@ function originBeforeDestination(html, originMark, destinationMark) {
       const other = await request(srv.port, auth, {
         method: 'POST',
         path: '/api/logan/loads',
-        body: JSON.stringify({
+        body: JSON.stringify({ load_date: '2026-11-03',
           action: 'draft',
           driver_id: driverId,
           project_id: otherProject.id,

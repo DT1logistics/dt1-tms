@@ -53,9 +53,14 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/js/fuel-surcharge.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'fuel-surcharge.js')));
 app.get('/js/load-date.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'load-date.js')));
+app.get('/js/load-pay.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'load-pay.js')));
+app.get('/js/money-input.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'money-input.js')));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.locals.money = (n) => (Number(n) || 0).toFixed(2);
+// Item 4 (11/15/2026): every money display reads "$1,234.50" (always two decimals).
+const moneyInput = require('./lib/money-input');
+app.locals.usd = moneyInput.usd;
 
 function daysUntil(exp) {
   return Math.ceil((new Date(exp) - new Date()) / (1000 * 60 * 60 * 24));
@@ -118,8 +123,29 @@ function settlementWeekLabel(dateStr) {
   return week ? `week of ${week.range}` : '';
 }
 
+// Item 3 (11/15/2026): Total Load Pay is the flat amount the customer pays DT1 for a load
+// (set on the project, copied to new loads, admin-editable). Null/blank = not set, and every
+// total uses the original Qty x Rate math. When set it is the whole hauling charge: no fuel surcharge.
+function parseOptionalMoney(value) {
+  if (value == null) return null;
+  const text = String(value).replace(/[$,\s]/g, '');
+  if (text === '') return null;
+  const parsed = parseFloat(text);
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : null;
+}
+
+function hasTotalLoadPay(load) {
+  return !!load && load.total_load_pay != null && String(load.total_load_pay).trim() !== ''
+    && Number.isFinite(Number(load.total_load_pay));
+}
+
 function loadTotalAmount(load) {
   if (!load) return 0;
+  if (hasTotalLoadPay(load)) {
+    const driveFee = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
+    const selfFee = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
+    return Number(load.total_load_pay) + driveFee + selfFee;
+  }
   const qty = Number(load.weight_quantity) || 0;
   const rate = Number(load.rate) || 0;
   const linehaul = qty * rate;
@@ -144,8 +170,8 @@ function calcDriverPay(load) {
   const self = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
   const detention = Number(load.detention) ? (Number(load.detention_amount) || 0) : 0;
   const basis = flat
-    ? `Flat Daily Rate: $${base.toFixed(2)}`
-    : `${percentage}% of $${linehaul.toFixed(2)}`;
+    ? `Flat Daily Rate: ${moneyInput.usd(base)}`
+    : `${percentage}% of ${moneyInput.usd(linehaul)}`;
   return { linehaul, base, drive, self, detention, pay: base + drive + self + detention, percentage, flat, basis };
 }
 
@@ -259,6 +285,14 @@ function loadAudit(loadId) {
 }
 
 app.locals.loadTotalAmount = loadTotalAmount;
+app.locals.hasTotalLoadPay = hasTotalLoadPay;
+// Drivers never see the customer's Total Load Pay. Their Load Total keeps the original Qty x Rate math.
+function loadTotalFor(user, load) {
+  if (!load) return 0;
+  if (user && user.role === 'admin') return loadTotalAmount(load);
+  return loadTotalAmount(Object.assign({}, load, { total_load_pay: null }));
+}
+app.locals.loadTotalFor = loadTotalFor;
 // Fuel surcharge for a load using the fuel rate for that load's week (latest /fuel-rate row effective
 // on or before the Load Date). pending=true and $0 until that week's rate is posted.
 // Never part of Load Total or Driver Pay.
@@ -272,8 +306,8 @@ function loadFuelSurcharge(load, fuelRates) {
     isFlat: load.driver_pay_type === 'flat',
     flatAmount: load && load.driver_flat_rate
   });
-  if (!load || Number(load.has_fuel_surcharge) !== 1) {
-    return { ...result, applies: false, perTon: 0, baseHauling: 0, total: 0 };
+  if (!load || Number(load.has_fuel_surcharge) !== 1 || hasTotalLoadPay(load)) {
+    return { ...result, applies: false, perTon: 0, baseHauling: 0, total: 0, totalLoadPay: hasTotalLoadPay(load) };
   }
   return { ...result, applies: true };
 }
@@ -410,6 +444,45 @@ function backfillUserNames() {
     }
     if (person.app_language !== 'English') forceEnglish.run(person.id);
   });
+}
+
+// Item 1 (11/15/2026): every load needs a Load Date. Fill ONLY empty load_date values with the
+// date the load was created (America/New_York calendar day). Existing dates are never touched.
+// Each filled load gets an audit_log entry so Kammy can review it. Safe to run on every startup.
+function backfillLoadDates() {
+  const rows = db.prepare(`
+    SELECT id, ticket_number, created_at FROM loads
+    WHERE load_date IS NULL OR TRIM(load_date) = ''
+    ORDER BY id
+  `).all();
+  const fill = db.prepare(`
+    UPDATE loads SET load_date = ?
+    WHERE id = ? AND (load_date IS NULL OR TRIM(load_date) = '')
+  `);
+  const audit = db.prepare(`
+    INSERT INTO audit_log (actor_id, actor_name, action, entity_type, entity_id, detail)
+    VALUES (NULL, 'System', 'Load date backfilled', 'load', ?, ?)
+  `);
+  const filled = [];
+  db.transaction(() => {
+    rows.forEach((row) => {
+      const date = loadDate.easternDateFromTimestamp(row.created_at)
+        || loadDate.easternDateFromTimestamp(new Date().toISOString());
+      if (!date) return;
+      if (fill.run(date, row.id).changes) {
+        audit.run(row.id, `Load date backfilled from created date: ${date} (please review)`);
+        filled.push({ id: row.id, ticket_number: row.ticket_number || '', load_date: date });
+      }
+    });
+  })();
+  if (filled.length) {
+    console.log(`Load date backfill: ${filled.length} load(s) filled from created date: ${filled.map((f) => `#${f.id}=${f.load_date}`).join(', ')}`);
+  }
+  return filled;
+}
+
+function loadDateError(values) {
+  return loadDate.isValidLoadDate(values && values.load_date) ? null : 'Load Date is required';
 }
 
 function parseStoredAddress(value) {
@@ -775,6 +848,9 @@ function initDB() {
   ensureColumn('loads', 'driver_flat_rate', 'REAL DEFAULT 0');
   ensureColumn('projects', 'default_driver_pay_type', "TEXT DEFAULT 'percentage'");
   ensureColumn('projects', 'default_driver_flat_rate', 'REAL DEFAULT 0');
+  // Item 3 (11/15/2026): additive, nullable. NULL = not set, so existing totals are unchanged.
+  ensureColumn('projects', 'default_total_load_pay', 'REAL');
+  ensureColumn('loads', 'total_load_pay', 'REAL');
   ensureColumn('documents', 'file_blob', 'BLOB');
   ensureColumn('communications_log', 'load_id', 'INTEGER');
   // Equipment Expenses / Maintenance Log (new table; existing equipment rows are untouched).
@@ -922,6 +998,7 @@ function initDB() {
   `).run();
 
   backfillUserNames();
+  backfillLoadDates();
   backfillUserAddresses();
   backfillDocumentBlobs();
 }
@@ -1063,6 +1140,9 @@ function readProject(body, customer, existing) {
     flatRate: bodyHas(body, 'default_driver_flat_rate') && String(body.default_driver_flat_rate).trim() !== ''
       ? (Number.isFinite(parseFloat(body.default_driver_flat_rate)) ? parseFloat(body.default_driver_flat_rate) : 0)
       : (existing ? (Number(existing.default_driver_flat_rate) || 0) : 0),
+    totalLoadPay: bodyHas(body, 'default_total_load_pay')
+      ? parseOptionalMoney(body.default_total_load_pay)
+      : (existing ? parseOptionalMoney(existing.default_total_load_pay) : null),
     status: bodyHas(body, 'status') ? (body.status === 'inactive' ? 'inactive' : 'active') : (existing ? (existing.status || 'active') : 'active'),
     error
   };
@@ -1081,9 +1161,9 @@ function activeProjects() {
 function loadFormData(user, load) {
   let drivers = [];
   if (user.role === 'admin') {
-    drivers = db.prepare("SELECT id, name, status FROM users WHERE role = 'driver' AND (status IS NULL OR status = 'active') ORDER BY name").all();
+    drivers = db.prepare("SELECT id, name, status, pay_percentage FROM users WHERE role = 'driver' AND (status IS NULL OR status = 'active') ORDER BY name").all();
     if (load && load.driver_id && !drivers.some((driver) => String(driver.id) === String(load.driver_id))) {
-      const current = db.prepare("SELECT id, name, status FROM users WHERE id = ? AND role = 'driver'").get(load.driver_id);
+      const current = db.prepare("SELECT id, name, status, pay_percentage FROM users WHERE id = ? AND role = 'driver'").get(load.driver_id);
       if (current) drivers.unshift(current);
     }
   }
@@ -1835,9 +1915,10 @@ app.post(['/shippers/:id/projects', '/customers/:id/projects'], requireAdmin, (r
   db.prepare(`
     INSERT INTO projects (
       customer_id, project_name, display_name, default_rate, has_fuel_surcharge,
-      has_drive_time, default_drive_time_amount, default_driver_pay_type, default_driver_flat_rate, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.status);
+      has_drive_time, default_drive_time_amount, default_driver_pay_type, default_driver_flat_rate,
+      default_total_load_pay, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.totalLoadPay, parsed.status);
   res.redirect('/shippers/' + customer.id);
 });
 
@@ -1886,9 +1967,10 @@ app.post('/projects', requireAdmin, (req, res) => {
   db.prepare(`
     INSERT INTO projects (
       customer_id, project_name, display_name, default_rate, has_fuel_surcharge,
-      has_drive_time, default_drive_time_amount, default_driver_pay_type, default_driver_flat_rate, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.status);
+      has_drive_time, default_drive_time_amount, default_driver_pay_type, default_driver_flat_rate,
+      default_total_load_pay, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.totalLoadPay, parsed.status);
   res.redirect('/shippers/' + customer.id);
 });
 
@@ -1925,9 +2007,9 @@ app.post('/projects/:id', requireAdmin, (req, res) => {
     UPDATE projects
     SET customer_id = ?, project_name = ?, display_name = ?, default_rate = ?,
         has_fuel_surcharge = ?, has_drive_time = ?, default_drive_time_amount = ?,
-        default_driver_pay_type = ?, default_driver_flat_rate = ?, status = ?
+        default_driver_pay_type = ?, default_driver_flat_rate = ?, default_total_load_pay = ?, status = ?
     WHERE id = ?
-  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.status, existing.id);
+  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.totalLoadPay, parsed.status, existing.id);
   res.redirect('/shippers/' + customer.id);
 });
 
@@ -2051,13 +2133,45 @@ app.post('/loads/:id/reject', requireAuth, (req, res) => {
   res.redirect(`/loads/${req.params.id}${result.changes ? '?saved=rejected' : ''}`);
 });
 
+// Item 9 (11/15/2026): a load can be deleted only while it is still on the Load screen, i.e.
+// before it is Approved for Settlement (status 'approved') or Settled. Kammy approved delete as a
+// PERMANENT erase (for duplicates). Every delete is written to audit_log first (who, which load,
+// when, and a summary of the load); audit_log rows are never removed with the load.
+function loadDeletable(load) {
+  if (!load) return false;
+  return load.status !== 'approved' && String(load.settlement_status || '') !== 'approved';
+}
+app.locals.loadDeletable = loadDeletable;
+
 app.post('/loads/:id/delete', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/loads');
-  const load = db.prepare('SELECT id FROM loads WHERE id = ?').get(req.params.id);
+  const load = db.prepare(loadQuery + ' WHERE l.id = ?').get(req.params.id);
   if (!load) return res.redirect('/loads');
-  ticketRows(load.id).forEach((file) => removeStoredTicket(file));
-  db.prepare('DELETE FROM documents WHERE load_id = ?').run(load.id);
-  db.prepare('DELETE FROM loads WHERE id = ?').run(load.id);
+  if (!loadDeletable(load)) {
+    logAudit(req, 'Delete blocked', 'load', load.id, 'Load is Approved for Settlement or Settled; it cannot be deleted');
+    return res.redirect(`/loads/${load.id}?saved=delete-blocked`);
+  }
+  const files = ticketRows(load.id);
+  const summary = [
+    `Load #${load.id}`,
+    `ticket ${load.ticket_number || '—'}`,
+    `date ${load.load_date || '—'}`,
+    `driver ${load.driver_name || 'Unassigned'}`,
+    `project ${load.project_display || '—'}`,
+    `status ${loadStatusLabel(load.status, load.settlement_status)}`,
+    `${files.length} ticket file${files.length === 1 ? '' : 's'}`
+  ].join(' · ');
+  const erase = db.transaction(() => {
+    logAudit(req, 'Deleted load (permanent)', 'load', load.id, summary);
+    db.prepare('DELETE FROM documents WHERE load_id = ?').run(load.id);
+    db.prepare('DELETE FROM loads WHERE id = ?').run(load.id);
+  });
+  erase();
+  files.forEach((file) => {
+    const full = storedTicketPath(file);
+    try { if (full && fs.existsSync(full)) fs.unlinkSync(full); } catch (err) { /* file already gone */ }
+  });
+  console.log(`Load deleted (permanent) by ${actorName(req)} at ${new Date().toISOString()}: ${summary}`);
   res.redirect('/loads?deleted=1');
 });
 
@@ -2179,6 +2293,17 @@ function buildLoadValues(req, project, existing) {
   }
   if (payType === 'flat' && (weight == null || weight === '')) weight = 1;
 
+  // Total Load Pay (customer price). Only an admin may set it. Drivers never change it.
+  // New loads start from the project's Total Load Pay; existing loads keep their stored value.
+  let totalLoadPay = null;
+  if (!isDriver && bodyHas(body, 'total_load_pay')) {
+    totalLoadPay = parseOptionalMoney(body.total_load_pay);
+  } else if (existing) {
+    totalLoadPay = parseOptionalMoney(existing.total_load_pay);
+  } else if (project) {
+    totalLoadPay = parseOptionalMoney(project.default_total_load_pay);
+  }
+
   const driverId = isDriver
     ? ((existing && existing.driver_id) || req.session.user.id)
     : (bodyHas(body, 'driver_id') ? (body.driver_id || null) : (existing ? existing.driver_id : null));
@@ -2235,6 +2360,7 @@ function buildLoadValues(req, project, existing) {
     shipperDetentionError: shipperDetention.shipperDetentionError,
     payType,
     flatRate,
+    totalLoadPay,
     status: body.action === 'draft' ? 'draft' : 'submitted'
   }, project, existing);
 }
@@ -2526,10 +2652,10 @@ function insertNewLoad(values, entry, actor) {
       ticket_number, load_date, driver_id, truck_id, project_id, description, origin, destination, notes, admin_notes, weight_quantity,
       rate, has_fuel_surcharge, has_drive_time, drive_time_amount, has_self_load, self_load_amount,
       detention, detention_amount, shipper_detention, shipper_detention_amount,
-      driver_pay_type, driver_flat_rate,
+      driver_pay_type, driver_flat_rate, total_load_pay,
       status, submitted_by, created_by_role, entry_mode,
       review_status, review_set_by, review_set_by_name, review_set_at, created_via
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'needs_review', ?, ?, CURRENT_TIMESTAMP, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'needs_review', ?, ?, CURRENT_TIMESTAMP, ?)
   `).run(
     values.ticket_number,
     values.load_date,
@@ -2554,6 +2680,7 @@ function insertNewLoad(values, entry, actor) {
     values.shipperDetentionAmount,
     values.payType,
     values.flatRate,
+    values.totalLoadPay,
     entry.status,
     actor.id || null,
     entry.createdByRole,
@@ -2604,15 +2731,30 @@ function decideLoadReview(loadId, input) {
   if (!decision) return { error: 'Invalid decision', code: 400 };
   const reason = String(input.reason || '').trim().slice(0, 2000);
   if (decision === 'rejected' && !reason) return { error: 'A rejection reason is required', code: 400 };
-  db.prepare(`
-    UPDATE loads
-    SET review_decision = ?, review_decision_reason = ?, review_decision_by = ?,
-        review_decision_by_name = ?, review_decision_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(decision, reason || null, input.actorId || null, input.actorName, load.id);
   const auditReq = { session: { user: { id: input.actorId || null, name: input.actorName, role: 'admin' } } };
+  // Item 8 (11/15/2026): the separate "Reject to Draft" box was removed from the Review Load page,
+  // so "Reject load" now also does what it did: a Submitted or Approved load goes back to the
+  // driver as Draft with the reason, and its approval/settlement mark is cleared.
+  const sendBack = decision === 'rejected' && (load.status === 'submitted' || load.status === 'approved');
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE loads
+      SET review_decision = ?, review_decision_reason = ?, review_decision_by = ?,
+          review_decision_by_name = ?, review_decision_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(decision, reason || null, input.actorId || null, input.actorName, load.id);
+    if (sendBack) {
+      db.prepare(`
+        UPDATE loads
+        SET status = 'draft', rejection_reason = ?, approved_by = NULL, approved_by_name = NULL, approved_at = NULL,
+            settlement_status = NULL, rejected_by = ?, rejected_by_name = ?, rejected_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status IN ('submitted', 'approved')
+      `).run(reason || null, input.actorId || null, input.actorName, load.id);
+    }
+  })();
   logAudit(auditReq, decision === 'rejected' ? 'Rejected load' : 'Accepted load', 'load', load.id, reason || null);
-  return { load: db.prepare('SELECT * FROM loads WHERE id = ?').get(load.id) };
+  if (sendBack) logAudit(auditReq, 'Rejected', 'load', load.id, `Sent back to draft: ${reason}`);
+  return { load: db.prepare('SELECT * FROM loads WHERE id = ?').get(load.id), sentBack: sendBack };
 }
 
 app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) => {
@@ -2621,6 +2763,9 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
   const project = findActiveProject(req.body.project_id);
   const values = buildLoadValues(req, project);
   values.status = entry.status;
+  if (loadDateError(values)) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req), loadDateError(values));
+  }
   if (values.detentionError || values.shipperDetentionError) {
     return renderLoadForm(req, res, 400, loadFormErrorView(req), values.detentionError || values.shipperDetentionError);
   }
@@ -2656,6 +2801,9 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), 'Select an active project');
   }
   const values = buildLoadValues(req, project, existing);
+  if (loadDateError(values)) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), loadDateError(values));
+  }
   if (values.detentionError || values.shipperDetentionError) {
     return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), values.detentionError || values.shipperDetentionError);
   }
@@ -2667,7 +2815,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
         weight_quantity = ?, rate = ?, has_fuel_surcharge = ?, has_drive_time = ?, drive_time_amount = ?,
         has_self_load = ?, self_load_amount = ?, detention = ?, detention_amount = ?,
         shipper_detention = ?, shipper_detention_amount = ?,
-        driver_pay_type = ?, driver_flat_rate = ?, status = ?, rejection_reason = ?,
+        driver_pay_type = ?, driver_flat_rate = ?, total_load_pay = ?, status = ?, rejection_reason = ?,
         created_by_role = ?, entry_mode = ?,
         updated_by = ?, updated_by_name = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ? ${isAdmin ? '' : "AND status = 'draft'"}
@@ -2695,6 +2843,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     values.shipperDetentionAmount,
     values.payType,
     values.flatRate,
+    values.totalLoadPay,
     entry.status,
     rejectionReason,
     entry.createdByRole,
@@ -4393,7 +4542,7 @@ app.get('/settlements', requireAuth, (req, res) => {
   const approvedWeeks = approvedSettlementWeeks(isAdmin ? null : req.session.user.id);
   let customerInvoices = [];
   if (isAdmin) {
-    const approvedLoads = db.prepare(loadQuery + ` WHERE l.status = 'approved' ORDER BY c.name, p.display_name, l.load_date`).all();
+    const approvedLoads = db.prepare(loadQuery + ` WHERE l.status = 'approved' ORDER BY c.name, p.display_name, l.load_date`).all().map(annotatePay);
     const byProject = {};
   approvedLoads.forEach((load) => {
     const key = load.project_id ? String(load.project_id) : 'unassigned';
@@ -4414,12 +4563,15 @@ app.get('/settlements', requireAuth, (req, res) => {
         travelTime: 0,
         selfLoad: 0,
         shipperDetention: 0,
+        driverPay: 0,
         total: 0
       };
     }
     const qty = Number(load.weight_quantity) || 0;
     const rate = Number(load.rate) || 0;
-    const hauling = qty * rate;
+    // Total Load Pay (when set) is the whole hauling charge for the load, with no fuel surcharge.
+    const usesTotalLoadPay = hasTotalLoadPay(load);
+    const hauling = usesTotalLoadPay ? Number(load.total_load_pay) : qty * rate;
     const travelTime = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
     const selfLoad = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
     const shipperDetention = Number(load.shipper_detention) ? (Number(load.shipper_detention_amount) || 0) : 0;
@@ -4427,20 +4579,21 @@ app.get('/settlements', requireAuth, (req, res) => {
     const fsc = loadFuelSurcharge(load, fuelRates);
     const lineFsc = fsc.total;
     byProject[key].loads.push({
-      ...load, hauling, travelTime, selfLoad, shipperDetention, lineFsc,
+      ...load, hauling, usesTotalLoadPay, travelTime, selfLoad, shipperDetention, lineFsc,
       fscPerTon: fsc.perTon, fscFlat: fsc.flat, fscPercent: fsc.percent, fscPending: fsc.pending,
       fscDiesel: fsc.dieselRate, fscEffective: fsc.effectiveDate
     });
-    if (Number(load.has_fuel_surcharge) === 1) {
+    if (Number(load.has_fuel_surcharge) === 1 && !usesTotalLoadPay) {
       byProject[key].fscPercents = byProject[key].fscPercents || [];
       if (!fsc.pending && !byProject[key].fscPercents.includes(fsc.percent)) byProject[key].fscPercents.push(fsc.percent);
       if (fsc.pending) byProject[key].fscPendingCount = (byProject[key].fscPendingCount || 0) + 1;
     }
     byProject[key].hauling += hauling;
-    if (Number(load.has_fuel_surcharge) === 1) {
+    if (Number(load.has_fuel_surcharge) === 1 && !usesTotalLoadPay) {
       byProject[key].fscBase += fsc.baseHauling;
       byProject[key].fuelSurcharge += lineFsc;
     }
+    byProject[key].driverPay += load.payInfo ? load.payInfo.pay : 0;
     byProject[key].travelTime += travelTime;
     byProject[key].selfLoad += selfLoad;
     byProject[key].shipperDetention += shipperDetention;

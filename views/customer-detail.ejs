@@ -18,10 +18,11 @@
       <% projects.forEach(project => { %>
         <div class="card">
           <strong><%= project.display_name %></strong>
-          <div class="muted">Default Rate: $<%= money(project.default_rate) %></div>
-          <div class="muted">Default Driver Pay: <%= project.default_driver_pay_type === 'flat' ? 'Flat / Daily Rate $' + money(project.default_driver_flat_rate) : 'Percentage of Load' %></div>
+          <div class="muted">Default Rate: <%= usd(project.default_rate) %></div>
+          <div class="muted">Driver Load Pay: <%= project.default_driver_pay_type === 'flat' ? 'Flat / Daily Rate ' + usd(project.default_driver_flat_rate) : 'Percentage of Load' %></div>
+          <div class="muted">Total Load Pay: <%= project.default_total_load_pay != null && String(project.default_total_load_pay).trim() !== '' ? usd(project.default_total_load_pay) : 'Not set (Qty × Rate)' %></div>
           <div class="muted">Includes Fuel Surcharge: <%= project.has_fuel_surcharge ? 'Yes' : 'No' %></div>
-          <div class="muted">Includes Drive Time Fee: <%= project.has_drive_time ? 'Yes' : 'No' %><% if (project.has_drive_time) { %> — $<%= money(project.default_drive_time_amount) %><% } %></div>
+          <div class="muted">Includes Drive Time Fee: <%= project.has_drive_time ? 'Yes' : 'No' %><% if (project.has_drive_time) { %> — <%= usd(project.default_drive_time_amount) %><% } %></div>
           <div class="muted">Status: <%= project.status || 'active' %></div>
           <p><a href="/projects/<%= project.id %>/edit">Edit Project</a></p>
         </div>
@@ -36,7 +37,16 @@
         <input type="text" name="project_name" required placeholder="e.g. Hunters Pad" value="<%= typeof draft !== 'undefined' && draft.project_name ? draft.project_name : '' %>">
         <p class="muted">Saved as <%= customer.name %> - Project Name. If the name already starts with "<%= customer.name %> - ", the prefix is not repeated.</p>
         <label>Default Rate ($)</label>
-        <input type="number" step="0.01" name="default_rate" required value="<%= typeof draft !== 'undefined' && draft.default_rate ? draft.default_rate : '' %>">
+        <input data-money="1" type="number" step="0.01" name="default_rate" required value="<%= typeof draft !== 'undefined' && draft.default_rate ? draft.default_rate : '' %>">
+        <label>Default Driver Pay Basis</label>
+        <select name="default_driver_pay_type">
+          <option value="percentage" <%= typeof draft !== 'undefined' && draft.default_driver_pay_type === 'flat' ? '' : 'selected' %>>Percentage of Load (%)</option>
+          <option value="flat" <%= typeof draft !== 'undefined' && draft.default_driver_pay_type === 'flat' ? 'selected' : '' %>>Flat / Daily Rate ($)</option>
+        </select>
+        <label>Driver Load Pay ($) <span class="muted">flat / daily rate paid to the driver</span></label>
+        <input data-money="1" type="number" step="0.01" name="default_driver_flat_rate" value="<%= typeof draft !== 'undefined' && draft.default_driver_flat_rate ? draft.default_driver_flat_rate : '0.00' %>">
+        <label>Total Load Pay ($) <span class="muted">flat amount the customer pays DT1 per load</span></label>
+        <input data-money="1" type="number" step="0.01" min="0" name="default_total_load_pay" placeholder="Blank = Qty × Rate" value="<%= typeof draft !== 'undefined' && draft.default_total_load_pay ? draft.default_total_load_pay : '' %>">
         <div class="check">
           <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" <%= typeof draft !== 'undefined' && (draft.has_fuel_surcharge === '1' || draft.has_fuel_surcharge === 'on') ? 'checked' : '' %>>
           <label for="has_fuel_surcharge">Includes Fuel Surcharge</label>
@@ -47,7 +57,7 @@
         </div>
         <div id="drive_time_wrap" style="display:none;">
           <label>Default Drive Time Amount ($)</label>
-          <input type="number" step="0.01" name="default_drive_time_amount" id="default_drive_time_amount" value="<%= typeof draft !== 'undefined' && draft.default_drive_time_amount ? draft.default_drive_time_amount : '0.00' %>">
+          <input data-money="1" type="number" step="0.01" name="default_drive_time_amount" id="default_drive_time_amount" value="<%= typeof draft !== 'undefined' && draft.default_drive_time_amount ? draft.default_drive_time_amount : '0.00' %>">
         </div>
         <button type="submit">Save Project</button>
       </form>

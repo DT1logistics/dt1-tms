@@ -896,3 +896,25 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 .import-bulk { display: flex; gap: 8px; flex-wrap: wrap; }
 .import-bulk button { width: auto; margin: 0; }
 .notice { background: #d1fae5; color: #065f46; padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; font-weight: 600; }
+
+/* Required field marker (Load Date). */
+.required-mark { color: #b42318; font-weight: 700; }
+
+/* Item 2: admin Driver Pay shown above Total Load Pay (invoiced). */
+.admin-driver-pay, .driver-pay-under { font-weight: 700; }
+.total-load-pay-line { font-weight: 600; }
+.total-load-pay-field { margin-top: 8px; }
+
+/* Item 4: "$" prefix inside money inputs (lib/money-input.js wraps input[data-money]). */
+.money-field { position: relative; display: block; }
+.money-field > .money-prefix {
+  position: absolute;
+  left: 9px;
+  top: calc(50% + 2px);
+  transform: translateY(-50%);
+  color: #555;
+  font-weight: 600;
+  pointer-events: none;
+  z-index: 1;
+}
+.money-field > input[data-money] { padding-left: 22px !important; }

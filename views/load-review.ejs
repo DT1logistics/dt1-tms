@@ -48,7 +48,8 @@
 <% if (saved === 'review') { %><div class="all-clear">Review notes saved.</div><% } %>
 <% if (saved === 'cleared') { %><div class="all-clear">Missing-info flag cleared.</div><% } %>
 <% if (saved === 'accepted') { %><div class="all-clear">Load accepted.</div><% } %>
-<% if (saved === 'review-rejected') { %><div class="reject-note">Load rejected.</div><% } %>
+<% if (saved === 'review-rejected') { %><div class="reject-note">Load rejected.<% if (load.status === 'draft' && load.rejection_reason) { %> It was sent back to the driver as Draft.<% } %></div><% } %>
+<% if (saved === 'delete-blocked') { %><div class="reject-note">This load is Approved for Settlement, so it cannot be deleted. Reject it back to Draft or edit it instead.</div><% } %>
 <% if (saved === 'need-reason') { %><div class="reject-note">A reason is required to reject a load.</div><% } %>
 <% if (user.role === 'admin' && load.review_status === 'flagged_missing_info') { %>
   <div class="reject-note">
@@ -104,23 +105,30 @@
   <div><strong>Origin</strong> <%= load.origin || '—' %></div>
   <div><strong>Destination</strong> <%= load.destination || load.description || '—' %></div>
   <div><strong>Qty/Wet Ton</strong> <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
-  <div><strong>Rate</strong> $<%= money(load.rate) %></div>
-  <div><strong>Load Total</strong> $<%= money(loadTotalAmount(load)) %></div>
-  <% if (load.payInfo && (user.role === 'admin' || load.showPay)) { %>
+  <div><strong>Rate</strong> <%= usd(load.rate) %></div>
+  <% if (user.role === 'admin' && load.payInfo) { %>
+    <%# Item 2: Driver Pay above the Total Load Pay that will be invoiced, at every status. %>
+    <div class="pay-line admin-driver-pay"><strong>Driver Pay</strong> <%= usd(load.payInfo.pay) %></div>
+    <div class="muted"><%= load.payInfo.basis %> · Drive Time <%= usd(load.payInfo.drive) %> · Self Load <%= usd(load.payInfo.self) %> · Detention <%= usd(load.payInfo.detention) %>. <% if (load.payInfo.flat) { %>Drive Time, Self Load, and Detention are added in full.<% } else { %>Drive Time is the driver's pay percentage of the drive-time fee. Self Load and Detention are added in full.<% } %> Fuel surcharge is not included.</div>
+    <div class="total-load-pay-line"><strong>Total Load Pay (invoiced)</strong> <%= usd(loadTotalFor(user, load)) %><% if (hasTotalLoadPay(load)) { %> <span class="muted">(flat Total Load Pay; no fuel surcharge added)</span><% } %></div>
+  <% } else { %>
+  <div><strong>Load Total</strong> <%= usd(loadTotalFor(user, load)) %></div>
+  <% if (load.payInfo && load.showPay) { %>
     <div><strong>Driver Pay Basis</strong> <%= load.payInfo.basis %></div>
   <% } %>
-  <% if (load.showPay) { %>
-    <div class="pay-line"><strong>Driver Pay</strong> $<%= money(load.payInfo.pay) %></div>
-    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %> · Detention $<%= money(load.payInfo.detention) %>. <% if (load.payInfo.flat) { %>Drive Time, Self Load, and Detention are added in full.<% } else { %>Drive Time is the driver's pay percentage of the drive-time fee. Self Load and Detention are added in full.<% } %> Fuel surcharge is not included.</div>
+  <% } %>
+  <% if (load.showPay && user.role !== 'admin') { %>
+    <div class="pay-line"><strong>Driver Pay</strong> <%= usd(load.payInfo.pay) %></div>
+    <div class="muted"><%= load.payInfo.basis %> · Drive Time <%= usd(load.payInfo.drive) %> · Self Load <%= usd(load.payInfo.self) %> · Detention <%= usd(load.payInfo.detention) %>. <% if (load.payInfo.flat) { %>Drive Time, Self Load, and Detention are added in full.<% } else { %>Drive Time is the driver's pay percentage of the drive-time fee. Self Load and Detention are added in full.<% } %> Fuel surcharge is not included.</div>
   <% } %>
   <% if (user.role === 'admin') { %>
-    <div><strong>Fuel Surcharge</strong> <%= Number(load.has_fuel_surcharge) === 1 ? ((function (f) { return f.pending ? 'Yes (Rate pending — $0.00 until this week\'s fuel rate is posted)' : ('Yes ($' + money(f.total) + ' @ ' + Number(f.percent).toFixed(2) + '%, week rate $' + Number(f.dieselRate).toFixed(3) + ' effective ' + f.effectiveDate + ')'); })(loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []))) : 'No' %></div>
+    <div><strong>Fuel Surcharge</strong> <%= Number(load.has_fuel_surcharge) === 1 ? ((function (f) { return f.pending ? 'Yes (Rate pending — $0.00 until this week\'s fuel rate is posted)' : ('Yes (' + usd(f.total) + ' @ ' + Number(f.percent).toFixed(2) + '%, week rate $' + Number(f.dieselRate).toFixed(3) + ' effective ' + f.effectiveDate + ')'); })(loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []))) : 'No' %></div>
   <% } %>
-  <div><strong>Drive Time</strong> <%= Number(load.has_drive_time) === 1 ? '$' + money(load.drive_time_amount) : 'No' %></div>
-  <div><strong>Self Load</strong> <%= Number(load.has_self_load) === 1 ? '$' + money(load.self_load_amount) : 'No' %></div>
-  <div><strong>Detention</strong> <%= Number(load.detention) === 1 ? '$' + money(load.detention_amount) : 'No' %></div>
+  <div><strong>Drive Time</strong> <%= Number(load.has_drive_time) === 1 ? usd(load.drive_time_amount) : 'No' %></div>
+  <div><strong>Self Load</strong> <%= Number(load.has_self_load) === 1 ? usd(load.self_load_amount) : 'No' %></div>
+  <div><strong>Detention</strong> <%= Number(load.detention) === 1 ? usd(load.detention_amount) : 'No' %></div>
   <% if (user.role === 'admin') { %>
-    <div><strong>Shipper detention</strong> (billed to the customer) <%= Number(load.shipper_detention) === 1 ? '$' + money(load.shipper_detention_amount) : 'No' %></div>
+    <div><strong>Shipper detention</strong> (billed to the customer) <%= Number(load.shipper_detention) === 1 ? usd(load.shipper_detention_amount) : 'No' %></div>
   <% } %>
   <div class="load-notes-view"><strong>Notes</strong> <span class="shared-notes-badge">Visible to Admin &amp; Driver</span>
     <div class="load-notes-text"><%= load.notes || load.admin_notes || '—' %></div>
@@ -155,11 +163,11 @@
 <% if (user.role === 'admin') { %>
   <div class="card">
     <h2>Edit Load</h2>
-    <form method="POST" action="/loads/<%= load.id %>" enctype="multipart/form-data">
+    <form method="POST" action="/loads/<%= load.id %>" enctype="multipart/form-data" id="review_edit_form">
       <div class="load-date-ticket-row">
         <div class="field-date-compact">
-          <label>Load Date</label>
-          <input type="date" name="load_date" class="input-date-compact" max="9999-12-31" value="<%= load.load_date || '' %>">
+          <label>Load Date <span class="required-mark" aria-hidden="true">*</span></label>
+          <input type="date" name="load_date" class="input-date-compact" max="9999-12-31" required aria-required="true" value="<%= load.load_date || '' %>">
         </div>
         <div class="field-ticket-flex">
           <label>Ticket Number</label>
@@ -177,6 +185,7 @@
             data-drivetime-amount="<%= project.default_drive_time_amount %>"
             data-pay-type="<%= project.default_driver_pay_type || 'percentage' %>"
             data-flat-rate="<%= project.default_driver_flat_rate || 0 %>"
+            data-total-load-pay="<%= project.default_total_load_pay != null ? project.default_total_load_pay : '' %>"
             <%= String(load.project_id) === String(project.id) ? 'selected' : '' %>><%= project.display_name %></option>
         <% }) %>
       </select>
@@ -204,7 +213,7 @@
       <div class="load-rate-qty-drive-row">
         <div class="field-num-compact">
           <label for="review_rate">Load Rate ($)</label>
-          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="rate" id="review_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.rate != null && load.rate !== '' ? Number(load.rate).toFixed(2) : '' %>">
+          <input data-money="1" type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="rate" id="review_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.rate != null && load.rate !== '' ? Number(load.rate).toFixed(2) : '' %>">
         </div>
         <div class="field-num-compact">
           <label for="review_qty">Wet Ton/Qty</label>
@@ -235,11 +244,11 @@
       <div class="addon-amount-row">
         <div id="review_self_wrap" class="addon-amount" style="<%= load.has_self_load ? '' : 'display:none;' %>">
           <label for="review_self_amount">Self Load $</label>
-          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="20.00" name="self_load_amount" id="review_self_amount" data-four-dec="1" value="<%= load.self_load_amount != null && Number(load.self_load_amount) > 0 ? Number(load.self_load_amount).toFixed(2) : '20.00' %>">
+          <input data-money="1" type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="20.00" name="self_load_amount" id="review_self_amount" data-four-dec="1" value="<%= load.self_load_amount != null && Number(load.self_load_amount) > 0 ? Number(load.self_load_amount).toFixed(2) : '20.00' %>">
         </div>
         <div id="review_detention_wrap" class="addon-amount" style="<%= load.detention ? '' : 'display:none;' %>">
           <label for="review_detention_amount">Detention $</label>
-          <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="review_detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
+          <input data-money="1" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="review_detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
         </div>
       </div>
       <div class="load-self-row">
@@ -251,7 +260,7 @@
         </div>
         <div id="review_drive_wrap" class="addon-amount" style="<%= load.has_drive_time ? '' : 'display:none;' %>">
           <label for="review_drive_amount">Drive Time $</label>
-          <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="review_drive_amount" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
+          <input data-money="1" type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="review_drive_amount" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
         </div>
       </div>
       <div class="load-self-row">
@@ -266,12 +275,13 @@
       <div class="addon-amount-row">
         <div id="review_shipper_detention_wrap" class="addon-amount" style="<%= load.shipper_detention ? '' : 'display:none;' %>">
           <label for="review_shipper_detention_amount">Shipper detention $ (billed to customer)</label>
-          <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="shipper_detention_amount" id="review_shipper_detention_amount" value="<%= load.shipper_detention && load.shipper_detention_amount != null && load.shipper_detention_amount !== '' ? Number(load.shipper_detention_amount).toFixed(2) : '' %>">
+          <input data-money="1" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="shipper_detention_amount" id="review_shipper_detention_amount" value="<%= load.shipper_detention && load.shipper_detention_amount != null && load.shipper_detention_amount !== '' ? Number(load.shipper_detention_amount).toFixed(2) : '' %>">
         </div>
       </div>
       <div class="load-totals-row">
-        <div class="load-total-under" id="review_load_total">Load Total: $<%= money(loadTotalAmount(load)) %></div>
-        <div class="load-total-under fuel-total-under" id="review_fuel_total" title="Uses the fuel rate for the Load Date's week: Load Rate × FSC % × Wet Tons"><% const fscNow = loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []); %><%= !Number(load.has_fuel_surcharge) ? 'Fuel Surcharge Total: $0.00' : (fscNow.pending ? 'Fuel Surcharge Total: Rate pending ($0.00)' : 'Fuel Surcharge Total: $' + money(fscNow.total) + ' @ ' + Number(fscNow.percent).toFixed(2) + '%') %></div>
+        <div class="load-total-under driver-pay-under" id="review_driver_pay"><%= load.payInfo ? 'Driver Pay: ' + usd(load.payInfo.pay) : 'Driver Pay: $0.00' %></div>
+        <div class="load-total-under" id="review_load_total">Total Load Pay (invoiced): <%= usd(loadTotalAmount(load)) %></div>
+        <div class="load-total-under fuel-total-under" id="review_fuel_total" title="Uses the fuel rate for the Load Date's week: Load Rate × FSC % × Wet Tons"><% const fscNow = loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []); %><%= !Number(load.has_fuel_surcharge) ? 'Fuel Surcharge Total: $0.00' : (fscNow.pending ? 'Fuel Surcharge Total: Rate pending ($0.00)' : 'Fuel Surcharge Total: ' + usd(fscNow.total) + ' @ ' + Number(fscNow.percent).toFixed(2) + '%') %></div>
       </div>
       <label for="driver_pay_type">Driver Pay Basis / Type</label>
       <select name="driver_pay_type" id="driver_pay_type">
@@ -280,15 +290,20 @@
       </select>
       <div id="flat_rate_wrap">
         <label for="driver_flat_rate">Driver Flat / Daily Rate ($)</label>
-        <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" name="driver_flat_rate" id="driver_flat_rate" class="input-num-4dec" value="<%= load.driver_flat_rate != null && load.driver_flat_rate !== '' ? load.driver_flat_rate : '0.00' %>">
+        <input data-money="1" type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" name="driver_flat_rate" id="driver_flat_rate" class="input-num-4dec" value="<%= load.driver_flat_rate != null && load.driver_flat_rate !== '' ? Number(load.driver_flat_rate).toFixed(2) : '0.00' %>">
       </div>
       <p class="muted" id="pay_basis_help"></p>
+      <div id="total_load_pay_wrap" class="total-load-pay-field">
+        <label for="total_load_pay">Total Load Pay ($) <span class="muted">what the customer pays DT1</span></label>
+        <input data-money="1" type="number" step="0.01" min="0" inputmode="decimal" name="total_load_pay" id="total_load_pay" placeholder="Blank = Qty × Rate" value="<%= hasTotalLoadPay(load) ? Number(load.total_load_pay).toFixed(2) : '' %>">
+        <p class="muted">Filled from the project. When set, this flat amount is what gets invoiced for the load (plus Drive Time and Self Load when checked) and no fuel surcharge is added. Leave blank to invoice Qty × Rate as before. Drivers never see this amount.</p>
+      </div>
       <% if (drivers && drivers.length) { %>
         <label>Assign Driver</label>
         <select name="driver_id">
           <option value="">-- Select Driver --</option>
           <% drivers.forEach(function (driver) { %>
-            <option value="<%= driver.id %>" <%= String(load.driver_id) === String(driver.id) ? 'selected' : '' %>><%= driver.name %><%= driver.status === 'inactive' ? ' (Inactive)' : '' %></option>
+            <option value="<%= driver.id %>" data-pay-pct="<%= driver.pay_percentage != null ? driver.pay_percentage : '' %>" <%= String(load.driver_id) === String(driver.id) ? 'selected' : '' %>><%= driver.name %><%= driver.status === 'inactive' ? ' (Inactive)' : '' %></option>
           <% }) %>
         </select>
       <% } %>
@@ -324,40 +339,38 @@
 
   <form class="card" method="POST" action="/loads/<%= load.id %>/review-decision">
     <h2>Accept or reject</h2>
-    <p class="muted">Only an admin can accept or reject a load. Logan can flag a load and cannot make this decision.</p>
+    <p class="muted">Only an admin can accept or reject a load. Logan can flag a load and cannot make this decision. Rejecting a Submitted or Approved load sends it back to the driver as Draft, and the driver sees the reason.</p>
     <% if (load.review_decision === 'rejected') { %>
       <p>Current decision: <strong>Rejected</strong><% if (load.review_decision_by_name) { %> by <%= load.review_decision_by_name %><% if (load.review_decision_at) { %> on <%= auditStamp(load.review_decision_at) %><% } %><% } %></p>
     <% } else if (load.review_decision === 'accepted') { %>
       <p>Current decision: <strong>Accepted</strong><% if (load.review_decision_by_name) { %> by <%= load.review_decision_by_name %><% if (load.review_decision_at) { %> on <%= auditStamp(load.review_decision_at) %><% } %><% } %></p>
     <% } %>
     <label for="review_decision_reason">Reason (required to reject)</label>
-    <textarea name="reason" id="review_decision_reason" rows="3" placeholder="Why this load is rejected"><%= load.review_decision === 'rejected' ? (load.review_decision_reason || '') : '' %></textarea>
+    <textarea name="reason" id="review_decision_reason" rows="3" placeholder="Why this load is rejected / what the driver should fix"><%= load.review_decision === 'rejected' ? (load.review_decision_reason || '') : '' %></textarea>
     <button class="approve" type="submit" name="decision" value="accepted">Accept load</button>
-    <button class="danger" type="submit" name="decision" value="rejected" onclick="return confirm('Reject this load?');">Reject load</button>
+    <button class="danger" type="submit" name="decision" value="rejected" onclick="return confirm('Reject this load<%= (load.status === 'submitted' || load.status === 'approved') ? ' and send it back to the driver as Draft' : '' %>?');">Reject load</button>
   </form>
 
   <div class="review-actions">
     <% if (load.status === 'submitted') { %>
       <form method="POST" action="/loads/<%= load.id %>/approve">
-        <button class="approve" type="submit">Approve</button>
+        <button class="approve" type="submit">Approve for Settlement</button>
       </form>
     <% } %>
-    <% if (load.status === 'submitted' || load.status === 'approved') { %>
-      <form method="POST" action="/loads/<%= load.id %>/reject" onsubmit="return confirm('Send this load back to the driver as Draft?');">
-        <label>Rejection reason</label>
-        <textarea name="rejection_reason" rows="3" placeholder="Tell the driver what to fix"></textarea>
-        <button class="danger" type="submit">Reject to Draft</button>
+    <% if (loadDeletable(load)) { %>
+      <form method="POST" action="/loads/<%= load.id %>/delete" onsubmit="return confirm('Are you sure? This cannot be undone.\n\nDelete Load permanently erases load #<%= load.id %><%= load.ticket_number ? ' (ticket ' + String(load.ticket_number).replace(/[\\'\r\n]/g, '') + ')' : '' %> and its ticket files. Use it for duplicates.');">
+        <button class="danger" type="submit">Delete Load</button>
       </form>
+    <% } else { %>
+      <p class="muted">Delete Load is not available after a load is Approved for Settlement.</p>
     <% } %>
-    <form method="POST" action="/loads/<%= load.id %>/delete" onsubmit="return confirm('Delete this load? This cannot be undone.');">
-      <button class="danger" type="submit">Delete Load</button>
-    </form>
   </div>
 <% } else if (load.status === 'draft') { %>
   <p><a class="btn" href="/loads/<%= load.id %>/edit">Edit Draft</a></p>
 <% } %>
 <p><a href="/loads">Back to Loads</a></p>
 <script src="/js/fuel-surcharge.js"></script>
+<script src="/js/load-pay.js"></script>
 <script>
   const payType = document.getElementById('driver_pay_type');
   const flatWrap = document.getElementById('flat_rate_wrap');
@@ -379,8 +392,20 @@
   const fscDateInput = document.querySelector('input[name="load_date"]');
   const reviewProjectSelect = document.getElementById('review_project_select');
 
+  function reviewTotalLoadPayValue() {
+    const el = document.getElementById('total_load_pay');
+    const raw = el ? String(el.value || '').trim() : '';
+    if (raw === '' || !Number.isFinite(Number(raw))) return null;
+    return Number(raw);
+  }
+
   function syncReviewFuelAmount() {
     if (!reviewFuelCheck) return;
+    if (reviewTotalLoadPayValue() !== null) {
+      if (reviewFuelAmount) reviewFuelAmount.value = '0.00';
+      if (reviewFuelTotal) reviewFuelTotal.textContent = 'Fuel Surcharge: not added (Total Load Pay is set)';
+      return;
+    }
     if (!reviewFuelCheck.checked) {
       if (reviewFuelAmount) reviewFuelAmount.value = '0.00';
       if (reviewFuelTotal) reviewFuelTotal.textContent = 'Fuel Surcharge Total: $0.00';
@@ -403,7 +428,7 @@
     if (reviewFuelTotal) {
       reviewFuelTotal.textContent = fsc.pending
         ? 'Fuel Surcharge Total: Rate pending ($0.00)'
-        : 'Fuel Surcharge Total: $' + calc + ' @ ' + fsc.percent.toFixed(2) + '%';
+        : 'Fuel Surcharge Total: ' + window.DT1LoadPay.usd(fsc.total) + ' @ ' + fsc.percent.toFixed(2) + '%';
       reviewFuelTotal.title = fsc.pending
         ? 'No fuel rate posted yet for this Load Date\'s week; $0.00 until it is posted.'
         : 'Week rate $' + fsc.dieselRate.toFixed(3) + ' effective ' + fsc.effectiveDate + ': Load Rate × ' + fsc.decimal + ' × Wet Tons';
@@ -426,7 +451,21 @@
     const self = (reviewSelfCheck && reviewSelfCheck.checked)
       ? (Number.isFinite(Number(reviewSelfAmount && reviewSelfAmount.value)) ? Number(reviewSelfAmount.value) : 0)
       : 0;
-    reviewLoadTotal.textContent = 'Load Total: $' + (base + drive + self).toFixed(2);
+    const totalLoadPay = reviewTotalLoadPayValue();
+    reviewLoadTotal.textContent = 'Total Load Pay (invoiced): ' + window.DT1LoadPay.usd((totalLoadPay !== null ? totalLoadPay : base) + drive + self);
+    const reviewDriverPay = document.getElementById('review_driver_pay');
+    if (reviewDriverPay) {
+      const driverSel = document.querySelector('#review_edit_form select[name="driver_id"]');
+      const driverOpt = driverSel && driverSel.options ? driverSel.options[driverSel.selectedIndex] : null;
+      const pct = Number(driverOpt && driverOpt.getAttribute('data-pay-pct')) || 0;
+      const detBox = document.getElementById('review_detention');
+      const detAmt = document.getElementById('review_detention_amount');
+      const detention = detBox && detBox.checked ? (Number(detAmt && detAmt.value) || 0) : 0;
+      const pay = window.DT1LoadPay.driverPay({
+        qty, rate, isFlat, flatRate: Number(reviewFlatRate && reviewFlatRate.value) || 0, drive, self, detention, pct
+      });
+      reviewDriverPay.textContent = 'Driver Pay: ' + window.DT1LoadPay.usd(pay);
+    }
     syncReviewFuelAmount();
   }
 
@@ -485,6 +524,11 @@
       const hasDrive = opt.getAttribute('data-drivetime') === '1';
       if (reviewDriveCheck) reviewDriveCheck.checked = hasDrive;
       if (reviewDriveAmount) reviewDriveAmount.value = hasDrive ? (Number(opt.getAttribute('data-drivetime-amount')) || 0).toFixed(2) : '0.00';
+      const totalLoadPayInput = document.getElementById('total_load_pay');
+      if (totalLoadPayInput) {
+        const projectTotal = String(opt.getAttribute('data-total-load-pay') || '').trim();
+        totalLoadPayInput.value = projectTotal === '' ? '' : (Number(projectTotal) || 0).toFixed(2);
+      }
       syncReviewDriveWrap();
       syncReviewLoadTotal();
     });
@@ -502,7 +546,9 @@
       syncReviewLoadTotal();
     });
   }
-  [reviewRate, reviewQty, reviewDriveAmount, reviewSelfAmount, reviewFlatRate].forEach((el) => {
+  [reviewRate, reviewQty, reviewDriveAmount, reviewSelfAmount, reviewFlatRate, document.getElementById('total_load_pay'),
+    document.getElementById('review_detention'), document.getElementById('review_detention_amount'),
+    document.querySelector('#review_edit_form select[name="driver_id"]')].forEach((el) => {
     if (el) {
       el.addEventListener('input', syncReviewLoadTotal);
       el.addEventListener('change', syncReviewLoadTotal);

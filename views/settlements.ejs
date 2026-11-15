@@ -13,7 +13,7 @@
         <div class="settlement-meta">
           <%= group.loads.length %> load<%= group.loads.length === 1 ? '' : 's' %>
           · Qty/Wet Ton <%= group.qty %>
-          · Driver Pay $<%= money(group.total) %>
+          · Driver Pay <%= usd(group.total) %>
           · Pending approval
         </div>
         <%- include('partials/settlement-loads', { loads: group.loads }) %>
@@ -44,10 +44,10 @@
       <div class="settlement-meta">
         <%= group.loads.length %> load<%= group.loads.length === 1 ? '' : 's' %>
         · Qty/Wet Ton <%= group.qty %>
-        · Driver Pay $<%= money(group.total) %>
+        · Driver Pay <%= usd(group.total) %>
         · Approved
       </div>
-      <div class="muted">Base $<%= money(group.base) %> · Drive Time $<%= money(group.drive) %> · Self Load $<%= money(group.self) %> · Detention $<%= money(group.detention) %></div>
+      <div class="muted">Base <%= usd(group.base) %> · Drive Time <%= usd(group.drive) %> · Self Load <%= usd(group.self) %> · Detention <%= usd(group.detention) %></div>
       <% if (group.approved_by_name) { %>
         <div class="muted">Approved by <%= group.approved_by_name %><% if (group.approved_at) { %> on <%= auditStamp(group.approved_at) %><% } %></div>
       <% } %>
@@ -91,6 +91,7 @@
               <th>Destination</th>
               <th class="num">Qty</th>
               <th class="num">Rate</th>
+              <th class="num" title="Paid to the driver. Not billed on the invoice.">Driver Pay</th>
               <th class="num">Price</th>
               <th class="num">Fuel Surcharge</th>
               <th class="num">Self Load</th>
@@ -106,23 +107,25 @@
                 <td><%= load.origin || '—' %></td>
                 <td><%= load.destination || load.description || '—' %></td>
                 <td class="num"><%= load.weight_quantity != null ? load.weight_quantity : '—' %></td>
-                <td class="num">$<%= money(load.rate) %></td>
-                <td class="num">$<%= money(load.hauling) %></td>
-                <td class="num"><% if (Number(load.has_fuel_surcharge) === 1 && load.fscPending) { %>$0.00<div class="muted" style="font-size:11px;">Rate pending</div><% } else if (Number(load.has_fuel_surcharge) === 1) { %>$<%= money(load.lineFsc) %><div class="muted" style="font-size:11px;"><%= Number(load.fscPercent).toFixed(2) %>% · <%= load.fscFlat ? 'flat amount' : '$' + Number(load.fscPerTon).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') + '/ton' %></div><% } else { %>—<% } %></td>
-                <td class="num">$<%= money(load.selfLoad) %></td>
-                <td class="num">$<%= money(load.travelTime) %></td>
-                <td class="num"><%= Number(load.shipper_detention) === 1 ? '$' + money(load.shipperDetention) : '—' %></td>
+                <td class="num"><%= usd(load.rate) %></td>
+                <td class="num muted"><%= usd(load.payInfo ? load.payInfo.pay : 0) %></td>
+                <td class="num"><%= usd(load.hauling) %><% if (load.usesTotalLoadPay) { %><div class="muted" style="font-size:11px;">Total Load Pay</div><% } %></td>
+                <td class="num"><% if (load.usesTotalLoadPay) { %>—<div class="muted" style="font-size:11px;">in Total Load Pay</div><% } else if (Number(load.has_fuel_surcharge) === 1 && load.fscPending) { %>$0.00<div class="muted" style="font-size:11px;">Rate pending</div><% } else if (Number(load.has_fuel_surcharge) === 1) { %><%= usd(load.lineFsc) %><div class="muted" style="font-size:11px;"><%= Number(load.fscPercent).toFixed(2) %>% · <%= load.fscFlat ? 'flat amount' : '$' + Number(load.fscPerTon).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') + '/ton' %></div><% } else { %>—<% } %></td>
+                <td class="num"><%= usd(load.selfLoad) %></td>
+                <td class="num"><%= usd(load.travelTime) %></td>
+                <td class="num"><%= Number(load.shipper_detention) === 1 ? usd(load.shipperDetention) : '—' %></td>
               </tr>
             <% }) %>
           </tbody>
         </table>
         <div class="totals">
-          <div><span>Hauling</span><span>$<%= money(invoice.hauling) %></span></div>
-          <div><span>Fuel Surcharge<% const pcts = invoice.fscPercents || []; %><% if (pcts.length === 1) { %> (<%= Number(pcts[0]).toFixed(2) %>%)<% } else if (pcts.length > 1) { %> (weekly rates: <%= pcts.map(function (x) { return Number(x).toFixed(2) + '%'; }).join(', ') %>)<% } %><% if (invoice.fscPendingCount) { %> · <%= invoice.fscPendingCount %> load<%= invoice.fscPendingCount === 1 ? '' : 's' %> rate pending<% } %></span><span>$<%= money(invoice.fuelSurcharge) %></span></div>
-          <div><span>Travel Time</span><span>$<%= money(invoice.travelTime) %></span></div>
-          <div><span>Self Load</span><span>$<%= money(invoice.selfLoad) %></span></div>
-          <div title="Billed to the customer. Fuel surcharge does not apply."><span>Detention</span><span>$<%= money(invoice.shipperDetention) %></span></div>
-          <div class="grand"><span>TOTAL</span><span>$<%= money(invoice.total) %></span></div>
+          <div class="muted driver-pay-total" title="Paid to drivers. Not part of the invoice total."><span>Driver Pay (not billed)</span><span><%= usd(invoice.driverPay) %></span></div>
+          <div><span>Hauling</span><span><%= usd(invoice.hauling) %></span></div>
+          <div><span>Fuel Surcharge<% const pcts = invoice.fscPercents || []; %><% if (pcts.length === 1) { %> (<%= Number(pcts[0]).toFixed(2) %>%)<% } else if (pcts.length > 1) { %> (weekly rates: <%= pcts.map(function (x) { return Number(x).toFixed(2) + '%'; }).join(', ') %>)<% } %><% if (invoice.fscPendingCount) { %> · <%= invoice.fscPendingCount %> load<%= invoice.fscPendingCount === 1 ? '' : 's' %> rate pending<% } %></span><span><%= usd(invoice.fuelSurcharge) %></span></div>
+          <div><span>Travel Time</span><span><%= usd(invoice.travelTime) %></span></div>
+          <div><span>Self Load</span><span><%= usd(invoice.selfLoad) %></span></div>
+          <div title="Billed to the customer. Fuel surcharge does not apply."><span>Detention</span><span><%= usd(invoice.shipperDetention) %></span></div>
+          <div class="grand"><span>TOTAL</span><span><%= usd(invoice.total) %></span></div>
         </div>
       </div>
     <% }) %>

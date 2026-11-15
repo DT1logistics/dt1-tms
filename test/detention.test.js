@@ -230,7 +230,7 @@ function writeDb(dataDir, fn) {
       assert.ok(detail.body.includes('$25.24'));
       assert.ok(detail.body.includes('Driver Pay'));
       assert.ok(detail.body.includes('$55.24'));
-      assert.ok(detail.body.includes('Load Total'));
+      assert.ok(detail.body.includes('Total Load Pay (invoiced)'));
       assert.ok(detail.body.includes('$100.00'));
       const audit = readRows(dataDir, "SELECT actor_name, action, detail FROM audit_log WHERE entity_type = 'load' AND entity_id = ? AND action = 'Set detention'", [row.id]);
       assert.strictEqual(audit.length, 1);
@@ -258,7 +258,7 @@ function writeDb(dataDir, fn) {
       assert.strictEqual(row.detention, 1);
       assert.strictEqual(Number(row.detention_amount).toFixed(2), '40.00');
       const detail = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: `/loads/${readRows(dataDir, "SELECT id FROM loads WHERE ticket_number = 'DET-HAUL'")[0].id}` });
-      assert.ok(detail.body.includes('<strong>Load Total</strong> $115.00'), detail.body.slice(detail.body.indexOf('Load Total'), 80));
+      assert.ok(detail.body.includes('<strong>Total Load Pay (invoiced)</strong> $115.00'), detail.body.slice(detail.body.indexOf('Total Load Pay'), 80));
       assert.ok(!detail.body.includes('$155.00'));
     });
 
@@ -351,7 +351,7 @@ function writeDb(dataDir, fn) {
       const off = await request(srv.port, apiAuth, {
         method: 'POST',
         path: '/api/logan/loads',
-        body: JSON.stringify({
+        body: JSON.stringify({ load_date: '2026-11-03',
           action: 'draft',
           driver_id: driverId,
           project_id: projectId,
@@ -368,7 +368,7 @@ function writeDb(dataDir, fn) {
       const bad = await request(srv.port, apiAuth, {
         method: 'POST',
         path: '/api/logan/loads',
-        body: JSON.stringify({ action: 'draft', driver_id: driverId, detention: true, detention_amount: -2 })
+        body: JSON.stringify({ load_date: '2026-11-03', action: 'draft', driver_id: driverId, detention: true, detention_amount: -2 })
       });
       assert.strictEqual(bad.status, 400);
       assert.ok(JSON.parse(bad.body).error.includes('Detention'));
@@ -395,7 +395,7 @@ function writeDb(dataDir, fn) {
       assert.strictEqual(audit[0].detail, 'Shipper detention $15.51');
 
       const detail = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: `/loads/${row.id}` });
-      assert.ok(detail.body.includes('<strong>Load Total</strong> $100.00'));
+      assert.ok(detail.body.includes('<strong>Total Load Pay (invoiced)</strong> $100.00'));
       assert.ok(detail.body.includes('<strong>Driver Pay</strong> $55.24'));
       assert.ok(detail.body.includes('billed to the customer'));
       assert.ok(detail.body.includes('$15.51'));

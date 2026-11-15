@@ -249,8 +249,9 @@ function assertNoLegacyStatus(html, where) {
       assert.ok(flagged.body.includes('Flagged — missing info'));
       assertNoLegacyStatus(flagged.body, 'T-FLAG');
       const submitted = await request(srv.port, adminCookie, { path: `/loads/${idOf('T-SUB')}` });
-      assert.ok(submitted.body.includes('>Approve</button>'));
-      assert.ok(submitted.body.includes('Reject to Draft'));
+      assert.ok(submitted.body.includes('>Approve for Settlement</button>'));
+      assert.ok(!submitted.body.includes('Reject to Draft'), 'duplicate Reject to Draft box was removed (item 8)');
+      assert.ok(submitted.body.includes('>Reject load</button>'));
     });
 
     await check('a sent-back draft uses the Draft label on the edit form', async () => {
@@ -366,7 +367,7 @@ function assertNoLegacyStatus(html, where) {
       assert.strictEqual(page.status, 200, page.body.slice(0, 300));
       assertHasBadge(page.body, 'draft', LABELS.draft);
       assert.ok(page.body.includes('Load sent back to the driver as Draft.'));
-      assert.ok(!page.body.includes('>Approve</button>'));
+      assert.ok(!page.body.includes('>Approve for Settlement</button>'));
       assertNoLegacyStatus(page.body, 'reject flash');
     });
   } finally {

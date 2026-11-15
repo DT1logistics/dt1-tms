@@ -401,6 +401,7 @@ async function waitUntil(fn, ms) {
           path: '/api/logan/loads',
           body: JSON.stringify({
             action: 'draft',
+            load_date: '2026-11-03',
             driver_id: driverId,
             truck_id: truckId,
             destination: 'Yard'
@@ -426,7 +427,7 @@ async function waitUntil(fn, ms) {
       const open = await request(srv.port, auth, {
         method: 'POST',
         path: '/api/logan/loads',
-        body: JSON.stringify({ action: 'draft', driver_id: driverId, destination: 'Yard' })
+        body: JSON.stringify({ load_date: '2026-11-03', action: 'draft', driver_id: driverId, destination: 'Yard' })
       });
       assert.strictEqual(open.status, 201);
       assert.strictEqual(JSON.parse(open.body).load.truck_id, null);
@@ -631,6 +632,7 @@ async function waitUntil(fn, ms) {
       const driverId = readRows(dataDir, "SELECT id FROM users WHERE email = 'pat.driver@example.com'")[0].id;
       const body = form({
         action: 'draft',
+        load_date: '2026-11-03',
         driver_id: driverId,
         project_id: projectId,
         ticket_number: 'D-1',
