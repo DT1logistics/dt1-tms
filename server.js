@@ -2189,6 +2189,12 @@ app.get('/loads/:id/files/:fileId', requireAuth, (req, res) => {
   return res.status(404).send('Not found');
 });
 
+function findProjectById(projectId) {
+  const id = parseInt(projectId, 10);
+  if (!Number.isInteger(id)) return null;
+  return db.prepare('SELECT * FROM projects WHERE id = ?').get(id) || null;
+}
+
 function findActiveProject(projectId) {
   const id = parseInt(projectId, 10);
   if (!Number.isInteger(id)) return null;
@@ -2220,19 +2226,54 @@ function applyUberFreightCreateDefaults(values, project, existing) {
   return values;
 }
 
+function loadPayTypeFor(body, project, existing, isDriver) {
+  if (!isDriver && bodyHas(body, 'driver_pay_type')) return body.driver_pay_type === 'flat' ? 'flat' : 'percentage';
+  if (existing && existing.driver_pay_type) return existing.driver_pay_type === 'flat' ? 'flat' : 'percentage';
+  if (project && project.default_driver_pay_type === 'flat') return 'flat';
+  return 'percentage';
+}
+
+// Item 10: history entries for rate changes. A driver's override of the project default is logged
+// when it is set or changed; an admin's revision of a submitted load's rate is logged with old -> new.
+// (Edits after approval are logged field by field by recordPostApprovalEdits.)
+function recordRateAudit(req, loadId, existing, values, project) {
+  const newRate = roundMoney(Number(values.rate) || 0);
+  const oldRate = existing ? roundMoney(Number(existing.rate) || 0) : null;
+  if (existing && oldRate === newRate) return;
+  if (req.session.user.role === 'driver') {
+    if (!project || values.payType === 'flat') return;
+    const projectRate = roundMoney(Number(project.default_rate) || 0);
+    if (newRate === projectRate && (oldRate === null || oldRate === projectRate)) return;
+    const detail = newRate === projectRate
+      ? `Driver set Load Rate back to the project default ${moneyInput.usd(projectRate)}`
+      : `Driver set Load Rate ${moneyInput.usd(newRate)} (project default ${moneyInput.usd(projectRate)})`;
+    logAudit(req, 'Rate override', 'load', loadId, detail);
+    return;
+  }
+  if (existing && existing.status === 'submitted') {
+    logAudit(req, 'Rate revised', 'load', loadId, `Load Rate ${moneyInput.usd(oldRate)} → ${moneyInput.usd(newRate)}`);
+  }
+}
+
 function buildLoadValues(req, project, existing) {
   const body = req.body || {};
   const isDriver = req.session.user.role === 'driver';
+  // Item 10 (11/15/2026): the project's default rate pre-fills the Load Rate. On wet tonnage + rate
+  // (percentage) loads the driver may override it; the admin may revise it at any time before the
+  // settlement is finalized. The load keeps its own rate, which flows to the driver settlement and the
+  // invoice; the project default is never changed by a load. Flat / daily-rate loads keep the rate
+  // the admin set (drivers cannot change it).
+  const keptRate = () => {
+    if (existing && existing.rate != null && existing.rate !== '') return Number(existing.rate) || 0;
+    return project ? (Number(project.default_rate) || 0) : 0;
+  };
+  const driverRateLocked = isDriver && loadPayTypeFor(body, project, existing, true) === 'flat';
   let rate;
-  if (!bodyHas(body, 'rate') || String(body.rate).trim() === '') {
-    if (existing && existing.rate != null && existing.rate !== '') rate = Number(existing.rate) || 0;
-    else rate = project ? (Number(project.default_rate) || 0) : 0;
+  if (driverRateLocked || !bodyHas(body, 'rate') || String(body.rate).trim() === '') {
+    rate = keptRate();
   } else {
-    rate = parseFloat(body.rate);
-    if (!Number.isFinite(rate)) {
-      if (existing && existing.rate != null && existing.rate !== '') rate = Number(existing.rate) || 0;
-      else rate = project ? (Number(project.default_rate) || 0) : 0;
-    }
+    rate = parseFloat(String(body.rate).replace(/[$,\s]/g, ''));
+    if (!Number.isFinite(rate) || rate < 0) rate = keptRate();
   }
 
   let hasFuel;
@@ -2274,14 +2315,7 @@ function buildLoadValues(req, project, existing) {
     if (Number.isFinite(parsed)) weight = parsed;
   }
 
-  let payType = 'percentage';
-  if (!isDriver && bodyHas(body, 'driver_pay_type')) {
-    payType = body.driver_pay_type === 'flat' ? 'flat' : 'percentage';
-  } else if (existing && existing.driver_pay_type) {
-    payType = existing.driver_pay_type === 'flat' ? 'flat' : 'percentage';
-  } else if (project && project.default_driver_pay_type === 'flat') {
-    payType = 'flat';
-  }
+  const payType = loadPayTypeFor(body, project, existing, isDriver);
   let flatRate = 0;
   if (!isDriver && bodyHas(body, 'driver_flat_rate')) {
     const parsed = parseFloat(body.driver_flat_rate);
@@ -2781,6 +2815,7 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
   logAudit(req, entry.auditAction, 'load', loadId, entry.auditDetail);
   recordDetentionAudit(req, loadId, null, values);
   recordShipperDetentionAudit(req, loadId, null, values);
+  recordRateAudit(req, loadId, null, values, project);
   if (isAdmin && entry.entryMode === 'assigned' && values.driver_id) {
     if (assignmentChannelSelected(req.body)) await notifyAssignedLoadDriver(req, loadId);
     return res.redirect(`/loads/${loadId}?saved=assigned`);
@@ -2858,6 +2893,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
   logAudit(req, entry.auditAction, 'load', existing.id, entry.auditDetail);
   recordDetentionAudit(req, existing.id, existing, values);
   recordShipperDetentionAudit(req, existing.id, existing, values);
+  recordRateAudit(req, existing.id, existing, values, project || findProjectById(values.project_id));
   if (isAdmin && entry.entryMode === 'assigned' && entry.status === 'draft' && values.driver_id && assignmentChannelSelected(req.body)) {
     await notifyAssignedLoadDriver(req, existing.id);
     return res.redirect(`/loads/${existing.id}?saved=assigned`);
