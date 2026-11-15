@@ -2133,13 +2133,45 @@ app.post('/loads/:id/reject', requireAuth, (req, res) => {
   res.redirect(`/loads/${req.params.id}${result.changes ? '?saved=rejected' : ''}`);
 });
 
+// Item 9 (11/15/2026): a load can be deleted only while it is still on the Load screen, i.e.
+// before it is Approved for Settlement (status 'approved') or Settled. Kammy approved delete as a
+// PERMANENT erase (for duplicates). Every delete is written to audit_log first (who, which load,
+// when, and a summary of the load); audit_log rows are never removed with the load.
+function loadDeletable(load) {
+  if (!load) return false;
+  return load.status !== 'approved' && String(load.settlement_status || '') !== 'approved';
+}
+app.locals.loadDeletable = loadDeletable;
+
 app.post('/loads/:id/delete', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/loads');
-  const load = db.prepare('SELECT id FROM loads WHERE id = ?').get(req.params.id);
+  const load = db.prepare(loadQuery + ' WHERE l.id = ?').get(req.params.id);
   if (!load) return res.redirect('/loads');
-  ticketRows(load.id).forEach((file) => removeStoredTicket(file));
-  db.prepare('DELETE FROM documents WHERE load_id = ?').run(load.id);
-  db.prepare('DELETE FROM loads WHERE id = ?').run(load.id);
+  if (!loadDeletable(load)) {
+    logAudit(req, 'Delete blocked', 'load', load.id, 'Load is Approved for Settlement or Settled; it cannot be deleted');
+    return res.redirect(`/loads/${load.id}?saved=delete-blocked`);
+  }
+  const files = ticketRows(load.id);
+  const summary = [
+    `Load #${load.id}`,
+    `ticket ${load.ticket_number || '—'}`,
+    `date ${load.load_date || '—'}`,
+    `driver ${load.driver_name || 'Unassigned'}`,
+    `project ${load.project_display || '—'}`,
+    `status ${loadStatusLabel(load.status, load.settlement_status)}`,
+    `${files.length} ticket file${files.length === 1 ? '' : 's'}`
+  ].join(' · ');
+  const erase = db.transaction(() => {
+    logAudit(req, 'Deleted load (permanent)', 'load', load.id, summary);
+    db.prepare('DELETE FROM documents WHERE load_id = ?').run(load.id);
+    db.prepare('DELETE FROM loads WHERE id = ?').run(load.id);
+  });
+  erase();
+  files.forEach((file) => {
+    const full = storedTicketPath(file);
+    try { if (full && fs.existsSync(full)) fs.unlinkSync(full); } catch (err) { /* file already gone */ }
+  });
+  console.log(`Load deleted (permanent) by ${actorName(req)} at ${new Date().toISOString()}: ${summary}`);
   res.redirect('/loads?deleted=1');
 });
 

@@ -49,6 +49,7 @@
 <% if (saved === 'cleared') { %><div class="all-clear">Missing-info flag cleared.</div><% } %>
 <% if (saved === 'accepted') { %><div class="all-clear">Load accepted.</div><% } %>
 <% if (saved === 'review-rejected') { %><div class="reject-note">Load rejected.<% if (load.status === 'draft' && load.rejection_reason) { %> It was sent back to the driver as Draft.<% } %></div><% } %>
+<% if (saved === 'delete-blocked') { %><div class="reject-note">This load is Approved for Settlement, so it cannot be deleted. Reject it back to Draft or edit it instead.</div><% } %>
 <% if (saved === 'need-reason') { %><div class="reject-note">A reason is required to reject a load.</div><% } %>
 <% if (user.role === 'admin' && load.review_status === 'flagged_missing_info') { %>
   <div class="reject-note">
@@ -356,9 +357,13 @@
         <button class="approve" type="submit">Approve for Settlement</button>
       </form>
     <% } %>
-    <form method="POST" action="/loads/<%= load.id %>/delete" onsubmit="return confirm('Delete this load? This cannot be undone.');">
-      <button class="danger" type="submit">Delete Load</button>
-    </form>
+    <% if (loadDeletable(load)) { %>
+      <form method="POST" action="/loads/<%= load.id %>/delete" onsubmit="return confirm('Are you sure? This cannot be undone.\n\nDelete Load permanently erases load #<%= load.id %><%= load.ticket_number ? ' (ticket ' + String(load.ticket_number).replace(/[\\'\r\n]/g, '') + ')' : '' %> and its ticket files. Use it for duplicates.');">
+        <button class="danger" type="submit">Delete Load</button>
+      </form>
+    <% } else { %>
+      <p class="muted">Delete Load is not available after a load is Approved for Settlement.</p>
+    <% } %>
   </div>
 <% } else if (load.status === 'draft') { %>
   <p><a class="btn" href="/loads/<%= load.id %>/edit">Edit Draft</a></p>
