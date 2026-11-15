@@ -236,7 +236,8 @@ function writeDb(dataDir, fn) {
       assert.strictEqual(audit.length, 1);
       assert.strictEqual(audit[0].actor_name, 'Logan (Operations Manager)');
       assert.strictEqual(audit[0].detail, 'Detention $25.24');
-      const list = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/loads' });
+      // Item 5: approved loads leave the main Loads screen; they are listed under ?view=approved.
+      const list = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/loads?view=approved' });
       assert.ok(list.body.includes('Detention: $25.24'));
       assert.ok(list.body.includes('Driver Pay: $55.24'));
     });
@@ -306,7 +307,10 @@ function writeDb(dataDir, fn) {
     });
 
     await check('settlement driver pay includes driver detention once and a load with no shipper detention keeps the same invoice total', async () => {
-      const page = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/settlements' });
+      // Item 5: the weekly invoice moved from /settlements to /invoices.
+      const settlementsPage = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/settlements' });
+      const invoicesPage = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/invoices' });
+      const page = { status: Math.max(settlementsPage.status, invoicesPage.status), body: settlementsPage.body + invoicesPage.body };
       assert.strictEqual(page.status, 200);
       assert.ok(page.body.includes('Driver Pay $55.24'), page.body.slice(page.body.indexOf('Driver Pay'), 80));
       assert.ok(page.body.includes('Detention $25.24'));
@@ -402,7 +406,10 @@ function writeDb(dataDir, fn) {
       assert.ok(!detail.body.includes('$115.51'));
       assert.ok(!detail.body.includes('$70.75'));
 
-      const page = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/settlements' });
+      // Item 5: the weekly invoice moved from /settlements to /invoices.
+      const settlementsPage = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/settlements' });
+      const invoicesPage = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/invoices' });
+      const page = { status: Math.max(settlementsPage.status, invoicesPage.status), body: settlementsPage.body + invoicesPage.body };
       assert.strictEqual(page.status, 200);
       assert.ok(page.body.includes('>Detention</th>'));
       assert.ok(page.body.includes('$15.51'));

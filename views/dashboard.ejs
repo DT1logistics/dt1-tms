@@ -11,7 +11,7 @@
   <%- include('partials/levels', { levels: levels }) %>
   <%- include('partials/assigned-loads-banner', { assignedLoads: typeof assignedLoads !== 'undefined' ? assignedLoads : [] }) %>
   <h2>Your Loads</h2>
-  <p class="muted">Approved loads stay here until an admin approves the weekly driver settlement. On percentage loads, drive time in driver pay is your pay percentage of the drive-time fee. Self load and detention are added in full. Driver pay does not include fuel surcharge.</p>
+  <p class="muted">Approved loads stay here until an admin finalizes the weekly driver settlement. Your pay for a week shows on Settlements once that week is finalized.</p>
   <%- include('partials/week-summaries', { weekGroups: weekGroups, undatedLoads: undatedLoads, user: user }) %>
 <% } else { %>
   <h1>Home</h1>
@@ -27,7 +27,8 @@
     <a class="quick" href="/receipts"><strong>Receipts</strong><span>Expense receipts for approval.</span></a>
     <a class="quick" href="/fuel-rate"><strong>Fuel Rate</strong><span>Weekly EIA Central Atlantic surcharge.</span></a>
     <a class="quick" href="/compliance"><strong>Compliance</strong><span>FMCSA, HVUT, UCR, IFTA, and insurance dates.</span></a>
-    <a class="quick" href="/settlements"><strong>Settlements &amp; Invoices</strong><span>Driver pay and weekly shipper invoices.</span></a>
+    <a class="quick" href="/settlements"><strong>Settlements</strong><span>Weekly driver pay: review, PDF, and finalize.</span></a>
+    <a class="quick" href="/invoices"><strong>Invoices</strong><span>Weekly customer invoices, PDF, Paid/Invoiced, and the invoice tracker.</span></a>
   </div>
 <% } %>
 <%- include('partials/close') %>

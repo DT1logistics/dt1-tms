@@ -1,42 +1,50 @@
 <%- include('partials/open', { title: 'Settlements', user: user, active: 'settlements' }) %>
-<h1><%= user.role === 'admin' ? 'Settlements & Invoices' : 'Settlements' %></h1>
-<% if (saved === 'week') { %><div class="all-clear">Weekly driver settlement approved. Those loads are now under Driver Settlements.</div><% } %>
+<h1>Settlements</h1>
+<% if (saved === 'week') { %><div class="all-clear">Weekly driver settlement finalized. Those loads are now Settled and locked, and the driver can see that week's pay.</div><% } %>
 <% if (user.role === 'admin') { %>
-  <p class="muted">Approve a driver’s Monday–Sunday settlement after the loads for that week are approved. Percentage loads and flat daily-rate loads in the same week add together. On percentage loads, drive time in driver pay is the driver’s profile pay percentage of the drive-time fee. Flat/daily-rate loads include the full drive-time fee. Self load and detention are added in full. Fuel surcharge is never included in driver pay.</p>
-  <h2>Approve Weekly Driver Settlement</h2>
+  <p class="muted">Loads Approved for Settlement are grouped by driver and Monday–Sunday work week (by Load Date). Review each week, download the PDF, then Finalize it for payroll. A finalized week is locked: its loads can no longer be edited, rejected, or deleted, and the driver sees that week's pay. Customer billing is on <a href="/invoices">Invoices</a>.</p>
+  <p class="muted">On percentage loads, driver pay is the driver's profile pay percentage of Qty × Rate and of the drive-time fee. Flat/daily-rate loads include the full drive-time fee. Self load and detention are added in full. Fuel surcharge is never included in driver pay.</p>
+  <h2>Ready to Finalize</h2>
   <% if (pendingWeeks && pendingWeeks.length) { %>
     <% pendingWeeks.forEach(function (group) { %>
       <% const range = group.week && group.week.range && group.week.start ? group.week.range : ''; %>
-      <div class="card settlement-card">
+      <div class="card settlement-card settlement-pending">
         <h3><%= range ? 'Driver Settlement - Week of ' + range : 'Driver Settlement - Undated' %></h3>
         <div><strong><%= group.driver %></strong><% if (group.percentage != null) { %> · Pay <%= group.percentage %><% } %></div>
         <div class="settlement-meta">
           <%= group.loads.length %> load<%= group.loads.length === 1 ? '' : 's' %>
           · Qty/Wet Ton <%= group.qty %>
-          · Driver Pay <%= usd(group.total) %>
-          · Pending approval
+          · Not finalized
         </div>
-        <%- include('partials/settlement-loads', { loads: group.loads }) %>
+        <div class="settlement-amounts">
+          <div class="pay-line admin-driver-pay">Driver Pay <%= usd(group.total) %></div>
+          <div class="total-load-pay-line">Total Load Pay (invoiced) <%= usd(group.totalLoadPay) %></div>
+        </div>
+        <div class="muted">Base <%= usd(group.base) %> · Drive Time <%= usd(group.drive) %> · Self Load <%= usd(group.self) %> · Detention <%= usd(group.detention) %></div>
+        <%- include('partials/settlement-loads', { loads: group.loads, user: user }) %>
         <% if (group.driverId && group.week.start) { %>
-          <form method="POST" action="/settlements/approve-week">
-            <input type="hidden" name="driver_id" value="<%= group.driverId %>">
-            <input type="hidden" name="week_start" value="<%= group.week.start %>">
-            <button type="submit">Approve Weekly Driver Settlement</button>
-          </form>
+          <div class="settlement-actions">
+            <a class="btn btn-secondary" href="/settlements/pdf?kind=pending&amp;driver_id=<%= group.driverId %>&amp;week_start=<%= group.week.start %>">Download PDF (draft)</a>
+            <form method="POST" action="/settlements/approve-week" onsubmit="return confirm('Finalize <%= String(group.driver).replace(/[\\'\r\n]/g, '') %>\'s settlement for the week of <%= range %>?\n\nFinalized settlements are locked: these loads can no longer be edited, rejected, or deleted, and the driver will see this week\'s pay.');">
+              <input type="hidden" name="driver_id" value="<%= group.driverId %>">
+              <input type="hidden" name="week_start" value="<%= group.week.start %>">
+              <button type="submit">Finalize Weekly Settlement</button>
+            </form>
+          </div>
         <% } %>
       </div>
     <% }) %>
   <% } else { %>
-    <p>No approved loads are waiting for weekly settlement approval.</p>
+    <p>No loads Approved for Settlement are waiting to be finalized.</p>
   <% } %>
 <% } else { %>
-  <p class="muted">Approved weekly settlements and the driver pay for each load. On percentage loads, the Drive Time line is your pay percentage of the drive-time fee. Flat/daily-rate loads include the full drive-time fee. Self load and detention are added in full. Fuel surcharge is not included.</p>
+  <p class="muted">Your pay for each work week (Monday–Sunday) appears here once the weekly settlement is finalized for payroll. On percentage loads, the Drive Time line is your pay percentage of the drive-time fee. Flat/daily-rate loads include the full drive-time fee. Self load and detention are added in full. Fuel surcharge is not included.</p>
 <% } %>
 
-<h2>Driver Settlements</h2>
+<h2>Finalized Settlements</h2>
 <% if (approvedWeeks && approvedWeeks.length) { %>
   <% approvedWeeks.forEach(function (group) { %>
-    <div class="card settlement-card">
+    <div class="card settlement-card settlement-final">
       <h3>Driver Settlement - Week of <%= group.range %></h3>
       <% if (user.role === 'admin') { %>
         <div><strong><%= group.driver_name %></strong><% if (group.pay_percentage != null) { %> · Pay <%= group.pay_percentage %><% } %></div>
@@ -44,93 +52,21 @@
       <div class="settlement-meta">
         <%= group.loads.length %> load<%= group.loads.length === 1 ? '' : 's' %>
         · Qty/Wet Ton <%= group.qty %>
-        · Driver Pay <%= usd(group.total) %>
-        · Approved
+        · Finalized
+      </div>
+      <div class="settlement-amounts">
+        <div class="pay-line">Driver Pay <%= usd(group.total) %></div>
+        <% if (user.role === 'admin') { %><div class="total-load-pay-line">Total Load Pay (invoiced) <%= usd(group.totalLoadPay) %></div><% } %>
       </div>
       <div class="muted">Base <%= usd(group.base) %> · Drive Time <%= usd(group.drive) %> · Self Load <%= usd(group.self) %> · Detention <%= usd(group.detention) %></div>
       <% if (group.approved_by_name) { %>
-        <div class="muted">Approved by <%= group.approved_by_name %><% if (group.approved_at) { %> on <%= auditStamp(group.approved_at) %><% } %></div>
+        <div class="muted">Finalized by <%= group.approved_by_name %><% if (group.approved_at) { %> on <%= auditStamp(group.approved_at) %><% } %></div>
       <% } %>
-      <%- include('partials/settlement-loads', { loads: group.loads }) %>
+      <p><a class="btn btn-secondary" href="/settlements/pdf?<%= user.role === 'admin' ? 'driver_id=' + group.driver_id + '&' : '' %>week_start=<%= group.week_start %>">Download PDF</a></p>
+      <%- include('partials/settlement-loads', { loads: group.loads, user: user }) %>
     </div>
   <% }) %>
 <% } else { %>
-  <p>No approved weekly driver settlements yet.</p>
-<% } %>
-
-<% if (user.role === 'admin') { %>
-  <h2>Weekly Shipper Invoices</h2>
-  <p class="muted">
-    Approved loads grouped by shipper and project.
-    Latest EIA surcharge: <%= money(surchargePercent) %>%<% if (fuelRate) { %> (effective <%= fuelRate.effective_date %>)<% } else { %> (no fuel rate saved yet)<% } %>.
-    Fuel surcharge applies only to loads marked Includes Fuel Surcharge, and each load uses the fuel rate for its own week
-    (the latest Fuel Rate effective on or before the Load Date): FSC % = (Weekly Diesel − $4.00) ÷ 10,
-    Surcharge/Ton = Load Rate × FSC %, Total Fuel Surcharge = Surcharge/Ton × Wet Tons (flat-rate loads: Flat Amount × FSC %).
-    Loads whose week has no fuel rate yet show “Rate pending” at $0.00. Fuel surcharge is a separate invoice line and is not in Load Total or Driver Pay.
-    Detention on this invoice is billed to the customer. Fuel surcharge does not apply to it, and it is not driver pay.
-  </p>
-  <% if (customerInvoices && customerInvoices.length) { %>
-    <% customerInvoices.forEach(function (invoice) { %>
-      <div class="card">
-        <h3 style="margin-top:0;">Project: <%= invoice.display_name %></h3>
-        <% if (invoice.customer_name) { %>
-          <div><strong>Bill To:</strong> <%= invoice.customer_name %></div>
-          <div>Phone: <%= invoice.poc_phone || '—' %></div>
-          <div>Address: <%= invoice.address_line1 || '—' %></div>
-          <% if (invoice.address_line2) { %><div><%= invoice.address_line2 %></div><% } %>
-          <div>Email: <%= invoice.poc_email || '—' %></div>
-          <div>Terms: <%= invoice.terms || 'Net 30' %></div>
-          <% if (invoice.poc_name) { %><div class="muted">Point of Contact: <%= invoice.poc_name %></div><% } %>
-        <% } %>
-        <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Ticket #</th>
-              <th>Origin</th>
-              <th>Destination</th>
-              <th class="num">Qty</th>
-              <th class="num">Rate</th>
-              <th class="num" title="Paid to the driver. Not billed on the invoice.">Driver Pay</th>
-              <th class="num">Price</th>
-              <th class="num">Fuel Surcharge</th>
-              <th class="num">Self Load</th>
-              <th class="num">Travel Time</th>
-              <th class="num" title="Billed to the customer. Fuel surcharge does not apply.">Detention</th>
-            </tr>
-          </thead>
-          <tbody>
-            <% invoice.loads.forEach(function (load) { %>
-              <tr>
-                <td><%= formatLoadDate(load.load_date) || '—' %></td>
-                <td><%= load.ticket_number || '—' %><div class="muted"><%= loadStatusLabel(load.status, load.settlement_status) %></div></td>
-                <td><%= load.origin || '—' %></td>
-                <td><%= load.destination || load.description || '—' %></td>
-                <td class="num"><%= load.weight_quantity != null ? load.weight_quantity : '—' %></td>
-                <td class="num"><%= usd(load.rate) %></td>
-                <td class="num muted"><%= usd(load.payInfo ? load.payInfo.pay : 0) %></td>
-                <td class="num"><%= usd(load.hauling) %><% if (load.usesTotalLoadPay) { %><div class="muted" style="font-size:11px;">Total Load Pay</div><% } %></td>
-                <td class="num"><% if (load.usesTotalLoadPay) { %>—<div class="muted" style="font-size:11px;">in Total Load Pay</div><% } else if (Number(load.has_fuel_surcharge) === 1 && load.fscPending) { %>$0.00<div class="muted" style="font-size:11px;">Rate pending</div><% } else if (Number(load.has_fuel_surcharge) === 1) { %><%= usd(load.lineFsc) %><div class="muted" style="font-size:11px;"><%= Number(load.fscPercent).toFixed(2) %>% · <%= load.fscFlat ? 'flat amount' : '$' + Number(load.fscPerTon).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') + '/ton' %></div><% } else { %>—<% } %></td>
-                <td class="num"><%= usd(load.selfLoad) %></td>
-                <td class="num"><%= usd(load.travelTime) %></td>
-                <td class="num"><%= Number(load.shipper_detention) === 1 ? usd(load.shipperDetention) : '—' %></td>
-              </tr>
-            <% }) %>
-          </tbody>
-        </table>
-        <div class="totals">
-          <div class="muted driver-pay-total" title="Paid to drivers. Not part of the invoice total."><span>Driver Pay (not billed)</span><span><%= usd(invoice.driverPay) %></span></div>
-          <div><span>Hauling</span><span><%= usd(invoice.hauling) %></span></div>
-          <div><span>Fuel Surcharge<% const pcts = invoice.fscPercents || []; %><% if (pcts.length === 1) { %> (<%= Number(pcts[0]).toFixed(2) %>%)<% } else if (pcts.length > 1) { %> (weekly rates: <%= pcts.map(function (x) { return Number(x).toFixed(2) + '%'; }).join(', ') %>)<% } %><% if (invoice.fscPendingCount) { %> · <%= invoice.fscPendingCount %> load<%= invoice.fscPendingCount === 1 ? '' : 's' %> rate pending<% } %></span><span><%= usd(invoice.fuelSurcharge) %></span></div>
-          <div><span>Travel Time</span><span><%= usd(invoice.travelTime) %></span></div>
-          <div><span>Self Load</span><span><%= usd(invoice.selfLoad) %></span></div>
-          <div title="Billed to the customer. Fuel surcharge does not apply."><span>Detention</span><span><%= usd(invoice.shipperDetention) %></span></div>
-          <div class="grand"><span>TOTAL</span><span><%= usd(invoice.total) %></span></div>
-        </div>
-      </div>
-    <% }) %>
-  <% } else { %>
-    <p>No approved loads to invoice yet.</p>
-  <% } %>
+  <p>No finalized weekly settlements yet.</p>
 <% } %>
 <%- include('partials/close') %>

@@ -77,6 +77,8 @@
     <a href="/loads/<%= load.id %>">Review</a>
     <% if (load.status === 'draft' && (user.role === 'admin' || String(load.driver_id) === String(user.id))) { %>
       · <a href="/loads/<%= load.id %>/edit">Continue draft</a>
+    <% } else if (load.status === 'submitted' && user.role !== 'admin' && loadEditableBy(user, load)) { %>
+      · <a href="/loads/<%= load.id %>/edit">Edit</a>
     <% } %>
   </p>
 </div>

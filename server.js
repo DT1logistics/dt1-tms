@@ -60,6 +60,7 @@ app.set('views', path.join(__dirname, 'views'));
 app.locals.money = (n) => (Number(n) || 0).toFixed(2);
 // Item 4 (11/15/2026): every money display reads "$1,234.50" (always two decimals).
 const moneyInput = require('./lib/money-input');
+const { SimplePdf } = require('./lib/simple-pdf');
 app.locals.usd = moneyInput.usd;
 
 function daysUntil(exp) {
@@ -175,8 +176,10 @@ function calcDriverPay(load) {
   return { linehaul, base, drive, self, detention, pay: base + drive + self + detention, percentage, flat, basis };
 }
 
+// Item 5 (11/15/2026): drivers see their pay only once that week's settlement is finalized for
+// payroll. (Admins always see Driver Pay; their views do not use showPay.)
 function payVisible(load) {
-  return !!(load && (load.status === 'approved' || load.settlement_status === 'approved'));
+  return !!(load && load.status === 'approved' && load.settlement_status === 'approved');
 }
 
 function annotatePay(load) {
@@ -851,6 +854,36 @@ function initDB() {
   // Item 3 (11/15/2026): additive, nullable. NULL = not set, so existing totals are unchanged.
   ensureColumn('projects', 'default_total_load_pay', 'REAL');
   ensureColumn('loads', 'total_load_pay', 'REAL');
+  // Item 5 (11/15/2026): new tables only. Invoice Paid/Invoiced marks per customer + work week, and
+  // the Invoice tracker's amount received per customer + project + work week. Loads are not changed.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS invoice_weeks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      week_start DATE NOT NULL,
+      week_end DATE,
+      invoiced_at DATETIME,
+      invoiced_by INTEGER,
+      invoiced_by_name TEXT,
+      invoiced_amount REAL,
+      paid_at DATETIME,
+      paid_by INTEGER,
+      paid_by_name TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(customer_id, week_start)
+    );
+    CREATE TABLE IF NOT EXISTS invoice_tracker (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id INTEGER NOT NULL,
+      project_id INTEGER NOT NULL,
+      week_start DATE NOT NULL,
+      amount_received REAL,
+      updated_by INTEGER,
+      updated_by_name TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(customer_id, project_id, week_start)
+    );
+  `);
   ensureColumn('documents', 'file_blob', 'BLOB');
   ensureColumn('communications_log', 'load_id', 'INTEGER');
   // Equipment Expenses / Maintenance Log (new table; existing equipment rows are untouched).
@@ -1203,13 +1236,22 @@ function resolveLoadEntry(req, existing) {
   const isAdmin = req.session.user.role === 'admin';
   const action = req.body.action || 'submit';
   if (!isAdmin) {
+    const editingSubmitted = !!(existing && existing.status === 'submitted');
+    let auditAction = action === 'draft' ? 'Saved draft' : 'Submitted';
+    let auditDetail = action === 'draft' ? 'Driver saved a draft' : 'Submitted by Driver';
+    if (editingSubmitted && action !== 'draft') {
+      auditAction = 'Edited';
+      auditDetail = 'Driver edited the submitted load (still pending approval)';
+    } else if (editingSubmitted) {
+      auditDetail = 'Driver moved the submitted load back to Draft';
+    }
     return {
       status: action === 'draft' ? 'draft' : 'submitted',
       entryMode: existing && existing.entry_mode ? existing.entry_mode : 'driver',
       createdByRole: existing && existing.created_by_role ? existing.created_by_role : 'driver',
       approveNow: false,
-      auditAction: action === 'draft' ? 'Saved draft' : 'Submitted',
-      auditDetail: action === 'draft' ? 'Driver saved a draft' : 'Submitted by Driver'
+      auditAction,
+      auditDetail
     };
   }
   if (action === 'save') {
@@ -1256,6 +1298,7 @@ const loadQuery = `
   SELECT l.*, u.name as driver_name, u.pay_percentage,
          e.number as truck_number, e.type as truck_type, e.make as truck_make, e.model as truck_model,
          p.display_name as project_display, p.project_name as project_short_name,
+         p.customer_id as project_customer_id,
          c.name as customer_name, c.address_line1, c.address_line2,
          c.poc_name, c.poc_phone, c.poc_email, c.terms
   FROM loads l
@@ -2095,16 +2138,24 @@ app.get('/loads', requireAuth, (req, res) => {
       deleted: req.query.deleted === '1'
     });
   }
+  // Item 5 (11/15/2026): once a load is Approved for Settlement it leaves the main Loads screen
+  // (hidden from this view only; the record is kept) and is worked from Settlements and Invoices.
+  // ?view=approved lists those loads so they stay reachable.
   const reviewFilter = req.query.review === 'flagged' ? 'flagged' : '';
-  const flaggedClause = reviewFilter ? " WHERE IFNULL(l.review_status, '') = 'flagged_missing_info'" : '';
-  const loads = attachTickets(db.prepare(loadQuery + flaggedClause + loadDateOrderSql).all()).map(annotatePay);
+  const approvedView = !reviewFilter && req.query.view === 'approved';
+  const where = [approvedView ? "l.status = 'approved'" : "l.status != 'approved'"];
+  if (reviewFilter) where.push("IFNULL(l.review_status, '') = 'flagged_missing_info'");
+  const loads = attachTickets(db.prepare(loadQuery + ' WHERE ' + where.join(' AND ') + loadDateOrderSql).all()).map(annotatePay);
+  const approvedCount = db.prepare("SELECT COUNT(*) AS n FROM loads WHERE status = 'approved'").get().n;
   res.render('loads', {
     user: req.session.user,
     loads,
     weekGroups: [],
     undatedLoads: null,
     deleted: req.query.deleted === '1',
-    reviewFilter
+    reviewFilter,
+    approvedView,
+    approvedCount
   });
 });
 
@@ -2127,9 +2178,12 @@ app.post('/loads/:id/reject', requireAuth, (req, res) => {
     UPDATE loads
     SET status = 'draft', rejection_reason = ?, approved_by = NULL, approved_by_name = NULL, approved_at = NULL,
         settlement_status = NULL, rejected_by = ?, rejected_by_name = ?, rejected_at = CURRENT_TIMESTAMP
-    WHERE id = ? AND status IN ('submitted', 'approved')
+    WHERE id = ? AND status IN ('submitted', 'approved') AND IFNULL(settlement_status, '') != 'approved'
   `).run(reason || null, req.session.user.id, actorName(req), req.params.id);
   if (result.changes) logAudit(req, 'Rejected', 'load', req.params.id, reason || 'Sent back to draft');
+  if (!result.changes && settlementFinalized(db.prepare('SELECT settlement_status FROM loads WHERE id = ?').get(req.params.id))) {
+    return res.redirect(`/loads/${req.params.id}?saved=locked`);
+  }
   res.redirect(`/loads/${req.params.id}${result.changes ? '?saved=rejected' : ''}`);
 });
 
@@ -2189,6 +2243,12 @@ app.get('/loads/:id/files/:fileId', requireAuth, (req, res) => {
   return res.status(404).send('Not found');
 });
 
+function findProjectById(projectId) {
+  const id = parseInt(projectId, 10);
+  if (!Number.isInteger(id)) return null;
+  return db.prepare('SELECT * FROM projects WHERE id = ?').get(id) || null;
+}
+
 function findActiveProject(projectId) {
   const id = parseInt(projectId, 10);
   if (!Number.isInteger(id)) return null;
@@ -2220,19 +2280,54 @@ function applyUberFreightCreateDefaults(values, project, existing) {
   return values;
 }
 
+function loadPayTypeFor(body, project, existing, isDriver) {
+  if (!isDriver && bodyHas(body, 'driver_pay_type')) return body.driver_pay_type === 'flat' ? 'flat' : 'percentage';
+  if (existing && existing.driver_pay_type) return existing.driver_pay_type === 'flat' ? 'flat' : 'percentage';
+  if (project && project.default_driver_pay_type === 'flat') return 'flat';
+  return 'percentage';
+}
+
+// Item 10: history entries for rate changes. A driver's override of the project default is logged
+// when it is set or changed; an admin's revision of a submitted load's rate is logged with old -> new.
+// (Edits after approval are logged field by field by recordPostApprovalEdits.)
+function recordRateAudit(req, loadId, existing, values, project) {
+  const newRate = roundMoney(Number(values.rate) || 0);
+  const oldRate = existing ? roundMoney(Number(existing.rate) || 0) : null;
+  if (existing && oldRate === newRate) return;
+  if (req.session.user.role === 'driver') {
+    if (!project || values.payType === 'flat') return;
+    const projectRate = roundMoney(Number(project.default_rate) || 0);
+    if (newRate === projectRate && (oldRate === null || oldRate === projectRate)) return;
+    const detail = newRate === projectRate
+      ? `Driver set Load Rate back to the project default ${moneyInput.usd(projectRate)}`
+      : `Driver set Load Rate ${moneyInput.usd(newRate)} (project default ${moneyInput.usd(projectRate)})`;
+    logAudit(req, 'Rate override', 'load', loadId, detail);
+    return;
+  }
+  if (existing && existing.status === 'submitted') {
+    logAudit(req, 'Rate revised', 'load', loadId, `Load Rate ${moneyInput.usd(oldRate)} → ${moneyInput.usd(newRate)}`);
+  }
+}
+
 function buildLoadValues(req, project, existing) {
   const body = req.body || {};
   const isDriver = req.session.user.role === 'driver';
+  // Item 10 (11/15/2026): the project's default rate pre-fills the Load Rate. On wet tonnage + rate
+  // (percentage) loads the driver may override it; the admin may revise it at any time before the
+  // settlement is finalized. The load keeps its own rate, which flows to the driver settlement and the
+  // invoice; the project default is never changed by a load. Flat / daily-rate loads keep the rate
+  // the admin set (drivers cannot change it).
+  const keptRate = () => {
+    if (existing && existing.rate != null && existing.rate !== '') return Number(existing.rate) || 0;
+    return project ? (Number(project.default_rate) || 0) : 0;
+  };
+  const driverRateLocked = isDriver && loadPayTypeFor(body, project, existing, true) === 'flat';
   let rate;
-  if (!bodyHas(body, 'rate') || String(body.rate).trim() === '') {
-    if (existing && existing.rate != null && existing.rate !== '') rate = Number(existing.rate) || 0;
-    else rate = project ? (Number(project.default_rate) || 0) : 0;
+  if (driverRateLocked || !bodyHas(body, 'rate') || String(body.rate).trim() === '') {
+    rate = keptRate();
   } else {
-    rate = parseFloat(body.rate);
-    if (!Number.isFinite(rate)) {
-      if (existing && existing.rate != null && existing.rate !== '') rate = Number(existing.rate) || 0;
-      else rate = project ? (Number(project.default_rate) || 0) : 0;
-    }
+    rate = parseFloat(String(body.rate).replace(/[$,\s]/g, ''));
+    if (!Number.isFinite(rate) || rate < 0) rate = keptRate();
   }
 
   let hasFuel;
@@ -2274,14 +2369,7 @@ function buildLoadValues(req, project, existing) {
     if (Number.isFinite(parsed)) weight = parsed;
   }
 
-  let payType = 'percentage';
-  if (!isDriver && bodyHas(body, 'driver_pay_type')) {
-    payType = body.driver_pay_type === 'flat' ? 'flat' : 'percentage';
-  } else if (existing && existing.driver_pay_type) {
-    payType = existing.driver_pay_type === 'flat' ? 'flat' : 'percentage';
-  } else if (project && project.default_driver_pay_type === 'flat') {
-    payType = 'flat';
-  }
+  const payType = loadPayTypeFor(body, project, existing, isDriver);
   let flatRate = 0;
   if (!isDriver && bodyHas(body, 'driver_flat_rate')) {
     const parsed = parseFloat(body.driver_flat_rate);
@@ -2390,13 +2478,113 @@ function saveTicketFiles(loadId, files, userId) {
   });
 }
 
+// Item 6 (11/15/2026) editing and locking rules:
+// - Draft or Submitted: the assigned driver (and the admin) may edit, up until admin approval.
+// - Approved for Settlement: admin only; every change is written to the load history.
+// - Settled (the driver's weekly settlement is finalized): locked. No edits, no reject, no delete.
+function settlementFinalized(load) {
+  return !!load && String(load.settlement_status || '') === 'approved';
+}
+app.locals.settlementFinalized = settlementFinalized;
+
+function loadEditableBy(user, load) {
+  if (!user || !load) return false;
+  if (settlementFinalized(load)) return false;
+  if (user.role === 'admin') return true;
+  if (load.status !== 'draft' && load.status !== 'submitted') return false;
+  return String(load.driver_id) === String(user.id);
+}
+app.locals.loadEditableBy = loadEditableBy;
+
+function finalizedSettlementFor(driverId, loadDate) {
+  const week = weekBounds(loadDate);
+  if (!driverId || !week) return null;
+  return db.prepare(`
+    SELECT * FROM driver_settlements WHERE driver_id = ? AND week_start = ? AND status = 'approved'
+  `).get(driverId, week.start) || null;
+}
+
 function editableLoad(req, id) {
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(id);
   if (!load) return null;
-  if (req.session.user.role === 'admin') return load;
-  if (load.status !== 'draft') return null;
-  if (String(load.driver_id) !== String(req.session.user.id)) return null;
-  return load;
+  return loadEditableBy(req.session.user, load) ? load : null;
+}
+
+// Item 6: one history entry per admin save after approval, listing every changed field (old -> new).
+const POST_APPROVAL_FIELDS = [
+  ['ticket_number', 'ticket_number', 'Ticket #', 'text'],
+  ['load_date', 'load_date', 'Load Date', 'text'],
+  ['driver_id', 'driver_id', 'Driver', 'driver'],
+  ['truck_id', 'truck_id', 'Truck', 'truck'],
+  ['project_id', 'project_id', 'Project', 'project'],
+  ['origin', 'origin', 'Origin', 'text'],
+  ['destination', 'destination', 'Destination', 'text'],
+  ['notes', 'notes', 'Notes', 'text'],
+  ['weight_quantity', 'weight', 'Qty/Wet Ton', 'number'],
+  ['rate', 'rate', 'Load Rate', 'money'],
+  ['has_fuel_surcharge', 'hasFuel', 'Fuel Surcharge', 'flag'],
+  ['has_drive_time', 'hasDrive', 'Drive Time', 'flag'],
+  ['drive_time_amount', 'driveAmount', 'Drive Time amount', 'money'],
+  ['has_self_load', 'hasSelf', 'Self Load', 'flag'],
+  ['self_load_amount', 'selfAmount', 'Self Load amount', 'money'],
+  ['detention', 'hasDetention', 'Detention', 'flag'],
+  ['detention_amount', 'detentionAmount', 'Detention amount', 'money'],
+  ['shipper_detention', 'hasShipperDetention', 'Shipper detention', 'flag'],
+  ['shipper_detention_amount', 'shipperDetentionAmount', 'Shipper detention amount', 'money'],
+  ['driver_pay_type', 'payType', 'Driver Pay Basis', 'text'],
+  ['driver_flat_rate', 'flatRate', 'Driver Flat / Daily Rate', 'money'],
+  ['total_load_pay', 'totalLoadPay', 'Total Load Pay', 'optmoney']
+];
+
+function describeEditValue(kind, value) {
+  if (kind === 'flag') return Number(value) ? 'Yes' : 'No';
+  if (kind === 'money') return moneyInput.usd(Number(value) || 0);
+  if (kind === 'optmoney') return value == null || value === '' ? 'not set' : moneyInput.usd(Number(value) || 0);
+  if (value == null || String(value).trim() === '') return '—';
+  if (kind === 'driver') {
+    const row = db.prepare('SELECT name FROM users WHERE id = ?').get(value);
+    return row ? row.name : `#${value}`;
+  }
+  if (kind === 'project') {
+    const row = db.prepare('SELECT display_name FROM projects WHERE id = ?').get(value);
+    return row ? row.display_name : `#${value}`;
+  }
+  if (kind === 'truck') {
+    const row = db.prepare('SELECT number FROM equipment WHERE id = ?').get(value);
+    return row ? row.number : `#${value}`;
+  }
+  return String(value);
+}
+
+function sameEditValue(kind, a, b) {
+  if (kind === 'flag') return (Number(a) ? 1 : 0) === (Number(b) ? 1 : 0);
+  if (kind === 'money') return roundMoney(Number(a) || 0) === roundMoney(Number(b) || 0);
+  if (kind === 'optmoney') {
+    const blankA = a == null || a === '';
+    const blankB = b == null || b === '';
+    if (blankA || blankB) return blankA === blankB;
+    return roundMoney(Number(a)) === roundMoney(Number(b));
+  }
+  if (kind === 'number') {
+    const blankA = a == null || a === '';
+    const blankB = b == null || b === '';
+    if (blankA || blankB) return blankA === blankB;
+    return Number(a) === Number(b);
+  }
+  const textA = a == null ? '' : String(a).trim();
+  const textB = b == null ? '' : String(b).trim();
+  return textA === textB;
+}
+
+function postApprovalChanges(existing, values) {
+  const changes = [];
+  POST_APPROVAL_FIELDS.forEach(([column, key, label, kind]) => {
+    const before = existing[column];
+    const after = values[key];
+    if (sameEditValue(kind, before, after)) return;
+    changes.push(`${label}: ${describeEditValue(kind, before)} → ${describeEditValue(kind, after)}`);
+  });
+  return changes;
 }
 
 function renderLoadForm(req, res, status, load, error) {
@@ -2418,7 +2606,11 @@ app.get('/loads/new', requireAuth, (req, res) => {
 
 app.get('/loads/:id/edit', requireAuth, (req, res) => {
   const existing = editableLoad(req, req.params.id);
-  if (!existing) return res.redirect('/loads');
+  if (!existing) {
+    const found = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+    if (found && canViewLoad(req, found)) return res.redirect(`/loads/${found.id}${settlementFinalized(found) ? '?saved=locked' : ''}`);
+    return res.redirect('/loads');
+  }
   const load = db.prepare(loadQuery + ' WHERE l.id = ?').get(existing.id);
   const form = loadFormData(req.session.user, load);
   res.render('load-form', { user: req.session.user, load, tickets: ticketRows(existing.id), ...form });
@@ -2730,6 +2922,7 @@ function decideLoadReview(loadId, input) {
   const decision = input.decision === 'accepted' || input.decision === 'rejected' ? input.decision : '';
   if (!decision) return { error: 'Invalid decision', code: 400 };
   const reason = String(input.reason || '').trim().slice(0, 2000);
+  if (decision === 'rejected' && settlementFinalized(load)) return { error: 'Settlement finalized; the load is locked', code: 409 };
   if (decision === 'rejected' && !reason) return { error: 'A rejection reason is required', code: 400 };
   const auditReq = { session: { user: { id: input.actorId || null, name: input.actorName, role: 'admin' } } };
   // Item 8 (11/15/2026): the separate "Reject to Draft" box was removed from the Review Load page,
@@ -2748,7 +2941,7 @@ function decideLoadReview(loadId, input) {
         UPDATE loads
         SET status = 'draft', rejection_reason = ?, approved_by = NULL, approved_by_name = NULL, approved_at = NULL,
             settlement_status = NULL, rejected_by = ?, rejected_by_name = ?, rejected_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND status IN ('submitted', 'approved')
+        WHERE id = ? AND status IN ('submitted', 'approved') AND IFNULL(settlement_status, '') != 'approved'
       `).run(reason || null, input.actorId || null, input.actorName, load.id);
     }
   })();
@@ -2781,6 +2974,7 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
   logAudit(req, entry.auditAction, 'load', loadId, entry.auditDetail);
   recordDetentionAudit(req, loadId, null, values);
   recordShipperDetentionAudit(req, loadId, null, values);
+  recordRateAudit(req, loadId, null, values, project);
   if (isAdmin && entry.entryMode === 'assigned' && values.driver_id) {
     if (assignmentChannelSelected(req.body)) await notifyAssignedLoadDriver(req, loadId);
     return res.redirect(`/loads/${loadId}?saved=assigned`);
@@ -2790,7 +2984,16 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
 
 app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res) => {
   const existing = editableLoad(req, req.params.id);
-  if (!existing) return res.redirect('/loads');
+  if (!existing) {
+    const found = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+    if (found && canViewLoad(req, found)) {
+      if (settlementFinalized(found) && req.session.user.role === 'admin') {
+        logAudit(req, 'Edit blocked', 'load', found.id, 'Weekly settlement is finalized; the load is locked');
+      }
+      return res.redirect(`/loads/${found.id}${settlementFinalized(found) ? '?saved=locked' : ''}`);
+    }
+    return res.redirect('/loads');
+  }
   const isAdmin = req.session.user.role === 'admin';
   const entry = resolveLoadEntry(req, existing);
   const project = findActiveProject(req.body.project_id);
@@ -2807,8 +3010,19 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
   if (values.detentionError || values.shipperDetentionError) {
     return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), values.detentionError || values.shipperDetentionError);
   }
+  const afterApproval = existing.status === 'approved';
+  if (afterApproval && entry.status === 'approved') {
+    const finalized = finalizedSettlementFor(values.driver_id, values.load_date);
+    const movesWeek = String(values.driver_id) !== String(existing.driver_id)
+      || (weekBounds(values.load_date) || {}).start !== (weekBounds(existing.load_date) || {}).start;
+    if (finalized && movesWeek) {
+      return renderLoadForm(req, res, 400, loadFormErrorView(req, existing),
+        `That driver's settlement for the week of ${weekBounds(values.load_date).range} is already finalized. Pick another driver or Load Date.`);
+    }
+  }
+  const editChanges = afterApproval && isAdmin ? postApprovalChanges(existing, values) : [];
   const rejectionReason = entry.status === 'submitted' || entry.status === 'approved' ? null : (existing.rejection_reason || null);
-  db.prepare(`
+  const saved = db.prepare(`
     UPDATE loads
     SET ticket_number = ?, load_date = ?, driver_id = ?, truck_id = ?, project_id = ?, description = ?,
         origin = ?, destination = ?, notes = ?, admin_notes = ?,
@@ -2818,7 +3032,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
         driver_pay_type = ?, driver_flat_rate = ?, total_load_pay = ?, status = ?, rejection_reason = ?,
         created_by_role = ?, entry_mode = ?,
         updated_by = ?, updated_by_name = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ? ${isAdmin ? '' : "AND status = 'draft'"}
+    WHERE id = ? AND IFNULL(settlement_status, '') != 'approved' ${isAdmin ? '' : "AND status IN ('draft', 'submitted')"}
   `).run(
     values.ticket_number,
     values.load_date,
@@ -2852,12 +3066,25 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     actorName(req),
     existing.id
   );
+  if (!saved.changes) {
+    // Approved or finalized between opening the form and saving: nothing was changed.
+    return res.redirect(isAdmin ? `/loads/${existing.id}?saved=locked` : `/loads/${existing.id}`);
+  }
   stampLoadApproval(existing.id, req, entry);
-  removeSelectedTickets(existing.id, req.body);
+  // Standing rule: ticket files are not removed once a load is Approved for Settlement.
+  if (!afterApproval) removeSelectedTickets(existing.id, req.body);
   saveTicketFiles(existing.id, req.files, req.session.user.id);
-  logAudit(req, entry.auditAction, 'load', existing.id, entry.auditDetail);
+  if (afterApproval && isAdmin) {
+    const added = (Array.isArray(req.files) ? req.files : []).filter((file) => file && file.filename);
+    if (added.length) editChanges.push(`Added ${added.length} ticket file${added.length === 1 ? '' : 's'}`);
+    logAudit(req, 'Edited after approval', 'load', existing.id,
+      editChanges.length ? editChanges.join('; ') : 'Saved with no field changes');
+  } else {
+    logAudit(req, entry.auditAction, 'load', existing.id, entry.auditDetail);
+  }
   recordDetentionAudit(req, existing.id, existing, values);
   recordShipperDetentionAudit(req, existing.id, existing, values);
+  recordRateAudit(req, existing.id, existing, values, project || findProjectById(values.project_id));
   if (isAdmin && entry.entryMode === 'assigned' && entry.status === 'draft' && values.driver_id && assignmentChannelSelected(req.body)) {
     await notifyAssignedLoadDriver(req, existing.id);
     return res.redirect(`/loads/${existing.id}?saved=assigned`);
@@ -2906,6 +3133,7 @@ app.post('/loads/:id/review-decision', requireAuth, (req, res) => {
   });
   if (result.error) {
     if (result.code === 404) return res.redirect('/loads');
+    if (result.code === 409) return res.redirect(`/loads/${req.params.id}?saved=locked`);
     return res.redirect(`/loads/${req.params.id}?saved=need-reason`);
   }
   const saved = req.body.decision === 'rejected' ? 'review-rejected' : 'accepted';
@@ -4534,88 +4762,291 @@ function approvedSettlementWeeks(driverId) {
   });
 }
 
-app.get('/settlements', requireAuth, (req, res) => {
-  const isAdmin = req.session.user.role === 'admin';
+// ---------------------------------------------------------------------------------------------
+// Item 5 (11/15/2026): separate Settlements and Invoices screens.
+// "Approve for Settlement" moves a load off the main Loads screen. It then appears on Settlements
+// under driver + Monday-Sunday work week (by Load Date) and on Invoices under customer + work week.
+// The admin finalizes a driver's weekly settlement (locked afterwards, item 6). Drivers see only
+// their own pay, and only for finalized weeks. PDFs for each weekly settlement and invoice.
+// ---------------------------------------------------------------------------------------------
+function invoiceLineFor(load, fuelRates) {
+  const qty = Number(load.weight_quantity) || 0;
+  const rate = Number(load.rate) || 0;
+  // Total Load Pay (when set) is the whole hauling charge for the load, with no fuel surcharge.
+  const usesTotalLoadPay = hasTotalLoadPay(load);
+  const hauling = usesTotalLoadPay ? Number(load.total_load_pay) : qty * rate;
+  const travelTime = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
+  const selfLoad = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
+  const shipperDetention = Number(load.shipper_detention) ? (Number(load.shipper_detention_amount) || 0) : 0;
+  // Each load uses its own week's fuel rate, so an invoice spanning weeks can mix percents.
+  const fsc = loadFuelSurcharge(load, fuelRates);
+  const fscApplies = Number(load.has_fuel_surcharge) === 1 && !usesTotalLoadPay;
+  const lineFsc = fscApplies ? fsc.total : 0;
+  return {
+    ...load, hauling, usesTotalLoadPay, travelTime, selfLoad, shipperDetention, lineFsc, fscApplies,
+    fscBase: fscApplies ? fsc.baseHauling : 0,
+    fscPerTon: fsc.perTon, fscFlat: fsc.flat, fscPercent: fsc.percent, fscPending: fsc.pending,
+    fscDiesel: fsc.dieselRate, fscEffective: fsc.effectiveDate,
+    lineTotal: hauling + lineFsc + travelTime + selfLoad + shipperDetention
+  };
+}
+
+function emptyInvoiceTotals() {
+  return { hauling: 0, fscBase: 0, fuelSurcharge: 0, travelTime: 0, selfLoad: 0, shipperDetention: 0, driverPay: 0, total: 0, fscPercents: [], fscPendingCount: 0 };
+}
+
+function addInvoiceLine(totals, line) {
+  totals.hauling += line.hauling;
+  if (line.fscApplies) {
+    totals.fscBase += line.fscBase;
+    totals.fuelSurcharge += line.lineFsc;
+    if (line.fscPending) totals.fscPendingCount += 1;
+    else if (!totals.fscPercents.includes(line.fscPercent)) totals.fscPercents.push(line.fscPercent);
+  }
+  totals.travelTime += line.travelTime;
+  totals.selfLoad += line.selfLoad;
+  totals.shipperDetention += line.shipperDetention;
+  totals.driverPay += line.payInfo ? line.payInfo.pay : 0;
+}
+
+function finishInvoiceTotals(totals) {
+  totals.fuelSurcharge = fuelCalc.round(totals.fuelSurcharge, 2);
+  totals.shipperDetention = fuelCalc.round(totals.shipperDetention, 2);
+  totals.total = roundMoney(totals.hauling + totals.fuelSurcharge + totals.travelTime + totals.selfLoad + totals.shipperDetention);
+  return totals;
+}
+
+// Approved for Settlement and Settled loads, grouped by customer + Monday-Sunday week (Load Date),
+// with one section per project. Amounts are computed from the loads, so admin edits flow through.
+function customerInvoiceWeeks(filter) {
+  const f = filter || {};
   const fuelRates = validFuelRates();
-  const latestFuel = fuelRates[0] || null;
-  const surchargePercent = latestFuel ? latestFuel.surcharge_percent : 0;
-  const approvedWeeks = approvedSettlementWeeks(isAdmin ? null : req.session.user.id);
-  let customerInvoices = [];
-  if (isAdmin) {
-    const approvedLoads = db.prepare(loadQuery + ` WHERE l.status = 'approved' ORDER BY c.name, p.display_name, l.load_date`).all().map(annotatePay);
-    const byProject = {};
-  approvedLoads.forEach((load) => {
-    const key = load.project_id ? String(load.project_id) : 'unassigned';
-    if (!byProject[key]) {
-      byProject[key] = {
-        display_name: load.project_display || 'Unassigned',
-        customer_name: load.customer_name || '',
+  const loads = db.prepare(loadQuery + " WHERE l.status = 'approved' ORDER BY l.load_date, p.display_name, l.id").all().map(annotatePay);
+  const invoices = new Map();
+  loads.forEach((load) => {
+    const customerId = Number(load.project_customer_id) || 0;
+    const week = weekBounds(load.load_date) || { start: '', end: '', range: 'Undated' };
+    if (f.customerId != null && Number(f.customerId) !== customerId) return;
+    if (f.weekStart != null && String(f.weekStart) !== week.start) return;
+    const key = `${customerId}:${week.start}`;
+    if (!invoices.has(key)) {
+      invoices.set(key, {
+        key,
+        customerId,
+        customer_name: load.customer_name || 'No shipper',
         address_line1: load.address_line1 || '',
         address_line2: load.address_line2 || '',
         poc_name: load.poc_name || '',
         poc_phone: load.poc_phone || '',
         poc_email: load.poc_email || '',
         terms: load.terms || '',
-        loads: [],
-        hauling: 0,
-        fscBase: 0,
-        fuelSurcharge: 0,
-        travelTime: 0,
-        selfLoad: 0,
-        shipperDetention: 0,
-        driverPay: 0,
-        total: 0
-      };
+        week,
+        projects: new Map(),
+        totals: emptyInvoiceTotals(),
+        loadCount: 0
+      });
     }
-    const qty = Number(load.weight_quantity) || 0;
-    const rate = Number(load.rate) || 0;
-    // Total Load Pay (when set) is the whole hauling charge for the load, with no fuel surcharge.
-    const usesTotalLoadPay = hasTotalLoadPay(load);
-    const hauling = usesTotalLoadPay ? Number(load.total_load_pay) : qty * rate;
-    const travelTime = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
-    const selfLoad = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
-    const shipperDetention = Number(load.shipper_detention) ? (Number(load.shipper_detention_amount) || 0) : 0;
-    // Each load uses its own week's fuel rate, so an invoice spanning weeks can mix percents.
-    const fsc = loadFuelSurcharge(load, fuelRates);
-    const lineFsc = fsc.total;
-    byProject[key].loads.push({
-      ...load, hauling, usesTotalLoadPay, travelTime, selfLoad, shipperDetention, lineFsc,
-      fscPerTon: fsc.perTon, fscFlat: fsc.flat, fscPercent: fsc.percent, fscPending: fsc.pending,
-      fscDiesel: fsc.dieselRate, fscEffective: fsc.effectiveDate
-    });
-    if (Number(load.has_fuel_surcharge) === 1 && !usesTotalLoadPay) {
-      byProject[key].fscPercents = byProject[key].fscPercents || [];
-      if (!fsc.pending && !byProject[key].fscPercents.includes(fsc.percent)) byProject[key].fscPercents.push(fsc.percent);
-      if (fsc.pending) byProject[key].fscPendingCount = (byProject[key].fscPendingCount || 0) + 1;
+    const invoice = invoices.get(key);
+    const projectKey = load.project_id ? String(load.project_id) : '0';
+    if (!invoice.projects.has(projectKey)) {
+      invoice.projects.set(projectKey, { projectId: Number(load.project_id) || 0, display_name: load.project_display || 'Unassigned', loads: [], totals: emptyInvoiceTotals() });
     }
-    byProject[key].hauling += hauling;
-    if (Number(load.has_fuel_surcharge) === 1 && !usesTotalLoadPay) {
-      byProject[key].fscBase += fsc.baseHauling;
-      byProject[key].fuelSurcharge += lineFsc;
-    }
-    byProject[key].driverPay += load.payInfo ? load.payInfo.pay : 0;
-    byProject[key].travelTime += travelTime;
-    byProject[key].selfLoad += selfLoad;
-    byProject[key].shipperDetention += shipperDetention;
+    const project = invoice.projects.get(projectKey);
+    const line = invoiceLineFor(load, fuelRates);
+    project.loads.push(line);
+    addInvoiceLine(project.totals, line);
+    addInvoiceLine(invoice.totals, line);
+    invoice.loadCount += 1;
   });
-
-    customerInvoices = Object.values(byProject).map((invoice) => {
-      invoice.fuelSurcharge = fuelCalc.round(invoice.fuelSurcharge, 2);
-      invoice.shipperDetention = fuelCalc.round(invoice.shipperDetention, 2);
-      invoice.total = invoice.hauling + invoice.fuelSurcharge + invoice.travelTime + invoice.selfLoad + invoice.shipperDetention;
-      return invoice;
+  const marks = db.prepare('SELECT * FROM invoice_weeks WHERE customer_id = ? AND week_start = ?');
+  const received = db.prepare('SELECT * FROM invoice_tracker WHERE customer_id = ? AND project_id = ? AND week_start = ?');
+  return Array.from(invoices.values()).map((invoice) => {
+    invoice.projects = Array.from(invoice.projects.values()).map((project) => {
+      finishInvoiceTotals(project.totals);
+      const row = invoice.week.start ? received.get(invoice.customerId, project.projectId, invoice.week.start) : null;
+      project.amountReceived = row && row.amount_received != null ? Number(row.amount_received) : null;
+      project.receivedBy = row ? row.updated_by_name : '';
+      project.receivedAt = row ? row.updated_at : '';
+      return project;
     });
-  }
+    finishInvoiceTotals(invoice.totals);
+    invoice.mark = invoice.week.start ? (marks.get(invoice.customerId, invoice.week.start) || null) : null;
+    invoice.status = invoice.mark && invoice.mark.paid_at ? 'paid' : (invoice.mark && invoice.mark.invoiced_at ? 'invoiced' : 'open');
+    invoice.changedSinceInvoiced = !!(invoice.mark && invoice.mark.invoiced_at && invoice.mark.invoiced_amount != null
+      && roundMoney(invoice.mark.invoiced_amount) !== roundMoney(invoice.totals.total));
+    invoice.number = invoice.week.start ? `DT1-${invoice.customerId}-${invoice.week.start.replace(/-/g, '')}` : '';
+    invoice.received = invoice.projects.reduce((sum, project) => sum + (project.amountReceived || 0), 0);
+    return invoice;
+  }).sort((a, b) => (b.week.start || '').localeCompare(a.week.start || '') || a.customer_name.localeCompare(b.customer_name));
+}
 
+const INVOICE_STATUS_LABELS = { open: 'Not invoiced', invoiced: 'Invoiced', paid: 'Paid' };
+app.locals.invoiceStatusLabel = (status) => INVOICE_STATUS_LABELS[status] || 'Not invoiced';
+
+function settlementTotals(group) {
+  const loads = group.loads;
+  group.qty = loads.reduce((sum, load) => sum + (Number(load.weight_quantity) || 0), 0);
+  group.total = loads.reduce((sum, load) => sum + load.payInfo.pay, 0);
+  group.base = loads.reduce((sum, load) => sum + load.payInfo.base, 0);
+  group.drive = loads.reduce((sum, load) => sum + load.payInfo.drive, 0);
+  group.self = loads.reduce((sum, load) => sum + load.payInfo.self, 0);
+  group.detention = loads.reduce((sum, load) => sum + load.payInfo.detention, 0);
+  group.totalLoadPay = loads.reduce((sum, load) => sum + loadTotalAmount(load), 0);
+  return group;
+}
+
+// One driver + week, for the PDF: kind 'final' (finalized loads) or 'pending' (approved, not finalized).
+function settlementWeekFor(driverId, weekStart, kind) {
+  const week = weekBounds(weekStart);
+  if (!week || week.start !== String(weekStart || '')) return null;
+  const driver = db.prepare("SELECT id, name, pay_percentage FROM users WHERE id = ? AND role = 'driver'").get(driverId);
+  if (!driver) return null;
+  const finalizedRow = db.prepare("SELECT * FROM driver_settlements WHERE driver_id = ? AND week_start = ? AND status = 'approved'").get(driver.id, week.start);
+  const final = kind !== 'pending';
+  if (final && !finalizedRow) return null;
+  const loads = db.prepare(loadQuery + `
+    WHERE l.driver_id = ? AND l.status = 'approved' AND IFNULL(l.settlement_status, '') ${final ? "= 'approved'" : "!= 'approved'"}
+      AND l.load_date >= ? AND l.load_date <= ?
+    ORDER BY l.load_date, l.id
+  `).all(driver.id, week.start, week.end).map((load) => Object.assign({}, load, { payInfo: calcDriverPay(load) }));
+  if (!loads.length) return null;
+  return settlementTotals({ driver, week, loads, final, finalizedRow });
+}
+
+function pdfUsd(value) { return moneyInput.usd(Number(value) || 0); }
+function pdfDate(value) { return loadDate.formatLoadDate(value) || '—'; }
+function pdfStamp(value) { return value ? `${auditStamp(value)} UTC` : ''; }
+
+function settlementPdf(group) {
+  const pdf = new SimplePdf({ footer: `DT1 Logistics · Driver Settlement · ${group.driver.name} · Week of ${group.week.range}` });
+  pdf.heading('DT1 Logistics');
+  pdf.para('Driver Settlement', { size: 13, bold: true });
+  pdf.gap(4);
+  pdf.para(`Driver: ${group.driver.name}`, { bold: true });
+  pdf.para(`Work week (Monday–Sunday, by Load Date): ${group.week.range}, ${group.week.start.slice(0, 4)}`);
+  if (group.final) {
+    const row = group.finalizedRow || {};
+    pdf.para(`Status: Finalized${row.approved_by_name ? ' by ' + row.approved_by_name : ''}${row.approved_at ? ' on ' + pdfStamp(row.approved_at) : ''}`);
+  } else {
+    pdf.para('Status: NOT FINALIZED (draft for review; amounts may still change)', { bold: true });
+  }
+  pdf.gap(6);
+  pdf.table([
+    { label: 'Date', width: 50 },
+    { label: 'Ticket #', width: 48 },
+    { label: 'Project', width: 86 },
+    { label: 'Qty', width: 34, align: 'right' },
+    { label: 'Rate', width: 42, align: 'right' },
+    { label: 'Pay Basis', width: 78 },
+    { label: 'Drive Time', width: 50, align: 'right' },
+    { label: 'Self Load', width: 46, align: 'right' },
+    { label: 'Detention', width: 48, align: 'right' },
+    { label: 'Driver Pay', width: 50, align: 'right' }
+  ], group.loads.map((load) => [
+    pdfDate(load.load_date), load.ticket_number || '—', load.project_display || '—',
+    load.weight_quantity != null ? String(load.weight_quantity) : '—', pdfUsd(load.rate), load.payInfo.basis,
+    pdfUsd(load.payInfo.drive), pdfUsd(load.payInfo.self), pdfUsd(load.payInfo.detention), pdfUsd(load.payInfo.pay)
+  ]));
+  pdf.totals([
+    ['Loads', String(group.loads.length)],
+    ['Qty/Wet Ton', String(roundMoney(group.qty))],
+    ['Base', pdfUsd(group.base)],
+    ['Drive Time', pdfUsd(group.drive)],
+    ['Self Load', pdfUsd(group.self)],
+    ['Detention', pdfUsd(group.detention)],
+    ['DRIVER PAY', pdfUsd(group.total), true]
+  ]);
+  pdf.gap(6);
+  pdf.para('Percentage loads pay the driver\'s pay percentage of Qty × Rate and of the drive-time fee. Flat / daily-rate loads include the full drive-time fee.', { size: 8, gray: true });
+  pdf.para('Self load and detention are added in full. Fuel surcharge is not included in driver pay.', { size: 8, gray: true });
+  return pdf.toBuffer();
+}
+
+function invoicePdf(invoice) {
+  const pdf = new SimplePdf({ footer: `DT1 Logistics · Invoice ${invoice.number} · ${invoice.customer_name}` });
+  pdf.heading('DT1 Logistics');
+  pdf.para('INVOICE', { size: 13, bold: true });
+  pdf.gap(2);
+  pdf.para(`Invoice #: ${invoice.number}`);
+  pdf.para(`Work week (Monday–Sunday, by Load Date): ${invoice.week.range}, ${invoice.week.start.slice(0, 4)}`);
+  pdf.para(`Terms: ${invoice.terms || 'Net 30'}`);
+  pdf.gap(6);
+  pdf.para('Bill To:', { bold: true });
+  pdf.para(invoice.customer_name);
+  if (invoice.address_line1) pdf.para(invoice.address_line1);
+  if (invoice.address_line2) pdf.para(invoice.address_line2);
+  if (invoice.poc_name) pdf.para(`Attn: ${invoice.poc_name}`);
+  if (invoice.poc_phone || invoice.poc_email) pdf.para([invoice.poc_phone, invoice.poc_email].filter(Boolean).join(' · '));
+  pdf.gap(8);
+  invoice.projects.forEach((project) => {
+    pdf.para(`Project: ${project.display_name}`, { bold: true, size: 11 });
+    pdf.table([
+      { label: 'Date', width: 52 },
+      { label: 'Ticket #', width: 50 },
+      { label: 'Origin', width: 64 },
+      { label: 'Destination', width: 66 },
+      { label: 'Qty', width: 32, align: 'right' },
+      { label: 'Rate', width: 42, align: 'right' },
+      { label: 'Price', width: 50, align: 'right' },
+      { label: 'Fuel Sur.', width: 44, align: 'right' },
+      { label: 'Self Load', width: 44, align: 'right' },
+      { label: 'Travel', width: 40, align: 'right' },
+      { label: 'Detention', width: 48, align: 'right' }
+    ], project.loads.map((line) => [
+      pdfDate(line.load_date), line.ticket_number || '—', line.origin || '—', line.destination || line.description || '—',
+      line.weight_quantity != null ? String(line.weight_quantity) : '—', line.usesTotalLoadPay ? 'Flat' : pdfUsd(line.rate),
+      pdfUsd(line.hauling), line.fscApplies ? (line.fscPending ? 'Pending' : pdfUsd(line.lineFsc)) : '—',
+      pdfUsd(line.selfLoad), pdfUsd(line.travelTime), Number(line.shipper_detention) === 1 ? pdfUsd(line.shipperDetention) : '—'
+    ]));
+    const t = project.totals;
+    const pairs = [['Hauling', pdfUsd(t.hauling)]];
+    if (t.fuelSurcharge || t.fscPendingCount) pairs.push([`Fuel Surcharge${t.fscPercents.length === 1 ? ' (' + Number(t.fscPercents[0]).toFixed(2) + '%)' : ''}`, pdfUsd(t.fuelSurcharge)]);
+    if (t.travelTime) pairs.push(['Travel Time', pdfUsd(t.travelTime)]);
+    if (t.selfLoad) pairs.push(['Self Load', pdfUsd(t.selfLoad)]);
+    if (t.shipperDetention) pairs.push(['Detention', pdfUsd(t.shipperDetention)]);
+    pairs.push(['Project total', pdfUsd(t.total), true]);
+    pdf.totals(pairs, { after: 8 });
+  });
+  pdf.rule();
+  const t = invoice.totals;
+  pdf.totals([
+    ['Hauling', pdfUsd(t.hauling)],
+    ['Fuel Surcharge', pdfUsd(t.fuelSurcharge)],
+    ['Travel Time', pdfUsd(t.travelTime)],
+    ['Self Load', pdfUsd(t.selfLoad)],
+    ['Detention', pdfUsd(t.shipperDetention)],
+    ['INVOICE TOTAL', pdfUsd(t.total), true]
+  ]);
+  if (t.fscPendingCount) pdf.para(`${t.fscPendingCount} load(s) have no fuel rate posted yet for their week; fuel surcharge shows $0.00 until it is posted.`, { size: 8, gray: true });
+  return pdf.toBuffer();
+}
+
+function sendPdf(res, filename, buffer, inline) {
+  res.set('Content-Type', 'application/pdf');
+  res.set('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${String(filename).replace(/[^A-Za-z0-9._-]+/g, '-')}"`);
+  res.set('Cache-Control', 'private, no-store');
+  return res.send(buffer);
+}
+
+app.get('/settlements', requireAuth, (req, res) => {
+  const isAdmin = req.session.user.role === 'admin';
+  const approvedWeeks = approvedSettlementWeeks(isAdmin ? null : req.session.user.id).map(settlementTotals);
   res.render('settlements', {
     user: req.session.user,
-    pendingWeeks: isAdmin ? pendingSettlementWeeks() : [],
+    pendingWeeks: isAdmin ? pendingSettlementWeeks().map(settlementTotals) : [],
     approvedWeeks,
-    customerInvoices,
-    surchargePercent,
-    fuelRate: latestFuel || null,
     saved: req.query.saved || ''
   });
+});
+
+app.get('/settlements/pdf', requireAuth, (req, res) => {
+  const isAdmin = req.session.user.role === 'admin';
+  const kind = isAdmin && req.query.kind === 'pending' ? 'pending' : 'final';
+  const driverId = isAdmin ? parseInt(req.query.driver_id, 10) : req.session.user.id;
+  const group = settlementWeekFor(driverId, req.query.week_start, kind);
+  if (!group) return res.status(404).send('Not found');
+  const name = `DT1-settlement-${group.driver.name}-${group.week.start}${kind === 'pending' ? '-DRAFT' : ''}.pdf`;
+  return sendPdf(res, name, settlementPdf(group), req.query.inline === '1');
 });
 
 app.post('/settlements/approve-week', requireAuth, (req, res) => {
@@ -4648,8 +5079,106 @@ app.post('/settlements/approve-week', requireAuth, (req, res) => {
     `).run(driverId, week.start, week.end, req.session.user.id, actorName(req));
   });
   saveWeek();
-  logAudit(req, 'Approved weekly settlement', 'driver_settlement', driverId, `Week of ${week.range}`);
+  logAudit(req, 'Finalized weekly settlement', 'driver_settlement', driverId, `Week of ${week.range} · ${loads.length} load${loads.length === 1 ? '' : 's'} locked`);
+  const settledEntry = db.prepare(`INSERT INTO audit_log (actor_id, actor_name, action, entity_type, entity_id, detail) VALUES (?, ?, 'Settled', 'load', ?, ?)`);
+  loads.forEach((load) => settledEntry.run(req.session.user.id, actorName(req), load.id, `Weekly settlement finalized (week of ${week.range}); load locked`));
   res.redirect('/settlements?saved=week');
+});
+
+app.get('/invoices', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/settlements');
+  const tab = req.query.tab === 'tracker' ? 'tracker' : 'invoices';
+  const statusFilter = ['open', 'invoiced', 'paid'].includes(req.query.status) ? req.query.status : '';
+  let invoices = customerInvoiceWeeks();
+  if (statusFilter) invoices = invoices.filter((invoice) => invoice.status === statusFilter);
+  const fuelRates = validFuelRates();
+  const latestFuel = fuelRates[0] || null;
+  res.render('invoices', {
+    user: req.session.user,
+    tab,
+    statusFilter,
+    invoices,
+    surchargePercent: latestFuel ? latestFuel.surcharge_percent : 0,
+    fuelRate: latestFuel,
+    saved: req.query.saved || ''
+  });
+});
+
+function invoiceParams(source) {
+  const customerId = parseInt(source.customer_id, 10);
+  const week = weekBounds(source.week_start);
+  if (!Number.isInteger(customerId) || customerId < 0 || !week || week.start !== String(source.week_start || '')) return null;
+  return { customerId, week };
+}
+
+app.get('/invoices/pdf', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.status(404).send('Not found');
+  const params = invoiceParams(req.query);
+  if (!params) return res.status(404).send('Not found');
+  const invoice = customerInvoiceWeeks({ customerId: params.customerId, weekStart: params.week.start })[0];
+  if (!invoice) return res.status(404).send('Not found');
+  return sendPdf(res, `${invoice.number}-${invoice.customer_name}.pdf`, invoicePdf(invoice), req.query.inline === '1');
+});
+
+app.post('/invoices/mark', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/settlements');
+  const params = invoiceParams(req.body);
+  const back = `/invoices${req.body.return_tab === 'tracker' ? '?tab=tracker&' : '?'}`;
+  if (!params) return res.redirect('/invoices');
+  const invoice = customerInvoiceWeeks({ customerId: params.customerId, weekStart: params.week.start })[0];
+  if (!invoice) return res.redirect('/invoices');
+  const mark = String(req.body.mark || '');
+  const actor = [req.session.user.id, actorName(req)];
+  db.prepare(`
+    INSERT INTO invoice_weeks (customer_id, week_start, week_end) VALUES (?, ?, ?)
+    ON CONFLICT(customer_id, week_start) DO NOTHING
+  `).run(params.customerId, params.week.start, params.week.end);
+  const where = 'WHERE customer_id = ? AND week_start = ?';
+  const key = [params.customerId, params.week.start];
+  let detail = '';
+  if (mark === 'invoiced') {
+    db.prepare(`UPDATE invoice_weeks SET invoiced_at = CURRENT_TIMESTAMP, invoiced_by = ?, invoiced_by_name = ?, invoiced_amount = ? ${where}`)
+      .run(...actor, invoice.totals.total, ...key);
+    detail = `Marked Invoiced (${moneyInput.usd(invoice.totals.total)})`;
+  } else if (mark === 'paid') {
+    db.prepare(`UPDATE invoice_weeks SET invoiced_at = COALESCE(invoiced_at, CURRENT_TIMESTAMP), invoiced_by = COALESCE(invoiced_by, ?),
+      invoiced_by_name = COALESCE(invoiced_by_name, ?), invoiced_amount = COALESCE(invoiced_amount, ?),
+      paid_at = CURRENT_TIMESTAMP, paid_by = ?, paid_by_name = ? ${where}`)
+      .run(...actor, invoice.totals.total, ...actor, ...key);
+    detail = 'Marked Paid';
+  } else if (mark === 'unpaid') {
+    db.prepare(`UPDATE invoice_weeks SET paid_at = NULL, paid_by = NULL, paid_by_name = NULL ${where}`).run(...key);
+    detail = 'Paid mark removed';
+  } else if (mark === 'open') {
+    db.prepare(`UPDATE invoice_weeks SET invoiced_at = NULL, invoiced_by = NULL, invoiced_by_name = NULL, invoiced_amount = NULL,
+      paid_at = NULL, paid_by = NULL, paid_by_name = NULL ${where}`).run(...key);
+    detail = 'Invoiced mark removed';
+  } else {
+    return res.redirect('/invoices');
+  }
+  logAudit(req, 'Invoice status', 'invoice_week', params.customerId, `${invoice.customer_name} · week of ${params.week.range}: ${detail}`);
+  res.redirect(`${back}saved=marked`);
+});
+
+app.post('/invoices/received', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/settlements');
+  const params = invoiceParams(req.body);
+  const projectId = parseInt(req.body.project_id, 10);
+  if (!params || !Number.isInteger(projectId) || projectId < 0) return res.redirect('/invoices?tab=tracker');
+  const raw = String(req.body.amount_received == null ? '' : req.body.amount_received).trim();
+  const amount = raw === '' ? null : parseOptionalMoney(raw);
+  if (raw !== '' && (amount == null || amount < 0)) return res.redirect('/invoices?tab=tracker&saved=bad-amount');
+  db.prepare(`
+    INSERT INTO invoice_tracker (customer_id, project_id, week_start, amount_received, updated_by, updated_by_name, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(customer_id, project_id, week_start) DO UPDATE SET
+      amount_received = excluded.amount_received, updated_by = excluded.updated_by,
+      updated_by_name = excluded.updated_by_name, updated_at = CURRENT_TIMESTAMP
+  `).run(params.customerId, projectId, params.week.start, amount, req.session.user.id, actorName(req));
+  const project = db.prepare('SELECT display_name FROM projects WHERE id = ?').get(projectId);
+  logAudit(req, 'Invoice amount received', 'invoice_week', params.customerId,
+    `${project ? project.display_name : 'Project #' + projectId} · week of ${params.week.range}: ${amount == null ? 'cleared' : moneyInput.usd(amount)}`);
+  res.redirect('/invoices?tab=tracker&saved=received');
 });
 
 function parseRedisUrl(raw) {

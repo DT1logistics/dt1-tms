@@ -78,7 +78,7 @@ const h = require('./helpers/server');
     });
 
     await check('weekly invoice uses Total Load Pay with no fuel surcharge; blank totals keep Qty x Rate', async () => {
-      const page = await h.request(srv.port, { Cookie: h.cookieHeader(admin) }, { path: '/settlements' });
+      const page = await h.request(srv.port, { Cookie: h.cookieHeader(admin) }, { path: '/invoices' });
       assert.strictEqual(page.status, 200);
       const html = page.body;
       // COPY 1300.50 + OVERRIDE 1275.25 + BEFORE (qty 1 x rate 210 = 210, with FSC at 25.08% = 52.67)

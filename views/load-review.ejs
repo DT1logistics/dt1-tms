@@ -49,6 +49,7 @@
 <% if (saved === 'cleared') { %><div class="all-clear">Missing-info flag cleared.</div><% } %>
 <% if (saved === 'accepted') { %><div class="all-clear">Load accepted.</div><% } %>
 <% if (saved === 'review-rejected') { %><div class="reject-note">Load rejected.<% if (load.status === 'draft' && load.rejection_reason) { %> It was sent back to the driver as Draft.<% } %></div><% } %>
+<% if (saved === 'locked') { %><div class="reject-note">This load's weekly settlement is finalized, so the load is locked: no edits, no reject, no delete.</div><% } %>
 <% if (saved === 'delete-blocked') { %><div class="reject-note">This load is Approved for Settlement, so it cannot be deleted. Reject it back to Draft or edit it instead.</div><% } %>
 <% if (saved === 'need-reason') { %><div class="reject-note">A reason is required to reject a load.</div><% } %>
 <% if (user.role === 'admin' && load.review_status === 'flagged_missing_info') { %>
@@ -160,9 +161,17 @@
   <% }) %>
 </div>
 
-<% if (user.role === 'admin') { %>
+<% const lockedLoad = settlementFinalized(load); %>
+<% if (user.role === 'admin' && lockedLoad) { %>
+  <div class="card load-locked">
+    <h2>Locked</h2>
+    <p>This load is Settled: <%= load.driver_name || 'the driver' %>'s weekly settlement<%= load.load_date ? ' for the ' + settlementWeekLabel(load.load_date) : '' %> is finalized. It can no longer be edited, rejected, or deleted.</p>
+  </div>
+<% } %>
+<% if (user.role === 'admin' && !lockedLoad) { %>
   <div class="card">
     <h2>Edit Load</h2>
+    <% if (load.status === 'approved') { %><p class="muted edit-after-approval-note">This load is Approved for Settlement. Only an admin can edit it, and every change is written to the load history. Changes flow to the driver settlement and the invoice until the week's settlement is finalized.</p><% } %>
     <form method="POST" action="/loads/<%= load.id %>" enctype="multipart/form-data" id="review_edit_form">
       <div class="load-date-ticket-row">
         <div class="field-date-compact">
@@ -307,7 +316,7 @@
           <% }) %>
         </select>
       <% } %>
-      <% if (tickets.length) { %>
+      <% if (tickets.length && load.status !== 'approved') { %>
         <label>Remove uploaded ticket/BOL</label>
         <% tickets.forEach(function (ticket) { %>
           <div class="check">
@@ -321,6 +330,8 @@
       <button type="submit" name="action" value="save">Save Changes</button>
     </form>
   </div>
+<% } %>
+<% if (user.role === 'admin') { %>
 
   <form class="card" method="POST" action="/loads/<%= load.id %>/review">
     <h2>Logan review</h2>
@@ -348,7 +359,11 @@
     <label for="review_decision_reason">Reason (required to reject)</label>
     <textarea name="reason" id="review_decision_reason" rows="3" placeholder="Why this load is rejected / what the driver should fix"><%= load.review_decision === 'rejected' ? (load.review_decision_reason || '') : '' %></textarea>
     <button class="approve" type="submit" name="decision" value="accepted">Accept load</button>
+    <% if (lockedLoad) { %>
+      <p class="muted">Reject is not available: the weekly settlement is finalized and the load is locked.</p>
+    <% } else { %>
     <button class="danger" type="submit" name="decision" value="rejected" onclick="return confirm('Reject this load<%= (load.status === 'submitted' || load.status === 'approved') ? ' and send it back to the driver as Draft' : '' %>?');">Reject load</button>
+    <% } %>
   </form>
 
   <div class="review-actions">
@@ -365,8 +380,9 @@
       <p class="muted">Delete Load is not available after a load is Approved for Settlement.</p>
     <% } %>
   </div>
-<% } else if (load.status === 'draft') { %>
-  <p><a class="btn" href="/loads/<%= load.id %>/edit">Edit Draft</a></p>
+<% } else if (loadEditableBy(user, load)) { %>
+  <p><a class="btn" href="/loads/<%= load.id %>/edit"><%= load.status === 'draft' ? 'Edit Draft' : 'Edit Load' %></a></p>
+  <% if (load.status === 'submitted') { %><p class="muted">You can edit this load until the admin approves it for settlement.</p><% } %>
 <% } %>
 <p><a href="/loads">Back to Loads</a></p>
 <script src="/js/fuel-surcharge.js"></script>

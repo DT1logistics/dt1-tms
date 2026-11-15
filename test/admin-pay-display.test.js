@@ -58,7 +58,8 @@ function assertScriptsParse(html, label) {
     }
 
     await check('admin Loads list: Driver Pay above Total Load Pay (invoiced) at every status', async () => {
-      const page = await adminGet('/loads');
+      // Item 5: approved loads are listed under ?view=approved instead of the main Loads screen.
+      const page = { body: (await adminGet('/loads')).body + (await adminGet('/loads?view=approved')).body };
       ['PAY-DRAFT', 'PAY-SUB', 'PAY-APP'].forEach((ticket) => {
         const start = page.body.indexOf(`<strong>${ticket}</strong>`);
         assert.ok(start !== -1, ticket);
@@ -92,7 +93,8 @@ function assertScriptsParse(html, label) {
     });
 
     await check('Settlements: pending driver week shows Total Load Pay under Driver Pay; invoice shows Driver Pay', async () => {
-      const page = await adminGet('/settlements');
+      // Item 5: the weekly invoice moved from /settlements to /invoices.
+      const page = { body: (await adminGet('/settlements')).body + (await adminGet('/invoices')).body };
       assertBefore(page.body, 'Driver Pay $60.00', 'Total Load Pay (invoiced) $200.00', 'pending week');
       assertBefore(page.body, 'Driver Pay (not billed)', '<span>Hauling</span>', 'invoice totals');
       assert.match(page.body, /<th class="num"[^>]*>Driver Pay<\/th>\s*<th class="num">Price<\/th>/);

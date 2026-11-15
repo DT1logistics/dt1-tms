@@ -296,7 +296,8 @@ function originBeforeDestination(html, originMark, destinationMark) {
       assert.strictEqual(saved.row.destination, 'Norfolk Pier');
       assert.notStrictEqual(saved.row.origin, 'Sandston');
 
-      const list = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/loads' });
+      // Item 5: approved loads leave the main Loads screen; they are listed under ?view=approved.
+      const list = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/loads?view=approved' });
       assert.strictEqual(list.status, 200);
       originBeforeDestination(list.body, 'Origin: Richmond Yard', 'Destination: Norfolk Pier');
       assert.ok(list.body.includes('Date: 11-04-2026'));
@@ -313,7 +314,7 @@ function originBeforeDestination(html, originMark, destinationMark) {
       assert.ok(list.body.includes('Trucks:'));
       assert.ok(detail.body.includes('<strong>Trucks</strong>'));
 
-      const invoices = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/settlements' });
+      const invoices = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/invoices' });
       assert.strictEqual(invoices.status, 200);
       originBeforeDestination(invoices.body, '<th>Origin</th>', '<th>Destination</th>');
       assert.ok(invoices.body.includes('Richmond Yard'));

@@ -4,6 +4,12 @@
 <% if (load && load.status === 'draft' && load.rejection_reason) { %>
   <div class="reject-note"><strong>This load was sent back as Draft.</strong> <%= load.rejection_reason %></div>
 <% } %>
+<% if (user.role !== 'admin' && load && load.id && load.status === 'submitted') { %>
+  <p class="muted">This load is Submitted. You can edit it until the admin approves it for settlement; it stays Submitted when you save.</p>
+<% } %>
+<% if (user.role === 'admin' && load && load.status === 'approved') { %>
+  <p class="muted edit-after-approval-note">This load is Approved for Settlement. Every change is written to the load history and flows to the driver settlement and the invoice.</p>
+<% } %>
 <% if (!projects || !projects.length) { %>
   <p>No active projects yet. An admin needs to add a shipper and project before a load can be entered.</p>
 <% } %>
@@ -93,7 +99,11 @@
   <div class="load-rate-qty-drive-row">
     <div class="field-num-compact">
       <label for="load_rate">Load Rate ($)</label>
-      <input data-money="1" type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="rate" id="load_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.rate != null && load.rate !== '' ? Number(load.rate).toFixed(2) : '' %>" <%= user.role === 'admin' ? '' : 'readonly' %>>
+      <% const driverRateLocked = user.role !== 'admin' && load.driver_pay_type === 'flat'; %>
+      <% const currentProject = (projects || []).find(function (p) { return String(p.id) === String(load.project_id); }); %>
+      <input data-money="1" type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="rate" id="load_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.rate != null && load.rate !== '' ? Number(load.rate).toFixed(2) : '' %>" <%= driverRateLocked ? 'readonly' : '' %>>
+      <div class="muted rate-default-hint" id="rate_default_hint"><% if (currentProject) { %>Project default <%= usd(currentProject.default_rate) %><% } %></div>
+      <% if (user.role !== 'admin') { %><div class="muted rate-override-note" id="rate_override_note"<%= driverRateLocked ? ' style="display:none;"' : '' %>>Rate changed? Enter this load's rate.</div><% } %>
     </div>
     <div class="field-num-compact">
       <label for="weight_quantity">Wet Ton/Qty</label>
@@ -210,7 +220,7 @@
             <% } else { %>
               <%= ticket.original_name %>
             <% } %>
-            <% if (ticket.id) { %>
+            <% if (ticket.id && load.status !== 'approved') { %>
               <label class="check"><input type="checkbox" name="remove_tickets" value="<%= ticket.id %>"> Remove</label>
             <% } %>
           </li>
@@ -231,7 +241,9 @@
     <% } else if (user.role === 'admin') { %>
       <button type="submit" name="action" value="draft" class="btn-draft" data-admin-mode="assign">Assign Load to Driver (Draft)</button>
       <button type="submit" name="action" value="submit" data-admin-mode="enter">Submit Load for Driver</button>
-      <button type="submit" name="action" value="approve" data-admin-mode="enter">Submit &amp; Approve Load</button>
+      <button type="submit" name="action" value="approve" data-admin-mode="enter">Submit &amp; Approve for Settlement</button>
+    <% } else if (load && load.id && load.status === 'submitted') { %>
+      <button type="submit" name="action" value="submit">Save Changes</button>
     <% } else { %>
       <button type="submit" name="action" value="draft" class="btn-draft">Save as Draft</button>
       <button type="submit" name="action" value="submit">Submit Load</button>
@@ -373,6 +385,19 @@
     }
   }
 
+  // Item 10: show the project default under the Load Rate; drivers may override it on wet tonnage +
+  // rate loads, not on flat / daily-rate loads.
+  function syncRateDefault(opt) {
+    const hint = document.getElementById('rate_default_hint');
+    if (hint) hint.textContent = opt && opt.value ? 'Project default ' + window.DT1LoadPay.usd(Number(opt.getAttribute('data-rate')) || 0) : '';
+    if (!isAdminForm && opt && opt.value) {
+      const flat = opt.getAttribute('data-pay-type') === 'flat';
+      if (flat) rateInput.setAttribute('readonly', 'readonly'); else rateInput.removeAttribute('readonly');
+      const note = document.getElementById('rate_override_note');
+      if (note) note.style.display = flat ? 'none' : '';
+    }
+  }
+
   function applyProject() {
     const opt = projectSelect.options[projectSelect.selectedIndex];
     if (!opt || !opt.value) {
@@ -380,6 +405,7 @@
       return;
     }
     rateInput.value = money(opt.getAttribute('data-rate'));
+    syncRateDefault(opt);
     if (fscInput) fscInput.checked = opt.getAttribute('data-fsc') === '1';
     const payType = document.getElementById('driver_pay_type');
     const flatAmount = document.getElementById('driver_flat_rate');

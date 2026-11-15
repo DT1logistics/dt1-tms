@@ -3,17 +3,25 @@
 <a href="/loads/new" class="btn">+New Load</a>
 <% if (user.role === 'admin') { %>
   <p class="load-filters">
-    <a href="/loads" class="<%= (typeof reviewFilter !== 'undefined' && reviewFilter === 'flagged') ? '' : 'filter-on' %>">All loads</a>
-    <a href="/loads?review=flagged" class="<%= (typeof reviewFilter !== 'undefined' && reviewFilter === 'flagged') ? 'filter-on' : '' %>">Flagged</a>
+    <% const onFlagged = typeof reviewFilter !== 'undefined' && reviewFilter === 'flagged'; %>
+    <% const onApproved = typeof approvedView !== 'undefined' && approvedView; %>
+    <a href="/loads" class="<%= onFlagged || onApproved ? '' : 'filter-on' %>">Open loads</a>
+    <a href="/loads?review=flagged" class="<%= onFlagged ? 'filter-on' : '' %>">Flagged</a>
+    <a href="/loads?view=approved" class="<%= onApproved ? 'filter-on' : '' %>">Approved for Settlement / Settled (<%= typeof approvedCount !== 'undefined' ? approvedCount : 0 %>)</a>
   </p>
+  <% if (onApproved) { %>
+    <p class="muted">These loads left the main Loads screen when they were Approved for Settlement. They are worked from <a href="/settlements">Settlements</a> and <a href="/invoices">Invoices</a>. Nothing was deleted.</p>
+  <% } else { %>
+    <p class="muted">Draft and Submitted loads. A load moves to <a href="/settlements">Settlements</a> and <a href="/invoices">Invoices</a> when it is Approved for Settlement.</p>
+  <% } %>
 <% } %>
 <% if (typeof deleted !== 'undefined' && deleted) { %><div class="all-clear">Load deleted.</div><% } %>
 <% if (user.role === 'driver') { %>
   <%- include('partials/assigned-loads-banner', { assignedLoads: typeof assignedLoads !== 'undefined' ? assignedLoads : [] }) %>
-  <p class="muted">Loads waiting for weekly settlement approval are grouped by Monday–Sunday week. Settled weeks are on Settlements.</p>
+  <p class="muted">Your loads are grouped by Monday–Sunday week until the weekly settlement is finalized. Your pay for a week shows on Settlements once that week is finalized.</p>
   <%- include('partials/week-summaries', { weekGroups: weekGroups, undatedLoads: undatedLoads, user: user }) %>
 <% } else if (loads.length === 0) { %>
-  <p><%= (typeof reviewFilter !== 'undefined' && reviewFilter === 'flagged') ? 'No flagged loads.' : 'No loads yet.' %></p>
+  <p><%= (typeof reviewFilter !== 'undefined' && reviewFilter === 'flagged') ? 'No flagged loads.' : ((typeof approvedView !== 'undefined' && approvedView) ? 'No approved loads yet.' : 'No open loads.') %></p>
 <% } else { %>
   <% loads.forEach(function (load) { %>
     <%- include('partials/load-card', { load: load, user: user }) %>

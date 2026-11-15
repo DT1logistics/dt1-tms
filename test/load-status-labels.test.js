@@ -209,15 +209,22 @@ function assertNoLegacyStatus(html, where) {
     const adminCookie = { Cookie: cookieHeader(admin) };
 
     await check('admin Loads list renders all four labels and keeps review badges', async () => {
+      // Item 5: the main Loads screen shows Draft and Submitted loads; Approved for Settlement and
+      // Settled loads are listed under ?view=approved.
       const list = await request(srv.port, adminCookie, { path: '/loads' });
       assert.strictEqual(list.status, 200, list.body.slice(0, 400));
       assertHasBadge(list.body, 'draft', LABELS.draft);
       assertHasBadge(list.body, 'submitted', LABELS.submitted);
-      assertHasBadge(list.body, 'approved', LABELS.approved);
-      assertHasBadge(list.body, 'approved', LABELS.settled);
-      assert.ok(list.body.includes('Flagged — missing info'));
-      assert.ok(list.body.includes('>Rejected<'));
+      assert.ok(!list.body.includes(`>${LABELS.approved}<`), 'approved loads left the main Loads screen');
+      assert.ok(!list.body.includes(`>${LABELS.settled}<`), 'settled loads left the main Loads screen');
+      const approvedList = await request(srv.port, adminCookie, { path: '/loads?view=approved' });
+      assertHasBadge(approvedList.body, 'approved', LABELS.approved);
+      assertHasBadge(approvedList.body, 'approved', LABELS.settled);
+      const both = list.body + approvedList.body;
+      assert.ok(both.includes('Flagged — missing info'));
+      assert.ok(both.includes('>Rejected<'));
       assertNoLegacyStatus(list.body, 'loads list');
+      assertNoLegacyStatus(approvedList.body, 'approved loads list');
     });
 
     await check('flagged Loads view keeps the submitted label and the flag note', async () => {

@@ -918,3 +918,24 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   z-index: 1;
 }
 .money-field > input[data-money] { padding-left: 22px !important; }
+
+/* Item 5 (11/15/2026): Settlements and Invoices screens */
+.sub-tabs { display: flex; gap: 18px; margin: 8px 0 14px; border-bottom: 1px solid #ddd; padding-bottom: 8px; }
+.sub-tabs a { font-weight: 700; }
+.sub-tabs a.filter-on { text-decoration: underline; }
+.load-filters { flex-wrap: wrap; }
+.inline-form { display: inline-flex; gap: 6px; align-items: center; margin: 0; }
+.inline-form button { margin: 0; }
+.settlement-actions, .invoice-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+.settlement-amounts { margin: 6px 0; }
+.invoice-card h4 { margin: 16px 0 6px; }
+.project-subtotal { text-align: right; margin-top: 4px; }
+.table-scroll { overflow-x: auto; }
+.invoice-tracker input[name="amount_received"] { width: 110px; }
+.btn-small { padding: 4px 10px; font-size: 13px; }
+.status.invoice-open { background: #fff3cd; color: #856404; }
+.status.invoice-invoiced { background: #d1ecf1; color: #0c5460; }
+.status.invoice-paid { background: #d4edda; color: #155724; }
+.load-locked { border-left: 4px solid #6c757d; }
+.settlement-actions form, .invoice-actions form { margin: 0; }
+.settlement-actions button, .invoice-actions button, .settlement-actions .btn, .invoice-actions .btn { margin: 0; }
