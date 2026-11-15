@@ -2699,15 +2699,30 @@ function decideLoadReview(loadId, input) {
   if (!decision) return { error: 'Invalid decision', code: 400 };
   const reason = String(input.reason || '').trim().slice(0, 2000);
   if (decision === 'rejected' && !reason) return { error: 'A rejection reason is required', code: 400 };
-  db.prepare(`
-    UPDATE loads
-    SET review_decision = ?, review_decision_reason = ?, review_decision_by = ?,
-        review_decision_by_name = ?, review_decision_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(decision, reason || null, input.actorId || null, input.actorName, load.id);
   const auditReq = { session: { user: { id: input.actorId || null, name: input.actorName, role: 'admin' } } };
+  // Item 8 (11/15/2026): the separate "Reject to Draft" box was removed from the Review Load page,
+  // so "Reject load" now also does what it did: a Submitted or Approved load goes back to the
+  // driver as Draft with the reason, and its approval/settlement mark is cleared.
+  const sendBack = decision === 'rejected' && (load.status === 'submitted' || load.status === 'approved');
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE loads
+      SET review_decision = ?, review_decision_reason = ?, review_decision_by = ?,
+          review_decision_by_name = ?, review_decision_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(decision, reason || null, input.actorId || null, input.actorName, load.id);
+    if (sendBack) {
+      db.prepare(`
+        UPDATE loads
+        SET status = 'draft', rejection_reason = ?, approved_by = NULL, approved_by_name = NULL, approved_at = NULL,
+            settlement_status = NULL, rejected_by = ?, rejected_by_name = ?, rejected_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status IN ('submitted', 'approved')
+      `).run(reason || null, input.actorId || null, input.actorName, load.id);
+    }
+  })();
   logAudit(auditReq, decision === 'rejected' ? 'Rejected load' : 'Accepted load', 'load', load.id, reason || null);
-  return { load: db.prepare('SELECT * FROM loads WHERE id = ?').get(load.id) };
+  if (sendBack) logAudit(auditReq, 'Rejected', 'load', load.id, `Sent back to draft: ${reason}`);
+  return { load: db.prepare('SELECT * FROM loads WHERE id = ?').get(load.id), sentBack: sendBack };
 }
 
 app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) => {

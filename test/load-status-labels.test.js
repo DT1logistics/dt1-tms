@@ -250,7 +250,8 @@ function assertNoLegacyStatus(html, where) {
       assertNoLegacyStatus(flagged.body, 'T-FLAG');
       const submitted = await request(srv.port, adminCookie, { path: `/loads/${idOf('T-SUB')}` });
       assert.ok(submitted.body.includes('>Approve for Settlement</button>'));
-      assert.ok(submitted.body.includes('Reject to Draft'));
+      assert.ok(!submitted.body.includes('Reject to Draft'), 'duplicate Reject to Draft box was removed (item 8)');
+      assert.ok(submitted.body.includes('>Reject load</button>'));
     });
 
     await check('a sent-back draft uses the Draft label on the edit form', async () => {

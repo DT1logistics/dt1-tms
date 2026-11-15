@@ -48,7 +48,7 @@
 <% if (saved === 'review') { %><div class="all-clear">Review notes saved.</div><% } %>
 <% if (saved === 'cleared') { %><div class="all-clear">Missing-info flag cleared.</div><% } %>
 <% if (saved === 'accepted') { %><div class="all-clear">Load accepted.</div><% } %>
-<% if (saved === 'review-rejected') { %><div class="reject-note">Load rejected.</div><% } %>
+<% if (saved === 'review-rejected') { %><div class="reject-note">Load rejected.<% if (load.status === 'draft' && load.rejection_reason) { %> It was sent back to the driver as Draft.<% } %></div><% } %>
 <% if (saved === 'need-reason') { %><div class="reject-note">A reason is required to reject a load.</div><% } %>
 <% if (user.role === 'admin' && load.review_status === 'flagged_missing_info') { %>
   <div class="reject-note">
@@ -338,29 +338,22 @@
 
   <form class="card" method="POST" action="/loads/<%= load.id %>/review-decision">
     <h2>Accept or reject</h2>
-    <p class="muted">Only an admin can accept or reject a load. Logan can flag a load and cannot make this decision.</p>
+    <p class="muted">Only an admin can accept or reject a load. Logan can flag a load and cannot make this decision. Rejecting a Submitted or Approved load sends it back to the driver as Draft, and the driver sees the reason.</p>
     <% if (load.review_decision === 'rejected') { %>
       <p>Current decision: <strong>Rejected</strong><% if (load.review_decision_by_name) { %> by <%= load.review_decision_by_name %><% if (load.review_decision_at) { %> on <%= auditStamp(load.review_decision_at) %><% } %><% } %></p>
     <% } else if (load.review_decision === 'accepted') { %>
       <p>Current decision: <strong>Accepted</strong><% if (load.review_decision_by_name) { %> by <%= load.review_decision_by_name %><% if (load.review_decision_at) { %> on <%= auditStamp(load.review_decision_at) %><% } %><% } %></p>
     <% } %>
     <label for="review_decision_reason">Reason (required to reject)</label>
-    <textarea name="reason" id="review_decision_reason" rows="3" placeholder="Why this load is rejected"><%= load.review_decision === 'rejected' ? (load.review_decision_reason || '') : '' %></textarea>
+    <textarea name="reason" id="review_decision_reason" rows="3" placeholder="Why this load is rejected / what the driver should fix"><%= load.review_decision === 'rejected' ? (load.review_decision_reason || '') : '' %></textarea>
     <button class="approve" type="submit" name="decision" value="accepted">Accept load</button>
-    <button class="danger" type="submit" name="decision" value="rejected" onclick="return confirm('Reject this load?');">Reject load</button>
+    <button class="danger" type="submit" name="decision" value="rejected" onclick="return confirm('Reject this load<%= (load.status === 'submitted' || load.status === 'approved') ? ' and send it back to the driver as Draft' : '' %>?');">Reject load</button>
   </form>
 
   <div class="review-actions">
     <% if (load.status === 'submitted') { %>
       <form method="POST" action="/loads/<%= load.id %>/approve">
         <button class="approve" type="submit">Approve for Settlement</button>
-      </form>
-    <% } %>
-    <% if (load.status === 'submitted' || load.status === 'approved') { %>
-      <form method="POST" action="/loads/<%= load.id %>/reject" onsubmit="return confirm('Send this load back to the driver as Draft?');">
-        <label>Rejection reason</label>
-        <textarea name="rejection_reason" rows="3" placeholder="Tell the driver what to fix"></textarea>
-        <button class="danger" type="submit">Reject to Draft</button>
       </form>
     <% } %>
     <form method="POST" action="/loads/<%= load.id %>/delete" onsubmit="return confirm('Delete this load? This cannot be undone.');">
