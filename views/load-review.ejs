@@ -105,7 +105,7 @@
   <div><strong>Destination</strong> <%= load.destination || load.description || '—' %></div>
   <div><strong>Qty/Wet Ton</strong> <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
   <div><strong>Rate</strong> $<%= money(load.rate) %></div>
-  <div><strong>Load Total</strong> $<%= money(loadTotalAmount(load)) %></div>
+  <div><strong>Load Total</strong> $<%= money(loadTotalFor(user, load)) %></div>
   <% if (load.payInfo && (user.role === 'admin' || load.showPay)) { %>
     <div><strong>Driver Pay Basis</strong> <%= load.payInfo.basis %></div>
   <% } %>
@@ -177,6 +177,7 @@
             data-drivetime-amount="<%= project.default_drive_time_amount %>"
             data-pay-type="<%= project.default_driver_pay_type || 'percentage' %>"
             data-flat-rate="<%= project.default_driver_flat_rate || 0 %>"
+            data-total-load-pay="<%= project.default_total_load_pay != null ? project.default_total_load_pay : '' %>"
             <%= String(load.project_id) === String(project.id) ? 'selected' : '' %>><%= project.display_name %></option>
         <% }) %>
       </select>
@@ -283,6 +284,11 @@
         <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" name="driver_flat_rate" id="driver_flat_rate" class="input-num-4dec" value="<%= load.driver_flat_rate != null && load.driver_flat_rate !== '' ? load.driver_flat_rate : '0.00' %>">
       </div>
       <p class="muted" id="pay_basis_help"></p>
+      <div id="total_load_pay_wrap" class="total-load-pay-field">
+        <label for="total_load_pay">Total Load Pay ($) <span class="muted">what the customer pays DT1</span></label>
+        <input type="number" step="0.01" min="0" inputmode="decimal" name="total_load_pay" id="total_load_pay" placeholder="Blank = Qty × Rate" value="<%= hasTotalLoadPay(load) ? Number(load.total_load_pay).toFixed(2) : '' %>">
+        <p class="muted">Filled from the project. When set, this flat amount is what gets invoiced for the load (plus Drive Time and Self Load when checked) and no fuel surcharge is added. Leave blank to invoice Qty × Rate as before. Drivers never see this amount.</p>
+      </div>
       <% if (drivers && drivers.length) { %>
         <label>Assign Driver</label>
         <select name="driver_id">
@@ -379,8 +385,20 @@
   const fscDateInput = document.querySelector('input[name="load_date"]');
   const reviewProjectSelect = document.getElementById('review_project_select');
 
+  function reviewTotalLoadPayValue() {
+    const el = document.getElementById('total_load_pay');
+    const raw = el ? String(el.value || '').trim() : '';
+    if (raw === '' || !Number.isFinite(Number(raw))) return null;
+    return Number(raw);
+  }
+
   function syncReviewFuelAmount() {
     if (!reviewFuelCheck) return;
+    if (reviewTotalLoadPayValue() !== null) {
+      if (reviewFuelAmount) reviewFuelAmount.value = '0.00';
+      if (reviewFuelTotal) reviewFuelTotal.textContent = 'Fuel Surcharge: not added (Total Load Pay is set)';
+      return;
+    }
     if (!reviewFuelCheck.checked) {
       if (reviewFuelAmount) reviewFuelAmount.value = '0.00';
       if (reviewFuelTotal) reviewFuelTotal.textContent = 'Fuel Surcharge Total: $0.00';
@@ -426,7 +444,8 @@
     const self = (reviewSelfCheck && reviewSelfCheck.checked)
       ? (Number.isFinite(Number(reviewSelfAmount && reviewSelfAmount.value)) ? Number(reviewSelfAmount.value) : 0)
       : 0;
-    reviewLoadTotal.textContent = 'Load Total: $' + (base + drive + self).toFixed(2);
+    const totalLoadPay = reviewTotalLoadPayValue();
+    reviewLoadTotal.textContent = 'Load Total: $' + ((totalLoadPay !== null ? totalLoadPay : base) + drive + self).toFixed(2);
     syncReviewFuelAmount();
   }
 
@@ -485,6 +504,11 @@
       const hasDrive = opt.getAttribute('data-drivetime') === '1';
       if (reviewDriveCheck) reviewDriveCheck.checked = hasDrive;
       if (reviewDriveAmount) reviewDriveAmount.value = hasDrive ? (Number(opt.getAttribute('data-drivetime-amount')) || 0).toFixed(2) : '0.00';
+      const totalLoadPayInput = document.getElementById('total_load_pay');
+      if (totalLoadPayInput) {
+        const projectTotal = String(opt.getAttribute('data-total-load-pay') || '').trim();
+        totalLoadPayInput.value = projectTotal === '' ? '' : (Number(projectTotal) || 0).toFixed(2);
+      }
       syncReviewDriveWrap();
       syncReviewLoadTotal();
     });
@@ -502,7 +526,7 @@
       syncReviewLoadTotal();
     });
   }
-  [reviewRate, reviewQty, reviewDriveAmount, reviewSelfAmount, reviewFlatRate].forEach((el) => {
+  [reviewRate, reviewQty, reviewDriveAmount, reviewSelfAmount, reviewFlatRate, document.getElementById('total_load_pay')].forEach((el) => {
     if (el) {
       el.addEventListener('input', syncReviewLoadTotal);
       el.addEventListener('change', syncReviewLoadTotal);

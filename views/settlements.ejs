@@ -107,8 +107,8 @@
                 <td><%= load.destination || load.description || '—' %></td>
                 <td class="num"><%= load.weight_quantity != null ? load.weight_quantity : '—' %></td>
                 <td class="num">$<%= money(load.rate) %></td>
-                <td class="num">$<%= money(load.hauling) %></td>
-                <td class="num"><% if (Number(load.has_fuel_surcharge) === 1 && load.fscPending) { %>$0.00<div class="muted" style="font-size:11px;">Rate pending</div><% } else if (Number(load.has_fuel_surcharge) === 1) { %>$<%= money(load.lineFsc) %><div class="muted" style="font-size:11px;"><%= Number(load.fscPercent).toFixed(2) %>% · <%= load.fscFlat ? 'flat amount' : '$' + Number(load.fscPerTon).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') + '/ton' %></div><% } else { %>—<% } %></td>
+                <td class="num">$<%= money(load.hauling) %><% if (load.usesTotalLoadPay) { %><div class="muted" style="font-size:11px;">Total Load Pay</div><% } %></td>
+                <td class="num"><% if (load.usesTotalLoadPay) { %>—<div class="muted" style="font-size:11px;">in Total Load Pay</div><% } else if (Number(load.has_fuel_surcharge) === 1 && load.fscPending) { %>$0.00<div class="muted" style="font-size:11px;">Rate pending</div><% } else if (Number(load.has_fuel_surcharge) === 1) { %>$<%= money(load.lineFsc) %><div class="muted" style="font-size:11px;"><%= Number(load.fscPercent).toFixed(2) %>% · <%= load.fscFlat ? 'flat amount' : '$' + Number(load.fscPerTon).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') + '/ton' %></div><% } else { %>—<% } %></td>
                 <td class="num">$<%= money(load.selfLoad) %></td>
                 <td class="num">$<%= money(load.travelTime) %></td>
                 <td class="num"><%= Number(load.shipper_detention) === 1 ? '$' + money(load.shipperDetention) : '—' %></td>
