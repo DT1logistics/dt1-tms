@@ -17,7 +17,7 @@
           <% if (projects.length) { %>
             <ul class="projects">
               <% projects.forEach(project => { %>
-                <li><%= project.display_name %> — $<%= money(project.default_rate) %></li>
+                <li><%= project.display_name %> — <%= usd(project.default_rate) %></li>
               <% }) %>
             </ul>
           <% } %>

@@ -9,7 +9,7 @@
       <div class="week-meta">
         <%= week.count %> load<%= week.count === 1 ? '' : 's' %>
         · Qty/Wet Ton <%= week.qty %>
-        · Driver Pay $<%= money(week.approvedPay) %>
+        · Driver Pay <%= usd(week.approvedPay) %>
         · <%= loadStatusLabel('approved', null) %> <%= week.approvedCount %>
         · <%= loadStatusLabel('submitted', null) %> <%= week.submittedCount %>
         · <%= loadStatusLabel('draft', null) %> <%= week.draftCount %>

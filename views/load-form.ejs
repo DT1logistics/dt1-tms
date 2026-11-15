@@ -93,7 +93,7 @@
   <div class="load-rate-qty-drive-row">
     <div class="field-num-compact">
       <label for="load_rate">Load Rate ($)</label>
-      <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="rate" id="load_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.rate != null && load.rate !== '' ? Number(load.rate).toFixed(2) : '' %>" <%= user.role === 'admin' ? '' : 'readonly' %>>
+      <input data-money="1" type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="rate" id="load_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.rate != null && load.rate !== '' ? Number(load.rate).toFixed(2) : '' %>" <%= user.role === 'admin' ? '' : 'readonly' %>>
     </div>
     <div class="field-num-compact">
       <label for="weight_quantity">Wet Ton/Qty</label>
@@ -126,11 +126,11 @@
   <div class="addon-amount-row">
     <div id="self_load_wrap" class="addon-amount" style="<%= load.has_self_load ? '' : 'display:none;' %>">
       <label for="self_load_amount">Self Load $</label>
-      <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="20.00" name="self_load_amount" id="self_load_amount" data-four-dec="1" value="<%= load.self_load_amount != null && Number(load.self_load_amount) > 0 ? Number(load.self_load_amount).toFixed(2) : '20.00' %>">
+      <input data-money="1" type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="20.00" name="self_load_amount" id="self_load_amount" data-four-dec="1" value="<%= load.self_load_amount != null && Number(load.self_load_amount) > 0 ? Number(load.self_load_amount).toFixed(2) : '20.00' %>">
     </div>
     <div id="detention_wrap" class="addon-amount" style="<%= load.detention ? '' : 'display:none;' %>">
       <label for="detention_amount">Detention $</label>
-      <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
+      <input data-money="1" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="detention_amount" id="detention_amount" value="<%= load.detention && load.detention_amount != null && load.detention_amount !== '' ? Number(load.detention_amount).toFixed(2) : '' %>">
     </div>
   </div>
   <div class="load-self-row">
@@ -142,7 +142,7 @@
     </div>
     <div id="drive_time_wrap" class="addon-amount" style="<%= load.has_drive_time ? '' : 'display:none;' %>">
       <label for="drive_time_amount">Drive Time $</label>
-      <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="drive_time_amount" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null && load.drive_time_amount !== '' ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
+      <input data-money="1" type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" placeholder="0000.00" name="drive_time_amount" id="drive_time_amount" data-four-dec="1" value="<%= load.has_drive_time && load.drive_time_amount != null && load.drive_time_amount !== '' ? Number(load.drive_time_amount).toFixed(2) : '0.00' %>">
     </div>
   </div>
   <% if (user.role === 'admin') { %>
@@ -158,7 +158,7 @@
   <div class="addon-amount-row">
     <div id="shipper_detention_wrap" class="addon-amount" style="<%= load.shipper_detention ? '' : 'display:none;' %>">
       <label for="shipper_detention_amount">Shipper detention $ (billed to customer)</label>
-      <input type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="shipper_detention_amount" id="shipper_detention_amount" value="<%= load.shipper_detention && load.shipper_detention_amount != null && load.shipper_detention_amount !== '' ? Number(load.shipper_detention_amount).toFixed(2) : '' %>">
+      <input data-money="1" type="number" step="0.01" min="0" inputmode="decimal" placeholder="0.00" name="shipper_detention_amount" id="shipper_detention_amount" value="<%= load.shipper_detention && load.shipper_detention_amount != null && load.shipper_detention_amount !== '' ? Number(load.shipper_detention_amount).toFixed(2) : '' %>">
     </div>
   </div>
   <% } %>
@@ -168,7 +168,7 @@
     <% } %>
     <div class="load-total-under" id="load_total"><%= user.role === 'admin' ? 'Total Load Pay (invoiced)' : 'Load Total' %>: $0.00</div>
     <% if (user.role === 'admin') { %>
-    <div class="load-total-under fuel-total-under" id="fuel_surcharge_total" title="Uses the fuel rate for the Load Date's week: Load Rate × FSC % × Wet Tons"><% const fscNow = loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []); %><%= !Number(load.has_fuel_surcharge) ? 'Fuel Surcharge Total: $0.00' : (fscNow.pending ? 'Fuel Surcharge Total: Rate pending ($0.00)' : 'Fuel Surcharge Total: $' + money(fscNow.total) + ' @ ' + Number(fscNow.percent).toFixed(2) + '%') %></div>
+    <div class="load-total-under fuel-total-under" id="fuel_surcharge_total" title="Uses the fuel rate for the Load Date's week: Load Rate × FSC % × Wet Tons"><% const fscNow = loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []); %><%= !Number(load.has_fuel_surcharge) ? 'Fuel Surcharge Total: $0.00' : (fscNow.pending ? 'Fuel Surcharge Total: Rate pending ($0.00)' : 'Fuel Surcharge Total: ' + usd(fscNow.total) + ' @ ' + Number(fscNow.percent).toFixed(2) + '%') %></div>
     <% } %>
   </div>
   <% if (user.role === 'admin') { %>
@@ -179,12 +179,12 @@
     </select>
     <div id="flat_rate_wrap" style="<%= load.driver_pay_type === 'flat' ? '' : 'display:none;' %>">
       <label for="driver_flat_rate">Driver Flat / Daily Rate ($)</label>
-      <input type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" name="driver_flat_rate" id="driver_flat_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.driver_flat_rate != null && load.driver_flat_rate !== '' ? load.driver_flat_rate : '0.00' %>">
+      <input data-money="1" type="number" step="0.01" min="0" max="9999.99" inputmode="decimal" name="driver_flat_rate" id="driver_flat_rate" class="input-num-4dec" data-four-dec="1" value="<%= load.driver_flat_rate != null && load.driver_flat_rate !== '' ? Number(load.driver_flat_rate).toFixed(2) : '0.00' %>">
     </div>
     <p class="muted" id="pay_basis_help">Driver Pay = (Qty/Wet Ton × Rate × Driver Pay %) + (Drive Time × Driver Pay %) + Self Load + Detention. Self Load and Detention are added in full. Fuel surcharge is not included.</p>
     <div id="total_load_pay_wrap" class="total-load-pay-field">
       <label for="total_load_pay">Total Load Pay ($) <span class="muted">what the customer pays DT1</span></label>
-      <input type="number" step="0.01" min="0" inputmode="decimal" name="total_load_pay" id="total_load_pay" placeholder="Blank = Qty × Rate" value="<%= hasTotalLoadPay(load) ? Number(load.total_load_pay).toFixed(2) : '' %>">
+      <input data-money="1" type="number" step="0.01" min="0" inputmode="decimal" name="total_load_pay" id="total_load_pay" placeholder="Blank = Qty × Rate" value="<%= hasTotalLoadPay(load) ? Number(load.total_load_pay).toFixed(2) : '' %>">
       <p class="muted">Filled from the project. When set, this flat amount is what gets invoiced for the load (plus Drive Time and Self Load when checked) and no fuel surcharge is added. Leave blank to invoice Qty × Rate as before. Drivers never see this amount.</p>
     </div>
   <% } %>
@@ -320,7 +320,7 @@
     if (fscTotal) {
       fscTotal.textContent = fsc.pending
         ? 'Fuel Surcharge Total: Rate pending ($0.00)'
-        : 'Fuel Surcharge Total: $' + calc + ' @ ' + fsc.percent.toFixed(2) + '%';
+        : 'Fuel Surcharge Total: ' + window.DT1LoadPay.usd(fsc.total) + ' @ ' + fsc.percent.toFixed(2) + '%';
       fscTotal.title = fsc.pending
         ? 'No fuel rate posted yet for this Load Date\'s week; $0.00 until it is posted.'
         : 'Week rate $' + fsc.dieselRate.toFixed(3) + ' effective ' + fsc.effectiveDate + ': Load Rate × ' + fsc.decimal + ' × Wet Tons';
@@ -421,7 +421,7 @@
       : 0;
     const totalLoadPay = totalLoadPayValue();
     const total = (totalLoadPay !== null ? totalLoadPay : base) + drive + self;
-    loadTotal.textContent = (isAdminForm ? 'Total Load Pay (invoiced): $' : 'Load Total: $') + total.toFixed(2);
+    loadTotal.textContent = (isAdminForm ? 'Total Load Pay (invoiced): ' : 'Load Total: ') + window.DT1LoadPay.usd(total);
     const driverPayTotal = document.getElementById('driver_pay_total');
     if (driverPayTotal && window.DT1LoadPay) {
       const driverSel = document.querySelector('#loadForm select[name="driver_id"]');
@@ -433,7 +433,7 @@
       const pay = window.DT1LoadPay.driverPay({
         qty, rate, isFlat, flatRate: Number(flatRateEl && flatRateEl.value) || 0, drive, self, detention, pct
       });
-      driverPayTotal.textContent = 'Driver Pay: $' + pay.toFixed(2);
+      driverPayTotal.textContent = 'Driver Pay: ' + window.DT1LoadPay.usd(pay);
     }
     syncFuelAmount();
   }

@@ -54,9 +54,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/js/fuel-surcharge.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'fuel-surcharge.js')));
 app.get('/js/load-date.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'load-date.js')));
 app.get('/js/load-pay.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'load-pay.js')));
+app.get('/js/money-input.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'money-input.js')));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.locals.money = (n) => (Number(n) || 0).toFixed(2);
+// Item 4 (11/15/2026): every money display reads "$1,234.50" (always two decimals).
+const moneyInput = require('./lib/money-input');
+app.locals.usd = moneyInput.usd;
 
 function daysUntil(exp) {
   return Math.ceil((new Date(exp) - new Date()) / (1000 * 60 * 60 * 24));
@@ -166,8 +170,8 @@ function calcDriverPay(load) {
   const self = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
   const detention = Number(load.detention) ? (Number(load.detention_amount) || 0) : 0;
   const basis = flat
-    ? `Flat Daily Rate: $${base.toFixed(2)}`
-    : `${percentage}% of $${linehaul.toFixed(2)}`;
+    ? `Flat Daily Rate: ${moneyInput.usd(base)}`
+    : `${percentage}% of ${moneyInput.usd(linehaul)}`;
   return { linehaul, base, drive, self, detention, pay: base + drive + self + detention, percentage, flat, basis };
 }
 

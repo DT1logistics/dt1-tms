@@ -34,19 +34,19 @@
     <div class="load-notes-card"><strong>Notes:</strong> <span class="load-notes-text"><%= load.notes || load.admin_notes %></span></div>
   <% } %>
   <div>Qty/Wet Ton: <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
-  <div>Rate: $<%= money(load.rate) %></div>
+  <div>Rate: <%= usd(load.rate) %></div>
   <% if (user.role === 'admin' && load.payInfo) { %>
     <%# Item 2: admins see Driver Pay first, then the Total Load Pay that will be invoiced, at every status. %>
-    <div class="pay-line admin-driver-pay">Driver Pay: $<%= money(load.payInfo.pay) %></div>
-    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %> · Detention $<%= money(load.payInfo.detention) %>. <% if (load.payInfo.flat) { %>Drive Time, Self Load, and Detention are added in full.<% } else { %>Drive Time is the driver's pay percentage of the drive-time fee. Self Load and Detention are added in full.<% } %></div>
-    <div class="total-load-pay-line">Total Load Pay (invoiced): $<%= money(loadTotalFor(user, load)) %><% if (hasTotalLoadPay(load)) { %> <span class="muted">(project flat rate)</span><% } %></div>
+    <div class="pay-line admin-driver-pay">Driver Pay: <%= usd(load.payInfo.pay) %></div>
+    <div class="muted"><%= load.payInfo.basis %> · Drive Time <%= usd(load.payInfo.drive) %> · Self Load <%= usd(load.payInfo.self) %> · Detention <%= usd(load.payInfo.detention) %>. <% if (load.payInfo.flat) { %>Drive Time, Self Load, and Detention are added in full.<% } else { %>Drive Time is the driver's pay percentage of the drive-time fee. Self Load and Detention are added in full.<% } %></div>
+    <div class="total-load-pay-line">Total Load Pay (invoiced): <%= usd(loadTotalFor(user, load)) %><% if (hasTotalLoadPay(load)) { %> <span class="muted">(project flat rate)</span><% } %></div>
     <div>Fuel Surcharge: <%= hasTotalLoadPay(load) ? 'Not added (Total Load Pay)' : (Number(load.has_fuel_surcharge) === 1 ? 'Yes' : 'No') %></div>
   <% } else { %>
-  <div>Load Total: $<%= money(loadTotalFor(user, load)) %></div>
+  <div>Load Total: <%= usd(loadTotalFor(user, load)) %></div>
   <% } %>
   <% if (load.showPay && user.role !== 'admin') { %>
-    <div class="pay-line">Driver Pay: $<%= money(load.payInfo.pay) %></div>
-    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %> · Detention $<%= money(load.payInfo.detention) %>. <% if (load.payInfo.flat) { %>Drive Time, Self Load, and Detention are added in full.<% } else { %>Drive Time is the driver's pay percentage of the drive-time fee. Self Load and Detention are added in full.<% } %></div>
+    <div class="pay-line">Driver Pay: <%= usd(load.payInfo.pay) %></div>
+    <div class="muted"><%= load.payInfo.basis %> · Drive Time <%= usd(load.payInfo.drive) %> · Self Load <%= usd(load.payInfo.self) %> · Detention <%= usd(load.payInfo.detention) %>. <% if (load.payInfo.flat) { %>Drive Time, Self Load, and Detention are added in full.<% } else { %>Drive Time is the driver's pay percentage of the drive-time fee. Self Load and Detention are added in full.<% } %></div>
   <% } %>
   <div>Load Ticket/BOL:
     <% if (load.tickets && load.tickets.length) { %>
@@ -64,13 +64,13 @@
     <% } %>
   </div>
   <% if (Number(load.has_drive_time) === 1) { %>
-    <div>Drive Time: $<%= money(load.drive_time_amount) %></div>
+    <div>Drive Time: <%= usd(load.drive_time_amount) %></div>
   <% } %>
   <% if (Number(load.has_self_load) === 1) { %>
-    <div>Self Load: $<%= money(load.self_load_amount) %></div>
+    <div>Self Load: <%= usd(load.self_load_amount) %></div>
   <% } %>
   <% if (Number(load.detention) === 1) { %>
-    <div>Detention: $<%= money(load.detention_amount) %></div>
+    <div>Detention: <%= usd(load.detention_amount) %></div>
   <% } %>
   <% if (user.role === 'admin') { %><div class="muted">Driver: <%= load.driver_name || 'Unassigned' %></div><% } %>
   <p>

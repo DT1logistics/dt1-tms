@@ -43,7 +43,7 @@
       <% } else { %>—<% } %>
     </div>
     <% const cost = (typeof expenseTotals !== 'undefined' && expenseTotals[String(item.id)]) || { ytd: 0, allTime: 0, count: 0 }; %>
-    <div class="equip-cost"><strong>Maintenance Cost:</strong> YTD <%= expenseYear %> $<%= money(cost.ytd) %> · All-time $<%= money(cost.allTime) %> <span class="muted">(<%= cost.count %> item<%= cost.count === 1 ? '' : 's' %>)</span></div>
+    <div class="equip-cost"><strong>Maintenance Cost:</strong> YTD <%= expenseYear %> <%= usd(cost.ytd) %> · All-time <%= usd(cost.allTime) %> <span class="muted">(<%= cost.count %> item<%= cost.count === 1 ? '' : 's' %>)</span></div>
     <p><a href="/equipment/<%= item.id %>#expenses">Expenses / Maintenance Log</a> · <a href="/equipment/<%= item.id %>/edit">Edit</a></p>
   </div>
 <% } %>
