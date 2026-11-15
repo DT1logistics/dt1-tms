@@ -351,7 +351,7 @@ function writeDb(dataDir, fn) {
       const off = await request(srv.port, apiAuth, {
         method: 'POST',
         path: '/api/logan/loads',
-        body: JSON.stringify({
+        body: JSON.stringify({ load_date: '2026-11-03',
           action: 'draft',
           driver_id: driverId,
           project_id: projectId,
@@ -368,7 +368,7 @@ function writeDb(dataDir, fn) {
       const bad = await request(srv.port, apiAuth, {
         method: 'POST',
         path: '/api/logan/loads',
-        body: JSON.stringify({ action: 'draft', driver_id: driverId, detention: true, detention_amount: -2 })
+        body: JSON.stringify({ load_date: '2026-11-03', action: 'draft', driver_id: driverId, detention: true, detention_amount: -2 })
       });
       assert.strictEqual(bad.status, 400);
       assert.ok(JSON.parse(bad.body).error.includes('Detention'));

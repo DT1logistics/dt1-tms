@@ -42,8 +42,8 @@
   <% } %>
   <div class="load-date-ticket-row">
     <div class="field-date-compact">
-      <label for="load_date">Load Date</label>
-      <input type="date" name="load_date" id="load_date" class="input-date-compact" max="9999-12-31" value="<%= load.load_date || '' %>">
+      <label for="load_date">Load Date <span class="required-mark" aria-hidden="true">*</span></label>
+      <input type="date" name="load_date" id="load_date" class="input-date-compact" max="9999-12-31" required aria-required="true" value="<%= load.load_date || '' %>">
     </div>
     <div class="field-ticket-flex">
       <label for="ticket_number">Ticket Number</label>

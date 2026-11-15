@@ -896,3 +896,6 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 .import-bulk { display: flex; gap: 8px; flex-wrap: wrap; }
 .import-bulk button { width: auto; margin: 0; }
 .notice { background: #d1fae5; color: #065f46; padding: 8px 12px; border-radius: 8px; margin-bottom: 8px; font-weight: 600; }
+
+/* Required field marker (Load Date). */
+.required-mark { color: #b42318; font-weight: 700; }

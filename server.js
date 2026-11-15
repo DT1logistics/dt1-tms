@@ -412,6 +412,45 @@ function backfillUserNames() {
   });
 }
 
+// Item 1 (11/15/2026): every load needs a Load Date. Fill ONLY empty load_date values with the
+// date the load was created (America/New_York calendar day). Existing dates are never touched.
+// Each filled load gets an audit_log entry so Kammy can review it. Safe to run on every startup.
+function backfillLoadDates() {
+  const rows = db.prepare(`
+    SELECT id, ticket_number, created_at FROM loads
+    WHERE load_date IS NULL OR TRIM(load_date) = ''
+    ORDER BY id
+  `).all();
+  const fill = db.prepare(`
+    UPDATE loads SET load_date = ?
+    WHERE id = ? AND (load_date IS NULL OR TRIM(load_date) = '')
+  `);
+  const audit = db.prepare(`
+    INSERT INTO audit_log (actor_id, actor_name, action, entity_type, entity_id, detail)
+    VALUES (NULL, 'System', 'Load date backfilled', 'load', ?, ?)
+  `);
+  const filled = [];
+  db.transaction(() => {
+    rows.forEach((row) => {
+      const date = loadDate.easternDateFromTimestamp(row.created_at)
+        || loadDate.easternDateFromTimestamp(new Date().toISOString());
+      if (!date) return;
+      if (fill.run(date, row.id).changes) {
+        audit.run(row.id, `Load date backfilled from created date: ${date} (please review)`);
+        filled.push({ id: row.id, ticket_number: row.ticket_number || '', load_date: date });
+      }
+    });
+  })();
+  if (filled.length) {
+    console.log(`Load date backfill: ${filled.length} load(s) filled from created date: ${filled.map((f) => `#${f.id}=${f.load_date}`).join(', ')}`);
+  }
+  return filled;
+}
+
+function loadDateError(values) {
+  return loadDate.isValidLoadDate(values && values.load_date) ? null : 'Load Date is required';
+}
+
 function parseStoredAddress(value) {
   const text = String(value || '').trim();
   const parts = text.split(',').map((part) => part.trim()).filter(Boolean);
@@ -922,6 +961,7 @@ function initDB() {
   `).run();
 
   backfillUserNames();
+  backfillLoadDates();
   backfillUserAddresses();
   backfillDocumentBlobs();
 }
@@ -2621,6 +2661,9 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
   const project = findActiveProject(req.body.project_id);
   const values = buildLoadValues(req, project);
   values.status = entry.status;
+  if (loadDateError(values)) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req), loadDateError(values));
+  }
   if (values.detentionError || values.shipperDetentionError) {
     return renderLoadForm(req, res, 400, loadFormErrorView(req), values.detentionError || values.shipperDetentionError);
   }
@@ -2656,6 +2699,9 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), 'Select an active project');
   }
   const values = buildLoadValues(req, project, existing);
+  if (loadDateError(values)) {
+    return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), loadDateError(values));
+  }
   if (values.detentionError || values.shipperDetentionError) {
     return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), values.detentionError || values.shipperDetentionError);
   }
