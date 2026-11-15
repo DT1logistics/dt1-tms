@@ -163,7 +163,10 @@
   </div>
   <% } %>
   <div class="load-totals-row">
-    <div class="load-total-under" id="load_total">Load Total: $0.00</div>
+    <% if (user.role === 'admin') { %>
+    <div class="load-total-under driver-pay-under" id="driver_pay_total">Driver Pay: $0.00</div>
+    <% } %>
+    <div class="load-total-under" id="load_total"><%= user.role === 'admin' ? 'Total Load Pay (invoiced)' : 'Load Total' %>: $0.00</div>
     <% if (user.role === 'admin') { %>
     <div class="load-total-under fuel-total-under" id="fuel_surcharge_total" title="Uses the fuel rate for the Load Date's week: Load Rate × FSC % × Wet Tons"><% const fscNow = loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []); %><%= !Number(load.has_fuel_surcharge) ? 'Fuel Surcharge Total: $0.00' : (fscNow.pending ? 'Fuel Surcharge Total: Rate pending ($0.00)' : 'Fuel Surcharge Total: $' + money(fscNow.total) + ' @ ' + Number(fscNow.percent).toFixed(2) + '%') %></div>
     <% } %>
@@ -190,7 +193,7 @@
     <select name="driver_id">
       <option value="">-- Select Driver --</option>
       <% drivers.forEach(d => { %>
-        <option value="<%= d.id %>" <%= String(load.driver_id) === String(d.id) ? 'selected' : '' %>><%= d.name %><%= d.status === 'inactive' ? ' (Inactive)' : '' %></option>
+        <option value="<%= d.id %>" data-pay-pct="<%= d.pay_percentage != null ? d.pay_percentage : '' %>" <%= String(load.driver_id) === String(d.id) ? 'selected' : '' %>><%= d.name %><%= d.status === 'inactive' ? ' (Inactive)' : '' %></option>
       <% }) %>
     </select>
   <% } %>
@@ -237,6 +240,7 @@
 </form>
 <script src="/js/fuel-surcharge.js"></script>
 <script src="/js/load-date.js"></script>
+<script src="/js/load-pay.js"></script>
 <script>
   // Prevent duplicate loads from repeated clicks while the server is still saving.
   (function () {
@@ -417,7 +421,20 @@
       : 0;
     const totalLoadPay = totalLoadPayValue();
     const total = (totalLoadPay !== null ? totalLoadPay : base) + drive + self;
-    loadTotal.textContent = 'Load Total: $' + total.toFixed(2);
+    loadTotal.textContent = (isAdminForm ? 'Total Load Pay (invoiced): $' : 'Load Total: $') + total.toFixed(2);
+    const driverPayTotal = document.getElementById('driver_pay_total');
+    if (driverPayTotal && window.DT1LoadPay) {
+      const driverSel = document.querySelector('#loadForm select[name="driver_id"]');
+      const driverOpt = driverSel && driverSel.options ? driverSel.options[driverSel.selectedIndex] : null;
+      const pct = Number(driverOpt && driverOpt.getAttribute('data-pay-pct')) || 0;
+      const detBox = document.getElementById('detention');
+      const detAmt = document.getElementById('detention_amount');
+      const detention = detBox && detBox.checked ? (Number(detAmt && detAmt.value) || 0) : 0;
+      const pay = window.DT1LoadPay.driverPay({
+        qty, rate, isFlat, flatRate: Number(flatRateEl && flatRateEl.value) || 0, drive, self, detention, pct
+      });
+      driverPayTotal.textContent = 'Driver Pay: $' + pay.toFixed(2);
+    }
     syncFuelAmount();
   }
 
@@ -588,11 +605,12 @@
     flatRateInput.addEventListener('input', syncLoadTotal);
     flatRateInput.addEventListener('change', syncLoadTotal);
   }
-  const totalLoadPayField = document.getElementById('total_load_pay');
-  if (totalLoadPayField) {
-    totalLoadPayField.addEventListener('input', syncLoadTotal);
-    totalLoadPayField.addEventListener('change', syncLoadTotal);
-  }
+  [document.getElementById('total_load_pay'), document.getElementById('detention'), document.getElementById('detention_amount'),
+    document.querySelector('#loadForm select[name="driver_id"]')].forEach(function (el) {
+    if (!el) return;
+    el.addEventListener('input', syncLoadTotal);
+    el.addEventListener('change', syncLoadTotal);
+  });
   syncLoadTotal();
 
   const smsPreviewEl = document.getElementById('assign_sms_preview');

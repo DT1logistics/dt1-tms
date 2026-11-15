@@ -899,3 +899,8 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 
 /* Required field marker (Load Date). */
 .required-mark { color: #b42318; font-weight: 700; }
+
+/* Item 2: admin Driver Pay shown above Total Load Pay (invoiced). */
+.admin-driver-pay, .driver-pay-under { font-weight: 700; }
+.total-load-pay-line { font-weight: 600; }
+.total-load-pay-field { margin-top: 8px; }

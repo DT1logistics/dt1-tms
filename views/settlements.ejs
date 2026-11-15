@@ -91,6 +91,7 @@
               <th>Destination</th>
               <th class="num">Qty</th>
               <th class="num">Rate</th>
+              <th class="num" title="Paid to the driver. Not billed on the invoice.">Driver Pay</th>
               <th class="num">Price</th>
               <th class="num">Fuel Surcharge</th>
               <th class="num">Self Load</th>
@@ -107,6 +108,7 @@
                 <td><%= load.destination || load.description || '—' %></td>
                 <td class="num"><%= load.weight_quantity != null ? load.weight_quantity : '—' %></td>
                 <td class="num">$<%= money(load.rate) %></td>
+                <td class="num muted">$<%= money(load.payInfo ? load.payInfo.pay : 0) %></td>
                 <td class="num">$<%= money(load.hauling) %><% if (load.usesTotalLoadPay) { %><div class="muted" style="font-size:11px;">Total Load Pay</div><% } %></td>
                 <td class="num"><% if (load.usesTotalLoadPay) { %>—<div class="muted" style="font-size:11px;">in Total Load Pay</div><% } else if (Number(load.has_fuel_surcharge) === 1 && load.fscPending) { %>$0.00<div class="muted" style="font-size:11px;">Rate pending</div><% } else if (Number(load.has_fuel_surcharge) === 1) { %>$<%= money(load.lineFsc) %><div class="muted" style="font-size:11px;"><%= Number(load.fscPercent).toFixed(2) %>% · <%= load.fscFlat ? 'flat amount' : '$' + Number(load.fscPerTon).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') + '/ton' %></div><% } else { %>—<% } %></td>
                 <td class="num">$<%= money(load.selfLoad) %></td>
@@ -117,6 +119,7 @@
           </tbody>
         </table>
         <div class="totals">
+          <div class="muted driver-pay-total" title="Paid to drivers. Not part of the invoice total."><span>Driver Pay (not billed)</span><span>$<%= money(invoice.driverPay) %></span></div>
           <div><span>Hauling</span><span>$<%= money(invoice.hauling) %></span></div>
           <div><span>Fuel Surcharge<% const pcts = invoice.fscPercents || []; %><% if (pcts.length === 1) { %> (<%= Number(pcts[0]).toFixed(2) %>%)<% } else if (pcts.length > 1) { %> (weekly rates: <%= pcts.map(function (x) { return Number(x).toFixed(2) + '%'; }).join(', ') %>)<% } %><% if (invoice.fscPendingCount) { %> · <%= invoice.fscPendingCount %> load<%= invoice.fscPendingCount === 1 ? '' : 's' %> rate pending<% } %></span><span>$<%= money(invoice.fuelSurcharge) %></span></div>
           <div><span>Travel Time</span><span>$<%= money(invoice.travelTime) %></span></div>

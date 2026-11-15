@@ -229,7 +229,7 @@ function assertOrder(html, markers) {
       assert.notStrictEqual(row.driver_pay_type, 'flat');
 
       const detail = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: `/loads/${row.id}` });
-      assert.ok(detail.body.includes('<strong>Load Total</strong> $135.00'));
+      assert.ok(detail.body.includes('<strong>Total Load Pay (invoiced)</strong> $135.00'));
       assert.ok(detail.body.includes('<strong>Driver Pay</strong> $79.74'));
       assert.ok(detail.body.includes('Drive Time $4.50'));
       assert.ok(detail.body.includes('<strong>Drive Time</strong> $15.00'));
@@ -306,7 +306,7 @@ function assertOrder(html, markers) {
       assert.strictEqual(row.driver_pay_type, 'flat');
       assert.strictEqual(Number(row.drive_time_amount).toFixed(2), '15.00');
       const detail = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: `/loads/${row.id}` });
-      assert.ok(detail.body.includes('<strong>Load Total</strong> $115.00'));
+      assert.ok(detail.body.includes('<strong>Total Load Pay (invoiced)</strong> $115.00'));
       assert.ok(detail.body.includes('<strong>Driver Pay</strong> $95.00'));
       assert.ok(detail.body.includes('Drive Time $15.00'));
       assert.ok(detail.body.includes('Drive Time, Self Load, and Detention are added in full.'));

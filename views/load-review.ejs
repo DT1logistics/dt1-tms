@@ -105,11 +105,18 @@
   <div><strong>Destination</strong> <%= load.destination || load.description || '—' %></div>
   <div><strong>Qty/Wet Ton</strong> <%= load.weight_quantity != null ? load.weight_quantity : '—' %></div>
   <div><strong>Rate</strong> $<%= money(load.rate) %></div>
+  <% if (user.role === 'admin' && load.payInfo) { %>
+    <%# Item 2: Driver Pay above the Total Load Pay that will be invoiced, at every status. %>
+    <div class="pay-line admin-driver-pay"><strong>Driver Pay</strong> $<%= money(load.payInfo.pay) %></div>
+    <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %> · Detention $<%= money(load.payInfo.detention) %>. <% if (load.payInfo.flat) { %>Drive Time, Self Load, and Detention are added in full.<% } else { %>Drive Time is the driver's pay percentage of the drive-time fee. Self Load and Detention are added in full.<% } %> Fuel surcharge is not included.</div>
+    <div class="total-load-pay-line"><strong>Total Load Pay (invoiced)</strong> $<%= money(loadTotalFor(user, load)) %><% if (hasTotalLoadPay(load)) { %> <span class="muted">(flat Total Load Pay; no fuel surcharge added)</span><% } %></div>
+  <% } else { %>
   <div><strong>Load Total</strong> $<%= money(loadTotalFor(user, load)) %></div>
-  <% if (load.payInfo && (user.role === 'admin' || load.showPay)) { %>
+  <% if (load.payInfo && load.showPay) { %>
     <div><strong>Driver Pay Basis</strong> <%= load.payInfo.basis %></div>
   <% } %>
-  <% if (load.showPay) { %>
+  <% } %>
+  <% if (load.showPay && user.role !== 'admin') { %>
     <div class="pay-line"><strong>Driver Pay</strong> $<%= money(load.payInfo.pay) %></div>
     <div class="muted"><%= load.payInfo.basis %> · Drive Time $<%= money(load.payInfo.drive) %> · Self Load $<%= money(load.payInfo.self) %> · Detention $<%= money(load.payInfo.detention) %>. <% if (load.payInfo.flat) { %>Drive Time, Self Load, and Detention are added in full.<% } else { %>Drive Time is the driver's pay percentage of the drive-time fee. Self Load and Detention are added in full.<% } %> Fuel surcharge is not included.</div>
   <% } %>
@@ -155,7 +162,7 @@
 <% if (user.role === 'admin') { %>
   <div class="card">
     <h2>Edit Load</h2>
-    <form method="POST" action="/loads/<%= load.id %>" enctype="multipart/form-data">
+    <form method="POST" action="/loads/<%= load.id %>" enctype="multipart/form-data" id="review_edit_form">
       <div class="load-date-ticket-row">
         <div class="field-date-compact">
           <label>Load Date <span class="required-mark" aria-hidden="true">*</span></label>
@@ -271,7 +278,8 @@
         </div>
       </div>
       <div class="load-totals-row">
-        <div class="load-total-under" id="review_load_total">Load Total: $<%= money(loadTotalAmount(load)) %></div>
+        <div class="load-total-under driver-pay-under" id="review_driver_pay"><%= load.payInfo ? 'Driver Pay: $' + money(load.payInfo.pay) : 'Driver Pay: $0.00' %></div>
+        <div class="load-total-under" id="review_load_total">Total Load Pay (invoiced): $<%= money(loadTotalAmount(load)) %></div>
         <div class="load-total-under fuel-total-under" id="review_fuel_total" title="Uses the fuel rate for the Load Date's week: Load Rate × FSC % × Wet Tons"><% const fscNow = loadFuelSurcharge(load, typeof fuelRates !== 'undefined' ? fuelRates : []); %><%= !Number(load.has_fuel_surcharge) ? 'Fuel Surcharge Total: $0.00' : (fscNow.pending ? 'Fuel Surcharge Total: Rate pending ($0.00)' : 'Fuel Surcharge Total: $' + money(fscNow.total) + ' @ ' + Number(fscNow.percent).toFixed(2) + '%') %></div>
       </div>
       <label for="driver_pay_type">Driver Pay Basis / Type</label>
@@ -294,7 +302,7 @@
         <select name="driver_id">
           <option value="">-- Select Driver --</option>
           <% drivers.forEach(function (driver) { %>
-            <option value="<%= driver.id %>" <%= String(load.driver_id) === String(driver.id) ? 'selected' : '' %>><%= driver.name %><%= driver.status === 'inactive' ? ' (Inactive)' : '' %></option>
+            <option value="<%= driver.id %>" data-pay-pct="<%= driver.pay_percentage != null ? driver.pay_percentage : '' %>" <%= String(load.driver_id) === String(driver.id) ? 'selected' : '' %>><%= driver.name %><%= driver.status === 'inactive' ? ' (Inactive)' : '' %></option>
           <% }) %>
         </select>
       <% } %>
@@ -364,6 +372,7 @@
 <% } %>
 <p><a href="/loads">Back to Loads</a></p>
 <script src="/js/fuel-surcharge.js"></script>
+<script src="/js/load-pay.js"></script>
 <script>
   const payType = document.getElementById('driver_pay_type');
   const flatWrap = document.getElementById('flat_rate_wrap');
@@ -445,7 +454,20 @@
       ? (Number.isFinite(Number(reviewSelfAmount && reviewSelfAmount.value)) ? Number(reviewSelfAmount.value) : 0)
       : 0;
     const totalLoadPay = reviewTotalLoadPayValue();
-    reviewLoadTotal.textContent = 'Load Total: $' + ((totalLoadPay !== null ? totalLoadPay : base) + drive + self).toFixed(2);
+    reviewLoadTotal.textContent = 'Total Load Pay (invoiced): $' + ((totalLoadPay !== null ? totalLoadPay : base) + drive + self).toFixed(2);
+    const reviewDriverPay = document.getElementById('review_driver_pay');
+    if (reviewDriverPay) {
+      const driverSel = document.querySelector('#review_edit_form select[name="driver_id"]');
+      const driverOpt = driverSel && driverSel.options ? driverSel.options[driverSel.selectedIndex] : null;
+      const pct = Number(driverOpt && driverOpt.getAttribute('data-pay-pct')) || 0;
+      const detBox = document.getElementById('review_detention');
+      const detAmt = document.getElementById('review_detention_amount');
+      const detention = detBox && detBox.checked ? (Number(detAmt && detAmt.value) || 0) : 0;
+      const pay = window.DT1LoadPay.driverPay({
+        qty, rate, isFlat, flatRate: Number(reviewFlatRate && reviewFlatRate.value) || 0, drive, self, detention, pct
+      });
+      reviewDriverPay.textContent = 'Driver Pay: $' + pay.toFixed(2);
+    }
     syncReviewFuelAmount();
   }
 
@@ -526,7 +548,9 @@
       syncReviewLoadTotal();
     });
   }
-  [reviewRate, reviewQty, reviewDriveAmount, reviewSelfAmount, reviewFlatRate, document.getElementById('total_load_pay')].forEach((el) => {
+  [reviewRate, reviewQty, reviewDriveAmount, reviewSelfAmount, reviewFlatRate, document.getElementById('total_load_pay'),
+    document.getElementById('review_detention'), document.getElementById('review_detention_amount'),
+    document.querySelector('#review_edit_form select[name="driver_id"]')].forEach((el) => {
     if (el) {
       el.addEventListener('input', syncReviewLoadTotal);
       el.addEventListener('change', syncReviewLoadTotal);

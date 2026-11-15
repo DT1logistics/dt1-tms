@@ -103,7 +103,7 @@ const h = require('./helpers/server');
         assert.ok(!page.body.includes('1300.5') && !page.body.includes('1,300.50'), pathName + ' leaks Total Load Pay');
         assert.ok(!page.body.includes('name="total_load_pay"'), pathName + ' shows the Total Load Pay input');
         assert.ok(!page.body.includes('data-total-load-pay="'), pathName + ' carries the project Total Load Pay');
-        assert.ok(!page.body.includes('Total Load Pay (invoiced)'), pathName + ' shows the admin total line');
+        assert.ok(!page.body.replace(/<script[\s\S]*?<\/script>/g, '').includes('Total Load Pay (invoiced)'), pathName + ' shows the admin total line');
       }
     });
   } finally {

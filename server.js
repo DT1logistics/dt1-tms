@@ -53,6 +53,7 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/js/fuel-surcharge.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'fuel-surcharge.js')));
 app.get('/js/load-date.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'load-date.js')));
+app.get('/js/load-pay.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'lib', 'load-pay.js')));
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 app.locals.money = (n) => (Number(n) || 0).toFixed(2);
@@ -1156,9 +1157,9 @@ function activeProjects() {
 function loadFormData(user, load) {
   let drivers = [];
   if (user.role === 'admin') {
-    drivers = db.prepare("SELECT id, name, status FROM users WHERE role = 'driver' AND (status IS NULL OR status = 'active') ORDER BY name").all();
+    drivers = db.prepare("SELECT id, name, status, pay_percentage FROM users WHERE role = 'driver' AND (status IS NULL OR status = 'active') ORDER BY name").all();
     if (load && load.driver_id && !drivers.some((driver) => String(driver.id) === String(load.driver_id))) {
-      const current = db.prepare("SELECT id, name, status FROM users WHERE id = ? AND role = 'driver'").get(load.driver_id);
+      const current = db.prepare("SELECT id, name, status, pay_percentage FROM users WHERE id = ? AND role = 'driver'").get(load.driver_id);
       if (current) drivers.unshift(current);
     }
   }
@@ -4490,7 +4491,7 @@ app.get('/settlements', requireAuth, (req, res) => {
   const approvedWeeks = approvedSettlementWeeks(isAdmin ? null : req.session.user.id);
   let customerInvoices = [];
   if (isAdmin) {
-    const approvedLoads = db.prepare(loadQuery + ` WHERE l.status = 'approved' ORDER BY c.name, p.display_name, l.load_date`).all();
+    const approvedLoads = db.prepare(loadQuery + ` WHERE l.status = 'approved' ORDER BY c.name, p.display_name, l.load_date`).all().map(annotatePay);
     const byProject = {};
   approvedLoads.forEach((load) => {
     const key = load.project_id ? String(load.project_id) : 'unassigned';
@@ -4511,6 +4512,7 @@ app.get('/settlements', requireAuth, (req, res) => {
         travelTime: 0,
         selfLoad: 0,
         shipperDetention: 0,
+        driverPay: 0,
         total: 0
       };
     }
@@ -4540,6 +4542,7 @@ app.get('/settlements', requireAuth, (req, res) => {
       byProject[key].fscBase += fsc.baseHauling;
       byProject[key].fuelSurcharge += lineFsc;
     }
+    byProject[key].driverPay += load.payInfo ? load.payInfo.pay : 0;
     byProject[key].travelTime += travelTime;
     byProject[key].selfLoad += selfLoad;
     byProject[key].shipperDetention += shipperDetention;
