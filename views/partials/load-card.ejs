@@ -1,5 +1,6 @@
 <div class="load-card">
   <div>
+    <span class="load-number-label">Load # <%= displayLoadNumber(load.load_number) %></span>
     <strong><%= load.ticket_number || 'No Ticket' %></strong>
     <span class="status <%= load.status %>"><%= loadStatusLabel(load.status, load.settlement_status) %></span>
     <% const origin = loadOriginLabel(load); %>

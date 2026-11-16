@@ -1,6 +1,7 @@
 <%- include('partials/open', { title: `Loads`, user: user, active: 'loads' }) %>
 <h1>Loads</h1>
 <a href="/loads/new" class="btn">+New Load</a>
+<% const qValue = typeof q !== 'undefined' ? q : ''; %>
 <% if (user.role === 'admin') { %>
   <p class="load-filters">
     <% const onFlagged = typeof reviewFilter !== 'undefined' && reviewFilter === 'flagged'; %>
@@ -15,14 +16,55 @@
     <p class="muted">Draft and Submitted loads. A load moves to <a href="/settlements">Settlements</a> and <a href="/invoices">Invoices</a> when it is Approved for Settlement.</p>
   <% } %>
 <% } %>
+<form method="GET" action="/loads" class="load-search" role="search">
+  <% if (user.role === 'admin') { %>
+    <% if (typeof reviewFilter !== 'undefined' && reviewFilter) { %><input type="hidden" name="review" value="<%= reviewFilter %>"><% } %>
+    <% if (typeof approvedView !== 'undefined' && approvedView) { %><input type="hidden" name="view" value="approved"><% } %>
+  <% } %>
+  <label for="load-number-q">Search by load number</label>
+  <input type="search" id="load-number-q" name="q" value="<%= qValue %>" placeholder="2026-0001" autocomplete="off">
+  <button type="submit">Search</button>
+  <% if (qValue) { %><a href="/loads<%= user.role === 'admin' && typeof reviewFilter !== 'undefined' && reviewFilter ? '?review=' + reviewFilter : (user.role === 'admin' && typeof approvedView !== 'undefined' && approvedView ? '?view=approved' : '') %>">Clear</a><% } %>
+</form>
+<% if (qValue && ((user.role === 'driver' && !(weekGroups && weekGroups.length) && !undatedLoads) || (user.role !== 'driver' && loads.length === 0))) { %>
+  <p>No loads match “<%= qValue %>”.</p>
+<% } %>
 <% if (typeof deleted !== 'undefined' && deleted) { %><div class="all-clear">Load deleted.</div><% } %>
 <% if (user.role === 'driver') { %>
   <%- include('partials/assigned-loads-banner', { assignedLoads: typeof assignedLoads !== 'undefined' ? assignedLoads : [] }) %>
   <p class="muted">Your loads are grouped by Monday–Sunday week until the weekly settlement is finalized. Your pay for a week shows on Settlements once that week is finalized.</p>
   <%- include('partials/week-summaries', { weekGroups: weekGroups, undatedLoads: undatedLoads, user: user }) %>
 <% } else if (loads.length === 0) { %>
-  <p><%= (typeof reviewFilter !== 'undefined' && reviewFilter === 'flagged') ? 'No flagged loads.' : ((typeof approvedView !== 'undefined' && approvedView) ? 'No approved loads yet.' : 'No open loads.') %></p>
+  <% if (!qValue) { %>
+    <p><%= (typeof reviewFilter !== 'undefined' && reviewFilter === 'flagged') ? 'No flagged loads.' : ((typeof approvedView !== 'undefined' && approvedView) ? 'No approved loads yet.' : 'No open loads.') %></p>
+  <% } %>
 <% } else { %>
+  <div class="table-wrap loads-table-wrap">
+    <table class="loads-table">
+      <thead>
+        <tr>
+          <th>Load #</th>
+          <th>Date</th>
+          <th>Ticket #</th>
+          <th>Driver</th>
+          <th>Project</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% loads.forEach(function (load) { %>
+          <tr>
+            <td><a href="/loads/<%= load.id %>"><strong><%= displayLoadNumber(load.load_number) %></strong></a></td>
+            <td><%= formatLoadDate(load.load_date) || '—' %></td>
+            <td><%= load.ticket_number || '—' %></td>
+            <td><%= load.driver_name || 'Unassigned' %></td>
+            <td><%= load.project_display || '—' %></td>
+            <td><span class="status <%= load.status %>"><%= loadStatusLabel(load.status, load.settlement_status) %></span></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  </div>
   <% loads.forEach(function (load) { %>
     <%- include('partials/load-card', { load: load, user: user }) %>
   <% }) %>

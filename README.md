@@ -11,6 +11,10 @@ Self-contained Transportation Operations Management App.
 
 There is no default password in the source. Seeded admin accounts are created with an unknown random password until an admin or the one-time reset below sets one. Existing accounts keep the password they already have.
 
+## Load numbers
+
+New loads receive a yearly number such as `2026-0001` at the moment they are created (driver entry, admin entry, Submit & Approve, or the Logan API). The year is the Eastern calendar year the load is entered, and the sequence resets to `0001` on January 1. Numbers are zero-padded to four digits, then simply gain a fifth digit after `9999`. A number is never reused; deleting a load leaves a gap. Loads already in the system stay unnumbered and show a dash. The number appears on the Loads list (including search), the load and Review Load pages, Settlements, and the driver settlement PDF. It is not shown on customer invoices. Existing website links still use the internal load id.
+
 ## Deployment
 
 Deploy to any Node.js host (Render, Railway, DigitalOcean, etc.) and set the PORT environment variable. The SQLite database file will be created automatically.
@@ -29,7 +33,8 @@ When a load is created in the app or through the API below, and both `LOGAN_WEBH
 {
   "event": "load.created",
   "load_id": 42,
-  "load_number": "T-100",
+  "load_number": "2026-0001",
+  "ticket_number": "T-100",
   "created_by": "Kammy",
   "created_via": "ui",
   "pickup": "Richmond Yard",
@@ -39,7 +44,7 @@ When a load is created in the app or through the API below, and both `LOGAN_WEBH
 }
 ```
 
-`created_via` is `ui` or `api`. API-created loads notify Logan too, so the routine can tell its own creates from ones entered in the app.
+`created_via` is `ui` or `api`. API-created loads notify Logan too, so the routine can tell its own creates from ones entered in the app. `load_number` is the official yearly number when one has been assigned; unnumbered existing loads still fall back to the ticket number or internal id. `ticket_number` is the driver's ticket when present.
 
 The webhook key is sent as a Bearer token, which is what a Cursor/Grok Bot routine expects (`Authorization: Bearer <LOGAN_WEBHOOK_KEY>`). The POST runs in the background with a short timeout and two retries. A webhook failure is logged (the key is not logged) and does not fail load creation. If either env var is unset, nothing is sent.
 
@@ -51,7 +56,7 @@ Review status on a load is `none`, `needs_review`, `flagged_missing_info`, or `c
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/logan/loads/:idOrNumber` | One load by id, or by ticket number when the id does not match |
+| GET | `/api/logan/loads/:idOrNumber` | One load by id, official load number (for example `2026-0001`), or ticket number |
 | GET | `/api/logan/loads?flagged=1&limit=50` | Recent loads; `flagged=1` (or `review=flagged`) keeps flagged loads |
 | GET | `/api/logan/drivers` | Driver id, name, email, and status, for assignment |
 | POST | `/api/logan/loads` | Create a load. Same checks as the admin form: a driver is required, and a project is required unless `action` is `draft` |
