@@ -11,7 +11,7 @@
       <% assignedLoads.forEach(function(load) { %>
         <div class="assigned-load-item">
           <div class="assigned-load-info">
-            <strong>Load #<%= load.id %><%= load.project_display ? ' — ' + load.project_display : '' %></strong>
+            <strong><%= load.load_number ? load.load_number : ('Load #' + load.id) %><%= load.project_display ? ' — ' + load.project_display : '' %></strong>
             <div class="muted">
               Date: <%= formatLoadDate(load.load_date) || 'TBD' %>
               <% if (loadTruckLabel(load)) { %> · <%= loadTruckLabel(load) %><% } %>

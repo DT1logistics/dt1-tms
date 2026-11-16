@@ -143,11 +143,22 @@ async function waitUntil(fn, ms) {
     assert.strictEqual(payload.event, 'load.created');
     assert.strictEqual(payload.load_id, 4);
     assert.strictEqual(payload.load_number, 'T-9');
+    assert.strictEqual(payload.ticket_number, 'T-9');
     assert.strictEqual(payload.created_by, 'Kammy');
     assert.strictEqual(payload.created_via, 'api');
     assert.strictEqual(payload.pickup, 'Richmond Yard');
     assert.strictEqual(payload.delivery, 'Norfolk Pier');
     assert.strictEqual(payload.link, 'https://tms.example.test/loads/4');
+  });
+
+  await check('webhook payload prefers the official yearly load number', () => {
+    const payload = loganWebhook.buildPayload(
+      { id: 4, ticket_number: 'T-9', load_number: '2026-0001', origin: 'Yard' },
+      { createdBy: 'Kammy', createdVia: 'ui', baseUrl: 'https://tms.example.test' }
+    );
+    assert.strictEqual(payload.load_number, '2026-0001');
+    assert.strictEqual(payload.ticket_number, 'T-9');
+    assert.strictEqual(payload.load_id, 4);
   });
 
   await check('webhook is a no-op when the env vars are unset', async () => {
@@ -300,7 +311,8 @@ async function waitUntil(fn, ms) {
       const hit = hits.find((item) => item.body.load_id === uiLoadId);
       assert.strictEqual(hit.authorization, `Bearer ${KEY}`);
       assert.strictEqual(hit.body.event, 'load.created');
-      assert.strictEqual(hit.body.load_number, 'T-100');
+      assert.strictEqual(hit.body.load_number, '2026-0001');
+      assert.strictEqual(hit.body.ticket_number, 'T-100');
       assert.strictEqual(hit.body.created_via, 'ui');
       assert.strictEqual(hit.body.created_by, 'Administrator');
       assert.strictEqual(hit.body.pickup, 'Richmond Yard');

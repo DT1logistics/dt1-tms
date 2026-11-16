@@ -9,6 +9,7 @@ const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
 const fuelCalc = require('./lib/fuel-surcharge');
 const loadDate = require('./lib/load-date');
+const loadNumber = require('./lib/load-number');
 const { loadStatusLabel } = require('./lib/load-status');
 const loadReview = require('./lib/load-review');
 const loganWebhook = require('./lib/logan-webhook');
@@ -188,11 +189,18 @@ function annotatePay(load) {
   return load;
 }
 
-function driverWeekGroups(driverId) {
+function loadNumberSearch(q) {
+  const text = loadNumber.searchPattern(q);
+  if (!text) return { sql: '', params: [] };
+  return { sql: " AND IFNULL(l.load_number, '') LIKE ?", params: ['%' + text + '%'] };
+}
+
+function driverWeekGroups(driverId, opts) {
+  const search = loadNumberSearch(opts && opts.q);
   const loads = attachTickets(db.prepare(loadQuery + `
-    WHERE l.driver_id = ? AND IFNULL(l.settlement_status, '') != 'approved'
+    WHERE l.driver_id = ? AND IFNULL(l.settlement_status, '') != 'approved'` + search.sql + `
     ORDER BY l.load_date DESC, l.id DESC
-  `).all(driverId)).map(annotatePay);
+  `).all(driverId, ...search.params)).map(annotatePay);
   const weeks = new Map();
   const undated = [];
   loads.forEach((load) => {
@@ -321,6 +329,7 @@ app.locals.reviewStatusLabel = loadReview.reviewStatusLabel;
 app.locals.reviewStatusClass = loadReview.reviewStatusClass;
 app.locals.settlementWeekLabel = settlementWeekLabel;
 app.locals.formatLoadDate = loadDate.formatLoadDate;
+app.locals.displayLoadNumber = loadNumber.displayLoadNumber;
 app.locals.ticketFileKind = ticketFileKind;
 app.locals.formatPlate = equipmentPlate.formatPlate;
 app.locals.equipmentTypeLabel = equipment.equipmentTypeLabel;
@@ -679,6 +688,7 @@ function initDB() {
       review_decision_by_name TEXT,
       review_decision_at DATETIME,
       created_via TEXT,
+      load_number TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (driver_id) REFERENCES users(id),
       FOREIGN KEY (project_id) REFERENCES projects(id)
@@ -878,6 +888,10 @@ function initDB() {
   // Item 3 (11/15/2026): additive, nullable. NULL = not set, so existing totals are unchanged.
   ensureColumn('projects', 'default_total_load_pay', 'REAL');
   ensureColumn('loads', 'total_load_pay', 'REAL');
+  // Item 11 (11/16/2026): yearly load numbers (YYYY-NNNN) for new loads only.
+  // Additive: a nullable column, a per-year sequence table, and a unique index.
+  // Existing rows stay untouched (load_number remains NULL).
+  loadNumber.ensureSchema(db);
   // Item 5 (11/15/2026): new tables only. Invoice Paid/Invoiced marks per customer + work week, and
   // the Invoice tracker's amount received per customer + project + work week. Loads are not changed.
   db.exec(`
@@ -2151,15 +2165,17 @@ function removeSelectedTickets(loadId, body) {
 }
 
 app.get('/loads', requireAuth, (req, res) => {
+  const q = loadNumber.searchPattern(req.query.q);
   if (req.session.user.role === 'driver') {
-    const grouped = driverWeekGroups(req.session.user.id);
+    const grouped = driverWeekGroups(req.session.user.id, { q });
     return res.render('loads', {
       user: req.session.user,
       loads: [],
       weekGroups: grouped.weeks,
       undatedLoads: grouped.undated,
-      assignedLoads: driverAssignedDraftLoads(req.session.user.id),
-      deleted: req.query.deleted === '1'
+      assignedLoads: driverAssignedDraftLoads(req.session.user.id).filter((load) => !q || String(load.load_number || '').includes(q)),
+      deleted: req.query.deleted === '1',
+      q
     });
   }
   // Item 5 (11/15/2026): once a load is Approved for Settlement it leaves the main Loads screen
@@ -2168,8 +2184,14 @@ app.get('/loads', requireAuth, (req, res) => {
   const reviewFilter = req.query.review === 'flagged' ? 'flagged' : '';
   const approvedView = !reviewFilter && req.query.view === 'approved';
   const where = [approvedView ? "l.status = 'approved'" : "l.status != 'approved'"];
+  const params = [];
   if (reviewFilter) where.push("IFNULL(l.review_status, '') = 'flagged_missing_info'");
-  const loads = attachTickets(db.prepare(loadQuery + ' WHERE ' + where.join(' AND ') + loadDateOrderSql).all()).map(annotatePay);
+  const search = loadNumberSearch(q);
+  if (search.sql) {
+    where.push(search.sql.replace(/^ AND /, ''));
+    params.push(...search.params);
+  }
+  const loads = attachTickets(db.prepare(loadQuery + ' WHERE ' + where.join(' AND ') + loadDateOrderSql).all(...params)).map(annotatePay);
   const approvedCount = db.prepare("SELECT COUNT(*) AS n FROM loads WHERE status = 'approved'").get().n;
   res.render('loads', {
     user: req.session.user,
@@ -2179,7 +2201,8 @@ app.get('/loads', requireAuth, (req, res) => {
     deleted: req.query.deleted === '1',
     reviewFilter,
     approvedView,
-    approvedCount
+    approvedCount,
+    q
   });
 });
 
@@ -2849,7 +2872,7 @@ function publicBaseUrl() {
 
 function scheduleLoadCreatedWebhook(loadId, actor) {
   try {
-    const load = db.prepare('SELECT id, ticket_number, origin, destination, description FROM loads WHERE id = ?').get(loadId);
+    const load = db.prepare('SELECT id, ticket_number, load_number, origin, destination, description FROM loads WHERE id = ?').get(loadId);
     if (!load) return;
     const job = loganWebhook.notifyLoadCreated(process.env, load, {
       createdBy: actor.name,
@@ -2863,49 +2886,53 @@ function scheduleLoadCreatedWebhook(loadId, actor) {
 }
 
 function insertNewLoad(values, entry, actor) {
-  const result = db.prepare(`
-    INSERT INTO loads (
-      ticket_number, load_date, driver_id, truck_id, project_id, description, origin, destination, notes, admin_notes, weight_quantity,
-      rate, has_fuel_surcharge, has_drive_time, drive_time_amount, has_self_load, self_load_amount,
-      detention, detention_amount, shipper_detention, shipper_detention_amount,
-      driver_pay_type, driver_flat_rate, total_load_pay,
-      status, submitted_by, created_by_role, entry_mode,
-      review_status, review_set_by, review_set_by_name, review_set_at, created_via
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'needs_review', ?, ?, CURRENT_TIMESTAMP, ?)
-  `).run(
-    values.ticket_number,
-    values.load_date,
-    values.driver_id,
-    values.truck_id,
-    values.project_id,
-    values.description,
-    values.origin,
-    values.destination,
-    values.notes,
-    values.admin_notes,
-    values.weight,
-    values.rate,
-    values.hasFuel,
-    values.hasDrive,
-    values.driveAmount,
-    values.hasSelf,
-    values.selfAmount,
-    values.hasDetention,
-    values.detentionAmount,
-    values.hasShipperDetention,
-    values.shipperDetentionAmount,
-    values.payType,
-    values.flatRate,
-    values.totalLoadPay,
-    entry.status,
-    actor.id || null,
-    entry.createdByRole,
-    entry.entryMode,
-    actor.id || null,
-    actor.name,
-    actor.via === 'api' ? 'api' : 'ui'
-  );
-  const id = Number(result.lastInsertRowid);
+  const id = db.transaction(() => {
+    const assigned = loadNumber.allocateLoadNumber(db);
+    const result = db.prepare(`
+      INSERT INTO loads (
+        ticket_number, load_date, driver_id, truck_id, project_id, description, origin, destination, notes, admin_notes, weight_quantity,
+        rate, has_fuel_surcharge, has_drive_time, drive_time_amount, has_self_load, self_load_amount,
+        detention, detention_amount, shipper_detention, shipper_detention_amount,
+        driver_pay_type, driver_flat_rate, total_load_pay,
+        status, submitted_by, created_by_role, entry_mode,
+        review_status, review_set_by, review_set_by_name, review_set_at, created_via, load_number
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'needs_review', ?, ?, CURRENT_TIMESTAMP, ?, ?)
+    `).run(
+      values.ticket_number,
+      values.load_date,
+      values.driver_id,
+      values.truck_id,
+      values.project_id,
+      values.description,
+      values.origin,
+      values.destination,
+      values.notes,
+      values.admin_notes,
+      values.weight,
+      values.rate,
+      values.hasFuel,
+      values.hasDrive,
+      values.driveAmount,
+      values.hasSelf,
+      values.selfAmount,
+      values.hasDetention,
+      values.detentionAmount,
+      values.hasShipperDetention,
+      values.shipperDetentionAmount,
+      values.payType,
+      values.flatRate,
+      values.totalLoadPay,
+      entry.status,
+      actor.id || null,
+      entry.createdByRole,
+      entry.entryMode,
+      actor.id || null,
+      actor.name,
+      actor.via === 'api' ? 'api' : 'ui',
+      assigned
+    );
+    return Number(result.lastInsertRowid);
+  })();
   scheduleLoadCreatedWebhook(id, actor);
   return id;
 }
@@ -2917,6 +2944,8 @@ function findLoadByKey(key) {
     const byId = db.prepare(loadQuery + ' WHERE l.id = ?').get(Number(text));
     if (byId) return byId;
   }
+  const byNumber = db.prepare(loadQuery + ' WHERE l.load_number = ?').get(text);
+  if (byNumber) return byNumber;
   return db.prepare(loadQuery + ' WHERE l.ticket_number = ? ORDER BY l.id DESC').get(text) || null;
 }
 
@@ -4956,18 +4985,19 @@ function settlementPdf(group) {
   }
   pdf.gap(6);
   pdf.table([
-    { label: 'Date', width: 50 },
-    { label: 'Ticket #', width: 48 },
-    { label: 'Project', width: 86 },
-    { label: 'Qty', width: 34, align: 'right' },
-    { label: 'Rate', width: 42, align: 'right' },
-    { label: 'Pay Basis', width: 78 },
-    { label: 'Drive Time', width: 50, align: 'right' },
-    { label: 'Self Load', width: 46, align: 'right' },
-    { label: 'Detention', width: 48, align: 'right' },
-    { label: 'Driver Pay', width: 50, align: 'right' }
+    { label: 'Load #', width: 58 },
+    { label: 'Date', width: 46 },
+    { label: 'Ticket #', width: 42 },
+    { label: 'Project', width: 62 },
+    { label: 'Qty', width: 32, align: 'right' },
+    { label: 'Rate', width: 40, align: 'right' },
+    { label: 'Pay Basis', width: 58 },
+    { label: 'Drive Time', width: 48, align: 'right' },
+    { label: 'Self Load', width: 44, align: 'right' },
+    { label: 'Detention', width: 46, align: 'right' },
+    { label: 'Driver Pay', width: 48, align: 'right' }
   ], group.loads.map((load) => [
-    pdfDate(load.load_date), load.ticket_number || '—', load.project_display || '—',
+    loadNumber.displayLoadNumber(load.load_number), pdfDate(load.load_date), load.ticket_number || '—', load.project_display || '—',
     load.weight_quantity != null ? String(load.weight_quantity) : '—', pdfUsd(load.rate), load.payInfo.basis,
     pdfUsd(load.payInfo.drive), pdfUsd(load.payInfo.self), pdfUsd(load.payInfo.detention), pdfUsd(load.payInfo.pay)
   ]));

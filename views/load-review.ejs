@@ -1,5 +1,5 @@
 <%- include('partials/open', { title: 'Review Load', user: user, active: 'loads', headerTitle: 'Review Load', backHref: '/loads', bodyClass: 'load-screen' }) %>
-<h1>Review Load</h1>
+<h1>Review Load <%= displayLoadNumber(load.load_number) %></h1>
 <p>
   <span class="status <%= load.status %>"><%= loadStatusLabel(load.status, load.settlement_status) %></span>
   <% const origin = loadOriginLabel(load); %>
@@ -98,6 +98,7 @@
 <% } %>
 
 <div class="card">
+  <div><strong>Load #</strong> <%= displayLoadNumber(load.load_number) %></div>
   <div><strong>Ticket #</strong> <%= load.ticket_number || '—' %></div>
   <div><strong>Date</strong> <%= formatLoadDate(load.load_date) || '—' %></div>
   <div><strong>Driver</strong> <%= load.driver_name || 'Unassigned' %></div>
@@ -373,7 +374,7 @@
       </form>
     <% } %>
     <% if (loadDeletable(load)) { %>
-      <form method="POST" action="/loads/<%= load.id %>/delete" onsubmit="return confirm('Are you sure? This cannot be undone.\n\nDelete Load permanently erases load #<%= load.id %><%= load.ticket_number ? ' (ticket ' + String(load.ticket_number).replace(/[\\'\r\n]/g, '') + ')' : '' %> and its ticket files. Use it for duplicates.');">
+      <form method="POST" action="/loads/<%= load.id %>/delete" onsubmit="return confirm('Are you sure? This cannot be undone.\n\nDelete Load permanently erases load <%= load.load_number ? String(load.load_number).replace(/[\\'\r\n]/g, '') : ('#' + load.id) %><%= load.ticket_number ? ' (ticket ' + String(load.ticket_number).replace(/[\\'\r\n]/g, '') + ')' : '' %> and its ticket files. Use it for duplicates.');">
         <button class="danger" type="submit">Delete Load</button>
       </form>
     <% } else { %>
