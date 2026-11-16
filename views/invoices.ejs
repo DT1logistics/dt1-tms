@@ -6,18 +6,23 @@
 </nav>
 <% if (saved === 'marked') { %><div class="all-clear">Invoice status saved.</div><% } %>
 <% if (saved === 'received') { %><div class="all-clear">Amount received saved.</div><% } %>
+<% if (saved === 'generated') { %><div class="all-clear">Invoice generated.</div><% } %>
 <% if (saved === 'bad-amount') { %><div class="error">Enter the amount received as a number, e.g. 1250.00.</div><% } %>
+<% function invoiceKeys(invoice) { %>
+    <input type="hidden" name="customer_id" value="<%= invoice.customerId %>">
+    <input type="hidden" name="project_id" value="<%= invoice.projectId %>">
+    <input type="hidden" name="week_start" value="<%= invoice.week.start %>">
+<% } %>
 <% function markForm(invoice, mark, label, cls) { %>
   <form method="POST" action="/invoices/mark" class="inline-form">
-    <input type="hidden" name="customer_id" value="<%= invoice.customerId %>">
-    <input type="hidden" name="week_start" value="<%= invoice.week.start %>">
+    <% invoiceKeys(invoice) %>
     <input type="hidden" name="return_tab" value="<%= tab %>">
     <button type="submit" name="mark" value="<%= mark %>" class="<%= cls || '' %>"><%= label %></button>
   </form>
 <% } %>
 
 <% if (tab === 'tracker') { %>
-  <p class="muted">One row per work week (Monday–Sunday, by Load Date), client, and project. Amount Invoiced is the current total of that project's Approved for Settlement loads for the week. Enter Amount Received when the customer pays.</p>
+  <p class="muted">One row per work week (Monday–Sunday, by Load Date) and project. Amount Invoiced is the current total of that project's Approved for Settlement loads for the week, or the amount recorded when the invoice was generated. Enter Amount Received when the customer pays.</p>
   <% if (!invoices.length) { %>
     <p>No loads Approved for Settlement yet.</p>
   <% } else { %>
@@ -28,6 +33,7 @@
           <th>Work Week</th>
           <th>Client</th>
           <th>Project</th>
+          <th>Invoice #</th>
           <th class="num">Amount Invoiced</th>
           <th class="num">Amount Received</th>
           <th class="num">Balance</th>
@@ -36,28 +42,25 @@
       </thead>
       <tbody>
         <% invoices.forEach(function (invoice) { %>
-          <% invoice.projects.forEach(function (project) { %>
             <tr>
               <td><%= invoice.week.range %><% if (invoice.week.start) { %> <span class="muted"><%= invoice.week.start.slice(0, 4) %></span><% } %></td>
               <td><%= invoice.customer_name %></td>
-              <td><%= project.display_name %></td>
-              <td class="num"><%= usd(project.totals.total) %></td>
+              <td><%= invoice.display_name %></td>
+              <td><%= invoice.number || invoice.trackerInvoiceNumber || '—' %></td>
+              <td class="num"><%= usd(invoice.amountInvoicedRecorded != null ? invoice.amountInvoicedRecorded : invoice.totals.total) %></td>
               <td class="num">
                 <% if (invoice.week.start) { %>
                   <form method="POST" action="/invoices/received" class="inline-form received-form">
-                    <input type="hidden" name="customer_id" value="<%= invoice.customerId %>">
-                    <input type="hidden" name="project_id" value="<%= project.projectId %>">
-                    <input type="hidden" name="week_start" value="<%= invoice.week.start %>">
-                    <input data-money="1" type="number" step="0.01" min="0" inputmode="decimal" name="amount_received" placeholder="0.00" value="<%= project.amountReceived != null ? Number(project.amountReceived).toFixed(2) : '' %>" aria-label="Amount received for <%= project.display_name %>, week of <%= invoice.week.range %>">
+                    <% invoiceKeys(invoice) %>
+                    <input data-money="1" type="number" step="0.01" min="0" inputmode="decimal" name="amount_received" placeholder="0.00" value="<%= invoice.amountReceived != null ? Number(invoice.amountReceived).toFixed(2) : '' %>" aria-label="Amount received for <%= invoice.display_name %>, week of <%= invoice.week.range %>">
                     <button type="submit" class="btn-small">Save</button>
                   </form>
-                  <% if (project.receivedBy) { %><div class="muted" style="font-size:11px;">by <%= project.receivedBy %></div><% } %>
+                  <% if (invoice.receivedBy) { %><div class="muted" style="font-size:11px;">by <%= invoice.receivedBy %></div><% } %>
                 <% } else { %>—<% } %>
               </td>
-              <td class="num"><%= usd(project.totals.total - (project.amountReceived || 0)) %></td>
+              <td class="num"><%= usd((invoice.amountInvoicedRecorded != null ? invoice.amountInvoicedRecorded : invoice.totals.total) - (invoice.amountReceived || 0)) %></td>
               <td><span class="status invoice-<%= invoice.status %>"><%= invoiceStatusLabel(invoice.status) %></span></td>
             </tr>
-          <% }) %>
         <% }) %>
       </tbody>
     </table>
@@ -65,10 +68,10 @@
   <% } %>
 <% } else { %>
   <p class="muted">
-    Loads Approved for Settlement, grouped by customer and Monday–Sunday work week (by Load Date), one section per project.
-    Amounts update when an admin edits an approved load. Mark each customer week Invoiced when it is sent and Paid when payment arrives.
+    Loads Approved for Settlement, grouped by project and Monday–Sunday work week (by Load Date). One official invoice is generated per project per week, combining every driver's approved loads for that project.
+    Amounts update when an admin edits an approved load. Generate Invoice assigns the official number, marks the project week Invoiced, and builds a PDF in Logan's invoice layout. Mark Paid when payment arrives. Undo Invoiced keeps the same invoice number for a later regenerate.
     Latest EIA surcharge: <%= money(surchargePercent) %>%<% if (fuelRate) { %> (effective <%= fuelRate.effective_date %>)<% } else { %> (no fuel rate saved yet)<% } %>.
-    Fuel surcharge applies only to loads marked Includes Fuel Surcharge, and each load uses the fuel rate for its own week.
+    Fuel surcharge is taken from each load (the weekly diesel rate Logan enters on Tuesday, and the load's Includes Fuel Surcharge flag).
     Loads with a Total Load Pay are billed that amount with no fuel surcharge. Detention here is billed to the customer and is not driver pay.
   </p>
   <p class="load-filters">
@@ -81,16 +84,17 @@
     <p><%= statusFilter ? 'No invoices with that status.' : 'No loads Approved for Settlement to invoice yet.' %></p>
   <% } %>
   <% invoices.forEach(function (invoice) { %>
-    <div class="card invoice-card" id="invoice-<%= invoice.customerId %>-<%= invoice.week.start %>">
-      <h3 style="margin-top:0;"><%= invoice.customer_name %> · Week of <%= invoice.week.range %></h3>
+    <div class="card invoice-card" id="invoice-<%= invoice.customerId %>-<%= invoice.projectId %>-<%= invoice.week.start %>">
+      <h3 style="margin-top:0;"><%= invoice.customer_name %> · <%= invoice.project_name %> · Week of <%= invoice.week.range %></h3>
       <p>
         <span class="status invoice-<%= invoice.status %>"><%= invoiceStatusLabel(invoice.status) %></span>
         <% if (invoice.number) { %><span class="muted">Invoice # <%= invoice.number %></span><% } %>
         <% if (invoice.mark && invoice.mark.invoiced_at) { %><span class="muted"> · Invoiced by <%= invoice.mark.invoiced_by_name %> on <%= auditStamp(invoice.mark.invoiced_at) %> (<%= usd(invoice.mark.invoiced_amount) %>)</span><% } %>
         <% if (invoice.mark && invoice.mark.paid_at) { %><span class="muted"> · Paid, marked by <%= invoice.mark.paid_by_name %> on <%= auditStamp(invoice.mark.paid_at) %></span><% } %>
+        <% if (invoice.legacyWeekMark) { %><span class="muted"> · Status carried over from the earlier customer-week mark</span><% } %>
       </p>
       <% if (invoice.changedSinceInvoiced) { %>
-        <div class="reject-note">The total changed after this invoice was marked Invoiced (was <%= usd(invoice.mark.invoiced_amount) %>, now <%= usd(invoice.totals.total) %>). Send a corrected invoice if needed.</div>
+        <div class="reject-note">The total changed after this invoice was marked Invoiced (was <%= usd(invoice.mark.invoiced_amount) %>, now <%= usd(invoice.totals.total) %>). Generate the invoice again to send a corrected PDF under the same invoice number.</div>
       <% } %>
       <div><strong>Bill To:</strong> <%= invoice.customer_name %></div>
       <div class="muted">
@@ -100,8 +104,12 @@
         <% if (invoice.poc_email) { %> · <%= invoice.poc_email %><% } %>
         · Terms: <%= invoice.terms || 'Net 30' %>
       </div>
-      <% invoice.projects.forEach(function (project) { %>
-        <h4>Project: <%= project.display_name %></h4>
+      <h4>Project: <%= invoice.project_name %></h4>
+      <% if (invoice.invoice_billing_mode === 'flat_qty_1') { %>
+        <p class="muted">This project bills quantity 1 at the project default rate.</p>
+      <% } else if (invoice.invoice_min_qty) { %>
+        <p class="muted">This project bills a <%= invoice.invoice_min_qty %>-unit minimum quantity.</p>
+      <% } %>
         <div class="table-scroll">
         <table>
           <thead>
@@ -122,17 +130,17 @@
             </tr>
           </thead>
           <tbody>
-            <% project.loads.forEach(function (load) { %>
+            <% invoice.loads.forEach(function (load) { %>
               <tr>
                 <td><a href="/loads/<%= load.id %>"><%= formatLoadDate(load.load_date) || '—' %></a></td>
                 <td><%= load.ticket_number || '—' %><div class="muted"><%= loadStatusLabel(load.status, load.settlement_status) %></div></td>
                 <td><%= load.driver_name || '—' %></td>
                 <td><%= load.origin || '—' %></td>
                 <td><%= load.destination || load.description || '—' %></td>
-                <td class="num"><%= load.weight_quantity != null ? load.weight_quantity : '—' %></td>
-                <td class="num"><%= usd(load.rate) %></td>
+                <td class="num"><%= load.billed && load.billed.qty != null ? load.billed.qty : (load.weight_quantity != null ? load.weight_quantity : '—') %><% if (load.billed && load.billed.minApplied) { %><div class="muted" style="font-size:11px;">min <%= load.invoice_min_qty || invoice.invoice_min_qty %></div><% } %><% if (load.billed && load.billed.mode === 'flat_qty_1') { %><div class="muted" style="font-size:11px;">flat qty 1</div><% } %></td>
+                <td class="num"><%= usd(load.billed ? load.billed.rate : load.rate) %></td>
                 <td class="num muted"><%= usd(load.payInfo ? load.payInfo.pay : 0) %></td>
-                <td class="num"><%= usd(load.hauling) %><% if (load.usesTotalLoadPay) { %><div class="muted" style="font-size:11px;">Total Load Pay</div><% } %></td>
+                <td class="num"><%= usd(load.price != null ? load.price : load.hauling) %><% if (load.usesTotalLoadPay) { %><div class="muted" style="font-size:11px;">Total Load Pay</div><% } %></td>
                 <td class="num"><% if (load.usesTotalLoadPay) { %>—<div class="muted" style="font-size:11px;">in Total Load Pay</div><% } else if (load.fscApplies && load.fscPending) { %>$0.00<div class="muted" style="font-size:11px;">Rate pending</div><% } else if (load.fscApplies) { %><%= usd(load.lineFsc) %><div class="muted" style="font-size:11px;"><%= Number(load.fscPercent).toFixed(2) %>% · <%= load.fscFlat ? 'flat amount' : '$' + Number(load.fscPerTon).toFixed(6).replace(/0+$/, '').replace(/\.$/, '') + '/ton' %></div><% } else { %>—<% } %></td>
                 <td class="num"><%= usd(load.selfLoad) %></td>
                 <td class="num"><%= usd(load.travelTime) %></td>
@@ -142,8 +150,7 @@
           </tbody>
         </table>
         </div>
-        <div class="muted project-subtotal">Project total <%= usd(project.totals.total) %></div>
-      <% }) %>
+        <div class="muted project-subtotal">Project total <%= usd(invoice.totals.total) %></div>
       <% const t = invoice.totals; %>
       <div class="totals">
         <div class="muted driver-pay-total" title="Paid to drivers. Not part of the invoice total."><span>Driver Pay (not billed)</span><span><%= usd(t.driverPay) %></span></div>
@@ -156,7 +163,20 @@
       </div>
       <% if (invoice.week.start) { %>
         <div class="invoice-actions">
-          <a class="btn btn-secondary" href="/invoices/pdf?customer_id=<%= invoice.customerId %>&amp;week_start=<%= invoice.week.start %>">Download PDF</a>
+          <form method="POST" action="/invoices/generate" class="inline-form generate-invoice-form">
+            <% invoiceKeys(invoice) %>
+            <input type="hidden" name="include_tickets" value="0">
+            <label class="check generate-tickets">
+              <input type="checkbox" name="include_tickets" value="1" <%= invoice.includeTickets ? 'checked' : '' %>>
+              Attach ticket images
+            </label>
+            <button type="submit" class="approve"><%= invoice.number ? 'Regenerate Invoice' : 'Generate Invoice' %></button>
+          </form>
+          <% if (invoice.number) { %>
+            <a class="btn btn-secondary" href="/invoices/pdf?customer_id=<%= invoice.customerId %>&amp;project_id=<%= invoice.projectId %>&amp;week_start=<%= invoice.week.start %>">Download PDF</a>
+          <% } else { %>
+            <a class="btn btn-secondary" href="/invoices/pdf?customer_id=<%= invoice.customerId %>&amp;project_id=<%= invoice.projectId %>&amp;week_start=<%= invoice.week.start %>&amp;tickets=0">Preview PDF</a>
+          <% } %>
           <% if (invoice.status === 'open') { %>
             <% markForm(invoice, 'invoiced', 'Mark Invoiced'); %>
             <% markForm(invoice, 'paid', 'Mark Paid', 'approve'); %>

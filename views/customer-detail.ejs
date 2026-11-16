@@ -23,6 +23,7 @@
           <div class="muted">Total Load Pay: <%= project.default_total_load_pay != null && String(project.default_total_load_pay).trim() !== '' ? usd(project.default_total_load_pay) : 'Not set (Qty × Rate)' %></div>
           <div class="muted">Includes Fuel Surcharge: <%= project.has_fuel_surcharge ? 'Yes' : 'No' %></div>
           <div class="muted">Includes Drive Time Fee: <%= project.has_drive_time ? 'Yes' : 'No' %><% if (project.has_drive_time) { %> — <%= usd(project.default_drive_time_amount) %><% } %></div>
+          <div class="muted">Invoice billing: <%= project.invoice_billing_mode === 'flat_qty_1' ? 'Flat quantity 1 at the project default rate' : 'Actual quantity' %><% if (project.invoice_min_qty && project.invoice_billing_mode !== 'flat_qty_1') { %> · minimum <%= project.invoice_min_qty %><% } %></div>
           <div class="muted">Status: <%= project.status || 'active' %></div>
           <p><a href="/projects/<%= project.id %>/edit">Edit Project</a></p>
         </div>
@@ -59,6 +60,15 @@
           <label>Default Drive Time Amount ($)</label>
           <input data-money="1" type="number" step="0.01" name="default_drive_time_amount" id="default_drive_time_amount" value="<%= typeof draft !== 'undefined' && draft.default_drive_time_amount ? draft.default_drive_time_amount : '0.00' %>">
         </div>
+        <label>Invoice billing quantity</label>
+        <select name="invoice_billing_mode" id="invoice_billing_mode">
+          <option value="actual" <%= typeof draft !== 'undefined' && draft.invoice_billing_mode === 'flat_qty_1' ? '' : 'selected' %>>Actual quantity (tons or hours on the load)</option>
+          <option value="flat_qty_1" <%= typeof draft !== 'undefined' && draft.invoice_billing_mode === 'flat_qty_1' ? 'selected' : '' %>>Flat quantity 1 at the project default rate</option>
+        </select>
+        <div id="invoice_min_qty_wrap">
+          <label>Minimum billable quantity <span class="muted">leave blank for none</span></label>
+          <input type="number" step="0.001" min="0" name="invoice_min_qty" id="invoice_min_qty" value="<%= typeof draft !== 'undefined' && draft.invoice_min_qty ? draft.invoice_min_qty : '' %>" placeholder="None">
+        </div>
         <button type="submit">Save Project</button>
       </form>
     </div>
@@ -73,5 +83,13 @@
     }
     driveBox.addEventListener('change', () => syncDrive(true));
     syncDrive(false);
+    const billingMode = document.getElementById('invoice_billing_mode');
+    const minWrap = document.getElementById('invoice_min_qty_wrap');
+    function syncMinQty() {
+      if (!billingMode || !minWrap) return;
+      minWrap.style.display = billingMode.value === 'flat_qty_1' ? 'none' : 'block';
+    }
+    if (billingMode) billingMode.addEventListener('change', syncMinQty);
+    syncMinQty();
   </script>
 <%- include('partials/close') %>

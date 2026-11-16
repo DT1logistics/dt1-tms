@@ -947,3 +947,9 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 .load-locked { border-left: 4px solid #6c757d; }
 .settlement-actions form, .invoice-actions form { margin: 0; }
 .settlement-actions button, .invoice-actions button, .settlement-actions .btn, .invoice-actions .btn { margin: 0; }
+
+/* Item 12: generate official customer invoices from the Invoices screen. */
+.generate-invoice-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.generate-tickets { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 14px; }
+.invoice-actions .generate-invoice-form button { margin: 0; }
+

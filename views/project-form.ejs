@@ -24,6 +24,16 @@
       <label>Total Load Pay ($) <span class="muted">flat amount the customer pays DT1 per load</span></label>
       <input data-money="1" type="number" step="0.01" min="0" name="default_total_load_pay" placeholder="Blank = Qty × Rate" value="<%= project.default_total_load_pay != null && String(project.default_total_load_pay).trim() !== '' ? Number(project.default_total_load_pay).toFixed(2) : '' %>">
       <p class="muted">Both are fixed amounts, not percentages. New loads for this project start with this driver pay basis, Driver Load Pay, and Total Load Pay; an admin can change them on each load. When Total Load Pay is set it is what gets invoiced for the load (no separate fuel surcharge). Leave it blank to invoice Qty × Rate. Existing loads are not changed.</p>
+      <label>Invoice billing quantity</label>
+      <select name="invoice_billing_mode" id="invoice_billing_mode">
+        <option value="actual" <%= project.invoice_billing_mode === 'flat_qty_1' ? '' : 'selected' %>>Actual quantity (tons or hours on the load)</option>
+        <option value="flat_qty_1" <%= project.invoice_billing_mode === 'flat_qty_1' ? 'selected' : '' %>>Flat quantity 1 at the project default rate</option>
+      </select>
+      <div id="invoice_min_qty_wrap">
+        <label>Minimum billable quantity <span class="muted">leave blank for none, e.g. 24 for a 24-ton minimum</span></label>
+        <input type="number" step="0.001" min="0" name="invoice_min_qty" id="invoice_min_qty" value="<%= project.invoice_min_qty != null && String(project.invoice_min_qty).trim() !== '' ? project.invoice_min_qty : '' %>" placeholder="None">
+      </div>
+      <p class="muted">These settings control the customer invoice only. They do not change saved load data. "Flat quantity 1" bills each load as Qty 1 at this project's default rate (used for Uber Freight). A minimum quantity bills the greater of the load's quantity and this minimum (used for King George Pad at 24 tons).</p>
       <div class="check">
         <input type="checkbox" name="has_fuel_surcharge" id="has_fuel_surcharge" value="1" <%= project.has_fuel_surcharge ? 'checked' : '' %>>
         <label for="has_fuel_surcharge">Includes Fuel Surcharge</label>
@@ -57,5 +67,12 @@
     }
     driveBox.addEventListener('change', () => syncDrive(true));
     syncDrive(false);
+    const billingMode = document.getElementById('invoice_billing_mode');
+    const minWrap = document.getElementById('invoice_min_qty_wrap');
+    function syncMinQty() {
+      minWrap.style.display = billingMode.value === 'flat_qty_1' ? 'none' : 'block';
+    }
+    billingMode.addEventListener('change', syncMinQty);
+    syncMinQty();
   </script>
 <%- include('partials/close') %>
