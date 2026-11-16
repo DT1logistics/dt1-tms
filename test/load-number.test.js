@@ -246,7 +246,7 @@ function memorySeqDb() {
       const settlePdf = await aGet(`/settlements/pdf?kind=pending&driver_id=${ids.driverId}&week_start=2026-11-16`);
       assert.strictEqual(settlePdf.status, 200, settlePdf.body.slice(0, 200));
       assert.ok(settlePdf.body.includes('2026-0001'), 'driver settlement PDF shows the load number');
-      const invoicePdf = await aGet(`/invoices/pdf?customer_id=${ids.customerId}&week_start=2026-11-16`);
+      const invoicePdf = await aGet(`/invoices/pdf?customer_id=${ids.customerId}&project_id=${ids.projectId}&week_start=2026-11-16`);
       assert.strictEqual(invoicePdf.status, 200, invoicePdf.body.slice(0, 200));
       assert.ok(!invoicePdf.body.includes('2026-0001'), 'customer invoice PDF must not include the load number');
       assert.ok(!invoicePdf.body.includes('Load #'));
