@@ -165,3 +165,16 @@ Use either method. Both force a new password at the next sign-in, before the res
 3. Restart the service once. The log line is `One-time password reset applied`. The password itself is not logged.
 4. Sign in with that throwaway. The app requires a new password immediately.
 5. Remove `RESET_USER_EMAIL` and `RESET_USER_TEMP_PASSWORD` from the environment. Leaving the same pair in place does not reset the password again. Setting a different pair would apply that new value once. Do not leave the throwaway in the environment.
+
+## Official customer invoices (item 12)
+
+The Invoices screen generates a customer PDF in Logan's invoice layout (the DT1-4011 template): one invoice per project per Monday–Sunday work week, combining every driver's approved loads for that project.
+
+- Official numbers start at `DT1-2026-4012` and continue in 2026. On January 1 (America/New_York) the counter starts over at `DT1-YYYY-0001`. A number is never reused. Regenerating an invoice keeps the same number. The file name is `DT1-2026-4012 - <Project>.pdf`.
+- The PDF shows Bill To from the shipper record, `Project: <project name>` (not the "Customer - Project" display name), line columns Date | Ticket # | Description | Qty | Rate | Fuel Charge | Self Load | Travel Time | Price, footer subtotals, and the Phoenix Capital remit-to box (stored in `invoice_settings`, not hard-coded in several places).
+- Fuel surcharge is the amount already computed for each load from the weekly EIA diesel rate Logan enters on Tuesday. The invoice does not take a new diesel price.
+- Ticket images are attached behind the invoice page, in the same order as the lines, unless the "Attach ticket images" box is unchecked (it is on by default).
+- Driver names, driver pay, and load numbers are never printed on the customer invoice.
+- Project invoice settings (editable on the project form) control special billing: a minimum billable quantity, or "flat quantity 1 at the project default rate." King George Pad is seeded with a 24-ton minimum and Uber Freight projects with flat quantity 1. After that, the settings are data-driven.
+- Generating an invoice marks that project-week Invoiced and records the amount (and number) on the Invoice Tracker. Undo Invoiced is allowed and keeps the number.
+- Existing `invoice_weeks` (customer-week) and `invoice_tracker` rows are kept. On first boot, any customer-week Invoiced/Paid marks are copied onto `project_invoices` rows so status is not lost. Load rows are not changed.

@@ -1,8 +1,8 @@
 // Item 5 (11/15/2026): separate Settlements and Invoices screens.
 // Approve for Settlement moves a load off the main Loads screen (hidden, record kept). It then shows on
-// Settlements under driver + Monday-Sunday work week (by Load Date) and on Invoices under customer +
-// work week. Invoices: Paid/Invoiced per customer week and an Invoice Tracker (work week, client,
-// project, amount invoiced, editable amount received). PDFs for each weekly settlement and invoice.
+// Settlements under driver + Monday-Sunday work week (by Load Date) and on Invoices under project +
+// work week. Invoices: Generate / Paid / Invoiced per project week and an Invoice Tracker (work week, client,
+// project, official number, amount invoiced, editable amount received). Official PDF per project week.
 // The admin finalizes a driver's week; drivers see only their own pay, and only for finalized weeks.
 // Run: npm test
 const assert = require('assert');
@@ -74,38 +74,44 @@ function assertBefore(text, first, second, label) {
       assert.ok(nav.body.includes('href="/invoices">Invoices</a>'));
     });
 
-    await check('Invoices: grouped by customer + work week with one section per project', async () => {
+    await check('Invoices: grouped by project + work week with one official invoice per project-week', async () => {
       const page = await aGet('/invoices');
       assert.strictEqual(page.status, 200);
-      assert.ok(page.body.includes('Acme Aggregates · Week of November 9 - November 15'));
-      assert.ok(page.body.includes('Acme Aggregates · Week of November 16 - November 22'));
-      assert.ok(page.body.includes('Project: Acme Aggregates - North Pit'));
+      assert.ok(page.body.includes('Acme Aggregates · North Pit · Week of November 9 - November 15'));
+      assert.ok(page.body.includes('Acme Aggregates · North Pit · Week of November 16 - November 22'));
+      assert.ok(page.body.includes('Project: North Pit'));
+      assert.ok(!page.body.includes('Project: Acme Aggregates - North Pit'), 'invoice uses the project name, not the display name');
       // Week 1: 200 + 300 (Total Load Pay) + 200 (Olly) = $700.00. Week 2: $200.00.
       assert.ok(page.body.includes('<span>TOTAL</span><span>$700.00</span>'));
       assert.ok(page.body.includes('<span>TOTAL</span><span>$200.00</span>'));
       assertBefore(page.body, 'Driver Pay (not billed)', '<span>Hauling</span>', 'invoice totals');
       assert.strictEqual(page.body.split('>Not invoiced</span>').length - 1, 2);
+      assert.ok(page.body.includes('Generate Invoice'));
     });
 
-    await check('Invoices: mark Invoiced, Paid, and undo, per customer week (logged)', async () => {
-      const key = { customer_id: ids.customerId, week_start: '2026-11-09' };
+    await check('Invoices: mark Invoiced, Paid, and undo, per project week (logged)', async () => {
+      const key = { customer_id: ids.customerId, project_id: ids.projectId, week_start: '2026-11-09' };
       let res = await post('/invoices/mark', Object.assign({ mark: 'invoiced' }, key));
       assert.strictEqual(res.status, 302);
-      let row = h.readRows(dataDir, 'SELECT * FROM invoice_weeks WHERE customer_id = ? AND week_start = ?', [ids.customerId, '2026-11-09'])[0];
+      let row = h.readRows(dataDir, 'SELECT * FROM project_invoices WHERE customer_id = ? AND project_id = ? AND week_start = ?', [ids.customerId, ids.projectId, '2026-11-09'])[0];
       assert.ok(row.invoiced_at);
       assert.strictEqual(Number(row.invoiced_amount), 700);
+      assert.strictEqual(row.invoice_number, 'DT1-2026-4012');
+      assert.strictEqual(h.readRows(dataDir, 'SELECT COUNT(*) AS n FROM invoice_weeks')[0].n, 0, 'legacy invoice_weeks stays untouched');
       let page = await aGet('/invoices?status=invoiced');
       assert.ok(page.body.includes('Week of November 9 - November 15'));
       assert.ok(!page.body.includes('Week of November 16 - November 22'));
+      assert.ok(page.body.includes('Invoice # DT1-2026-4012'));
       res = await post('/invoices/mark', Object.assign({ mark: 'paid' }, key));
-      row = h.readRows(dataDir, 'SELECT * FROM invoice_weeks WHERE customer_id = ? AND week_start = ?', [ids.customerId, '2026-11-09'])[0];
+      row = h.readRows(dataDir, 'SELECT * FROM project_invoices WHERE customer_id = ? AND project_id = ? AND week_start = ?', [ids.customerId, ids.projectId, '2026-11-09'])[0];
       assert.ok(row.paid_at && row.paid_by_name);
       page = await aGet('/invoices?status=paid');
       assert.ok(page.body.includes('>Paid</span>'));
       await post('/invoices/mark', Object.assign({ mark: 'unpaid' }, key));
-      row = h.readRows(dataDir, 'SELECT * FROM invoice_weeks WHERE customer_id = ? AND week_start = ?', [ids.customerId, '2026-11-09'])[0];
+      row = h.readRows(dataDir, 'SELECT * FROM project_invoices WHERE customer_id = ? AND project_id = ? AND week_start = ?', [ids.customerId, ids.projectId, '2026-11-09'])[0];
       assert.strictEqual(row.paid_at, null);
       assert.ok(row.invoiced_at, 'still invoiced');
+      assert.strictEqual(row.invoice_number, 'DT1-2026-4012', 'number kept');
       const audit = h.readRows(dataDir, "SELECT detail FROM audit_log WHERE action = 'Invoice status' ORDER BY id");
       assert.deepStrictEqual(audit.map((a) => a.detail.split(': ').pop()), ['Marked Invoiced ($700.00)', 'Marked Paid', 'Paid mark removed']);
     });
@@ -115,6 +121,7 @@ function assertBefore(text, first, second, label) {
       assert.strictEqual(page.status, 200);
       assert.ok(page.body.includes('<th>Work Week</th>') && page.body.includes('<th>Client</th>') && page.body.includes('<th>Project</th>'));
       assert.ok(page.body.includes('Amount Invoiced') && page.body.includes('Amount Received'));
+      assert.ok(page.body.includes('DT1-2026-4012'));
       const res = await post('/invoices/received', { customer_id: ids.customerId, project_id: ids.projectId, week_start: '2026-11-09', amount_received: '650.5' });
       assert.strictEqual(res.status, 302);
       page = await aGet('/invoices?tab=tracker');
@@ -141,14 +148,17 @@ function assertBefore(text, first, second, label) {
       assert.ok(pending.body.includes('NOT FINALIZED'));
       assert.ok(pending.body.includes('($120.00) Tj'));
       assert.ok(!pending.body.includes('Total Load Pay'), 'driver settlement PDF has no customer amounts');
-      const invoice = await aGet(`/invoices/pdf?customer_id=${ids.customerId}&week_start=2026-11-09`);
+      const invoice = await aGet(`/invoices/pdf?customer_id=${ids.customerId}&project_id=${ids.projectId}&week_start=2026-11-09`);
       assert.strictEqual(invoice.status, 200);
       assert.ok(invoice.body.startsWith('%PDF-1.4'));
-      assert.ok(invoice.body.includes('(Acme Aggregates) Tj'));
-      assert.ok(invoice.body.includes('($750.00) Tj'));
-      assert.ok(invoice.body.includes(`DT1-${ids.customerId}-20261109`));
+      assert.ok(invoice.body.includes('(Acme Aggregates) Tj') || invoice.body.includes('Bill To: Acme Aggregates'));
+      assert.ok(invoice.body.includes('DT1-2026-4012'));
+      assert.ok(invoice.body.includes('(Project: North Pit) Tj'));
+      assert.ok(invoice.body.includes('750.00') || invoice.body.includes('($750.00)'));
       assert.ok(!invoice.body.includes('Driver Pay'), 'customer invoice PDF does not show driver pay');
-      assert.strictEqual((await aGet(`/invoices/pdf?customer_id=${ids.customerId}&week_start=2026-11-10`)).status, 404, 'not a Monday');
+      assert.ok(!invoice.body.includes('Dana Driver'), 'customer invoice PDF does not show driver names');
+      assert.strictEqual((await aGet(`/invoices/pdf?customer_id=${ids.customerId}&week_start=2026-11-09`)).status, 404, 'project_id required');
+      assert.strictEqual((await aGet(`/invoices/pdf?customer_id=${ids.customerId}&project_id=${ids.projectId}&week_start=2026-11-10`)).status, 404, 'not a Monday');
       assert.strictEqual((await aGet(`/settlements/pdf?driver_id=${ids.driverId}&week_start=2026-11-09`)).status, 404, 'not finalized yet');
     });
 
@@ -169,6 +179,7 @@ function assertBefore(text, first, second, label) {
       const r = await h.request(srv.port, { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: h.cookieHeader(driver) }, { method: 'POST', path: '/invoices/mark', body: h.form({ customer_id: ids.customerId, week_start: '2026-11-16', mark: 'paid' }) });
       assert.strictEqual(r.status, 302);
       assert.strictEqual(h.readRows(dataDir, "SELECT COUNT(*) AS n FROM invoice_weeks WHERE week_start = '2026-11-16'")[0].n, 0);
+      assert.strictEqual(h.readRows(dataDir, "SELECT COUNT(*) AS n FROM project_invoices WHERE week_start = '2026-11-16'")[0].n, 0);
     });
 
     await check('finalizing a driver week: driver sees only their own finalized pay and can download its PDF', async () => {

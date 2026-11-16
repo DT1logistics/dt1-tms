@@ -62,7 +62,10 @@ app.locals.money = (n) => (Number(n) || 0).toFixed(2);
 // Item 4 (11/15/2026): every money display reads "$1,234.50" (always two decimals).
 const moneyInput = require('./lib/money-input');
 const { SimplePdf } = require('./lib/simple-pdf');
+const customerInvoice = require('./lib/customer-invoice');
+const customerInvoicePdf = require('./lib/customer-invoice-pdf');
 app.locals.usd = moneyInput.usd;
+app.locals.invoiceBillingModeLabel = (mode) => (mode === 'flat_qty_1' ? 'Flat quantity 1 at the project default rate' : 'Actual quantity');
 
 function daysUntil(exp) {
   return Math.ceil((new Date(exp) - new Date()) / (1000 * 60 * 60 * 24));
@@ -922,6 +925,9 @@ function initDB() {
       UNIQUE(customer_id, project_id, week_start)
     );
   `);
+  // Item 12 (11/16/2026): official project-week invoices. New tables/columns only.
+  // Existing invoice_weeks and invoice_tracker rows are kept; load rows are not changed.
+  customerInvoice.ensureSchema(db);
   ensureColumn('documents', 'file_blob', 'BLOB');
   ensureColumn('communications_log', 'load_id', 'INTEGER');
   // Equipment Expenses / Maintenance Log (new table; existing equipment rows are untouched).
@@ -1215,6 +1221,7 @@ function readProject(body, customer, existing) {
       ? parseOptionalMoney(body.default_total_load_pay)
       : (existing ? parseOptionalMoney(existing.default_total_load_pay) : null),
     status: bodyHas(body, 'status') ? (body.status === 'inactive' ? 'inactive' : 'active') : (existing ? (existing.status || 'active') : 'active'),
+    ...customerInvoice.parseBillingFromBody(body, existing),
     error
   };
 }
@@ -1997,9 +2004,9 @@ app.post(['/shippers/:id/projects', '/customers/:id/projects'], requireAdmin, (r
     INSERT INTO projects (
       customer_id, project_name, display_name, default_rate, has_fuel_surcharge,
       has_drive_time, default_drive_time_amount, default_driver_pay_type, default_driver_flat_rate,
-      default_total_load_pay, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.totalLoadPay, parsed.status);
+      default_total_load_pay, status, invoice_min_qty, invoice_billing_mode
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.totalLoadPay, parsed.status, parsed.invoice_min_qty, parsed.invoice_billing_mode);
   res.redirect('/shippers/' + customer.id);
 });
 
@@ -2049,9 +2056,9 @@ app.post('/projects', requireAdmin, (req, res) => {
     INSERT INTO projects (
       customer_id, project_name, display_name, default_rate, has_fuel_surcharge,
       has_drive_time, default_drive_time_amount, default_driver_pay_type, default_driver_flat_rate,
-      default_total_load_pay, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.totalLoadPay, parsed.status);
+      default_total_load_pay, status, invoice_min_qty, invoice_billing_mode
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.totalLoadPay, parsed.status, parsed.invoice_min_qty, parsed.invoice_billing_mode);
   res.redirect('/shippers/' + customer.id);
 });
 
@@ -2088,9 +2095,10 @@ app.post('/projects/:id', requireAdmin, (req, res) => {
     UPDATE projects
     SET customer_id = ?, project_name = ?, display_name = ?, default_rate = ?,
         has_fuel_surcharge = ?, has_drive_time = ?, default_drive_time_amount = ?,
-        default_driver_pay_type = ?, default_driver_flat_rate = ?, default_total_load_pay = ?, status = ?
+        default_driver_pay_type = ?, default_driver_flat_rate = ?, default_total_load_pay = ?, status = ?,
+        invoice_min_qty = ?, invoice_billing_mode = ?
     WHERE id = ?
-  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.totalLoadPay, parsed.status, existing.id);
+  `).run(customer.id, parsed.projectName, parsed.displayName, parsed.defaultRate, parsed.hasFuel, parsed.hasDrive, parsed.driveAmount, parsed.payType, parsed.flatRate, parsed.totalLoadPay, parsed.status, parsed.invoice_min_qty, parsed.invoice_billing_mode, existing.id);
   res.redirect('/shippers/' + customer.id);
 });
 
@@ -4823,25 +4831,10 @@ function approvedSettlementWeeks(driverId) {
 // their own pay, and only for finalized weeks. PDFs for each weekly settlement and invoice.
 // ---------------------------------------------------------------------------------------------
 function invoiceLineFor(load, fuelRates) {
-  const qty = Number(load.weight_quantity) || 0;
-  const rate = Number(load.rate) || 0;
-  // Total Load Pay (when set) is the whole hauling charge for the load, with no fuel surcharge.
-  const usesTotalLoadPay = hasTotalLoadPay(load);
-  const hauling = usesTotalLoadPay ? Number(load.total_load_pay) : qty * rate;
-  const travelTime = Number(load.has_drive_time) ? (Number(load.drive_time_amount) || 0) : 0;
-  const selfLoad = Number(load.has_self_load) ? (Number(load.self_load_amount) || 0) : 0;
-  const shipperDetention = Number(load.shipper_detention) ? (Number(load.shipper_detention_amount) || 0) : 0;
-  // Each load uses its own week's fuel rate, so an invoice spanning weeks can mix percents.
-  const fsc = loadFuelSurcharge(load, fuelRates);
-  const fscApplies = Number(load.has_fuel_surcharge) === 1 && !usesTotalLoadPay;
-  const lineFsc = fscApplies ? fsc.total : 0;
-  return {
-    ...load, hauling, usesTotalLoadPay, travelTime, selfLoad, shipperDetention, lineFsc, fscApplies,
-    fscBase: fscApplies ? fsc.baseHauling : 0,
-    fscPerTon: fsc.perTon, fscFlat: fsc.flat, fscPercent: fsc.percent, fscPending: fsc.pending,
-    fscDiesel: fsc.dieselRate, fscEffective: fsc.effectiveDate,
-    lineTotal: hauling + lineFsc + travelTime + selfLoad + shipperDetention
-  };
+  // Item 12: billed qty/rate follow the project's invoice settings (min qty, flat qty 1).
+  // Fuel surcharge uses the same weekly diesel math already shown on this screen.
+  const amounts = customerInvoice.invoiceLineAmounts(load, fuelRates);
+  return Object.assign({}, load, amounts);
 }
 
 function emptyInvoiceTotals() {
@@ -4869,68 +4862,100 @@ function finishInvoiceTotals(totals) {
   return totals;
 }
 
-// Approved for Settlement and Settled loads, grouped by customer + Monday-Sunday week (Load Date),
-// with one section per project. Amounts are computed from the loads, so admin edits flow through.
+// Item 12 (11/16/2026): Approved for Settlement and Settled loads, grouped by
+// project + Monday-Sunday work week (by Load Date). One official invoice per
+// project-week. Amounts are computed from the loads, so admin edits flow through.
+// Legacy invoice_weeks marks (customer + week, from item 5) are inherited when a
+// project-week has no project_invoices row yet; those rows are never deleted.
+function projectBillingMap() {
+  const map = new Map();
+  db.prepare('SELECT id, default_rate AS project_default_rate, invoice_min_qty, invoice_billing_mode, project_name FROM projects').all()
+    .forEach((row) => map.set(row.id, row));
+  return map;
+}
+
 function customerInvoiceWeeks(filter) {
   const f = filter || {};
   const fuelRates = validFuelRates();
-  const loads = db.prepare(loadQuery + " WHERE l.status = 'approved' ORDER BY l.load_date, p.display_name, l.id").all().map(annotatePay);
+  const billing = projectBillingMap();
+  const loads = db.prepare(loadQuery + " WHERE l.status = 'approved' ORDER BY l.load_date, p.project_name, l.id").all().map(annotatePay);
   const invoices = new Map();
   loads.forEach((load) => {
-    const customerId = Number(load.project_customer_id) || 0;
-    const week = weekBounds(load.load_date) || { start: '', end: '', range: 'Undated' };
+    const billedLoad = Object.assign({}, load, billing.get(load.project_id) || {});
+    const customerId = Number(billedLoad.project_customer_id) || 0;
+    const projectId = Number(billedLoad.project_id) || 0;
+    const week = weekBounds(billedLoad.load_date) || { start: '', end: '', range: 'Undated' };
     if (f.customerId != null && Number(f.customerId) !== customerId) return;
+    if (f.projectId != null && Number(f.projectId) !== projectId) return;
     if (f.weekStart != null && String(f.weekStart) !== week.start) return;
-    const key = `${customerId}:${week.start}`;
+    const key = `${customerId}:${projectId}:${week.start}`;
     if (!invoices.has(key)) {
       invoices.set(key, {
         key,
         customerId,
-        customer_name: load.customer_name || 'No shipper',
-        address_line1: load.address_line1 || '',
-        address_line2: load.address_line2 || '',
-        poc_name: load.poc_name || '',
-        poc_phone: load.poc_phone || '',
-        poc_email: load.poc_email || '',
-        terms: load.terms || '',
+        projectId,
+        customer_name: billedLoad.customer_name || 'No shipper',
+        address_line1: billedLoad.address_line1 || '',
+        address_line2: billedLoad.address_line2 || '',
+        poc_name: billedLoad.poc_name || '',
+        poc_phone: billedLoad.poc_phone || '',
+        poc_email: billedLoad.poc_email || '',
+        terms: billedLoad.terms || '',
+        project_name: billedLoad.project_name || billedLoad.project_short_name || 'Unassigned',
+        display_name: billedLoad.project_display || 'Unassigned',
+        invoice_min_qty: billedLoad.invoice_min_qty,
+        invoice_billing_mode: billedLoad.invoice_billing_mode || 'actual',
         week,
-        projects: new Map(),
+        loads: [],
+        projects: [],
         totals: emptyInvoiceTotals(),
         loadCount: 0
       });
     }
     const invoice = invoices.get(key);
-    const projectKey = load.project_id ? String(load.project_id) : '0';
-    if (!invoice.projects.has(projectKey)) {
-      invoice.projects.set(projectKey, { projectId: Number(load.project_id) || 0, display_name: load.project_display || 'Unassigned', loads: [], totals: emptyInvoiceTotals() });
-    }
-    const project = invoice.projects.get(projectKey);
-    const line = invoiceLineFor(load, fuelRates);
-    project.loads.push(line);
-    addInvoiceLine(project.totals, line);
+    const line = invoiceLineFor(billedLoad, fuelRates);
+    invoice.loads.push(line);
     addInvoiceLine(invoice.totals, line);
     invoice.loadCount += 1;
   });
-  const marks = db.prepare('SELECT * FROM invoice_weeks WHERE customer_id = ? AND week_start = ?');
+  const projectMarks = db.prepare('SELECT * FROM project_invoices WHERE customer_id = ? AND project_id = ? AND week_start = ?');
+  const weekMarks = db.prepare('SELECT * FROM invoice_weeks WHERE customer_id = ? AND week_start = ?');
   const received = db.prepare('SELECT * FROM invoice_tracker WHERE customer_id = ? AND project_id = ? AND week_start = ?');
   return Array.from(invoices.values()).map((invoice) => {
-    invoice.projects = Array.from(invoice.projects.values()).map((project) => {
-      finishInvoiceTotals(project.totals);
-      const row = invoice.week.start ? received.get(invoice.customerId, project.projectId, invoice.week.start) : null;
-      project.amountReceived = row && row.amount_received != null ? Number(row.amount_received) : null;
-      project.receivedBy = row ? row.updated_by_name : '';
-      project.receivedAt = row ? row.updated_at : '';
-      return project;
-    });
     finishInvoiceTotals(invoice.totals);
-    invoice.mark = invoice.week.start ? (marks.get(invoice.customerId, invoice.week.start) || null) : null;
-    invoice.status = invoice.mark && invoice.mark.paid_at ? 'paid' : (invoice.mark && invoice.mark.invoiced_at ? 'invoiced' : 'open');
+    const projectMark = invoice.week.start ? (projectMarks.get(invoice.customerId, invoice.projectId, invoice.week.start) || null) : null;
+    const weekMark = invoice.week.start ? (weekMarks.get(invoice.customerId, invoice.week.start) || null) : null;
+    invoice.mark = projectMark || weekMark || null;
+    invoice.legacyWeekMark = !!(!projectMark && weekMark);
+    invoice.status = customerInvoice.statusFromMark(invoice.mark);
     invoice.changedSinceInvoiced = !!(invoice.mark && invoice.mark.invoiced_at && invoice.mark.invoiced_amount != null
       && roundMoney(invoice.mark.invoiced_amount) !== roundMoney(invoice.totals.total));
-    invoice.number = invoice.week.start ? `DT1-${invoice.customerId}-${invoice.week.start.replace(/-/g, '')}` : '';
-    invoice.received = invoice.projects.reduce((sum, project) => sum + (project.amountReceived || 0), 0);
+    invoice.number = (projectMark && projectMark.invoice_number) || '';
+    invoice.invoiceDate = (projectMark && projectMark.invoice_date) || '';
+    invoice.includeTickets = projectMark ? Number(projectMark.include_tickets) !== 0 : true;
+    const row = invoice.week.start ? received.get(invoice.customerId, invoice.projectId, invoice.week.start) : null;
+    invoice.amountReceived = row && row.amount_received != null ? Number(row.amount_received) : null;
+    invoice.amountInvoicedRecorded = row && row.amount_invoiced != null ? Number(row.amount_invoiced) : (invoice.mark && invoice.mark.invoiced_amount != null ? Number(invoice.mark.invoiced_amount) : null);
+    invoice.receivedBy = row ? row.updated_by_name : '';
+    invoice.receivedAt = row ? row.updated_at : '';
+    invoice.trackerInvoiceNumber = (row && row.invoice_number) || invoice.number;
+    // Keep a one-item projects array so older tracker templates/tests can still iterate it.
+    invoice.projects = [{
+      projectId: invoice.projectId,
+      display_name: invoice.display_name,
+      project_name: invoice.project_name,
+      loads: invoice.loads,
+      totals: invoice.totals,
+      amountReceived: invoice.amountReceived,
+      amountInvoiced: invoice.amountInvoicedRecorded,
+      receivedBy: invoice.receivedBy,
+      receivedAt: invoice.receivedAt
+    }];
+    invoice.received = invoice.amountReceived || 0;
     return invoice;
-  }).sort((a, b) => (b.week.start || '').localeCompare(a.week.start || '') || a.customer_name.localeCompare(b.customer_name));
+  }).sort((a, b) => (b.week.start || '').localeCompare(a.week.start || '')
+    || a.customer_name.localeCompare(b.customer_name)
+    || a.project_name.localeCompare(b.project_name));
 }
 
 const INVOICE_STATUS_LABELS = { open: 'Not invoiced', invoiced: 'Invoiced', paid: 'Paid' };
@@ -5016,68 +5041,35 @@ function settlementPdf(group) {
   return pdf.toBuffer();
 }
 
-function invoicePdf(invoice) {
-  const pdf = new SimplePdf({ footer: `DT1 Logistics · Invoice ${invoice.number} · ${invoice.customer_name}` });
-  pdf.heading('DT1 Logistics');
-  pdf.para('INVOICE', { size: 13, bold: true });
-  pdf.gap(2);
-  pdf.para(`Invoice #: ${invoice.number}`);
-  pdf.para(`Work week (Monday–Sunday, by Load Date): ${invoice.week.range}, ${invoice.week.start.slice(0, 4)}`);
-  pdf.para(`Terms: ${invoice.terms || 'Net 30'}`);
-  pdf.gap(6);
-  pdf.para('Bill To:', { bold: true });
-  pdf.para(invoice.customer_name);
-  if (invoice.address_line1) pdf.para(invoice.address_line1);
-  if (invoice.address_line2) pdf.para(invoice.address_line2);
-  if (invoice.poc_name) pdf.para(`Attn: ${invoice.poc_name}`);
-  if (invoice.poc_phone || invoice.poc_email) pdf.para([invoice.poc_phone, invoice.poc_email].filter(Boolean).join(' · '));
-  pdf.gap(8);
-  invoice.projects.forEach((project) => {
-    pdf.para(`Project: ${project.display_name}`, { bold: true, size: 11 });
-    pdf.table([
-      { label: 'Date', width: 52 },
-      { label: 'Ticket #', width: 50 },
-      { label: 'Origin', width: 64 },
-      { label: 'Destination', width: 66 },
-      { label: 'Qty', width: 32, align: 'right' },
-      { label: 'Rate', width: 42, align: 'right' },
-      { label: 'Price', width: 50, align: 'right' },
-      { label: 'Fuel Sur.', width: 44, align: 'right' },
-      { label: 'Self Load', width: 44, align: 'right' },
-      { label: 'Travel', width: 40, align: 'right' },
-      { label: 'Detention', width: 48, align: 'right' }
-    ], project.loads.map((line) => [
-      pdfDate(line.load_date), line.ticket_number || '—', line.origin || '—', line.destination || line.description || '—',
-      line.weight_quantity != null ? String(line.weight_quantity) : '—', line.usesTotalLoadPay ? 'Flat' : pdfUsd(line.rate),
-      pdfUsd(line.hauling), line.fscApplies ? (line.fscPending ? 'Pending' : pdfUsd(line.lineFsc)) : '—',
-      pdfUsd(line.selfLoad), pdfUsd(line.travelTime), Number(line.shipper_detention) === 1 ? pdfUsd(line.shipperDetention) : '—'
-    ]));
-    const t = project.totals;
-    const pairs = [['Hauling', pdfUsd(t.hauling)]];
-    if (t.fuelSurcharge || t.fscPendingCount) pairs.push([`Fuel Surcharge${t.fscPercents.length === 1 ? ' (' + Number(t.fscPercents[0]).toFixed(2) + '%)' : ''}`, pdfUsd(t.fuelSurcharge)]);
-    if (t.travelTime) pairs.push(['Travel Time', pdfUsd(t.travelTime)]);
-    if (t.selfLoad) pairs.push(['Self Load', pdfUsd(t.selfLoad)]);
-    if (t.shipperDetention) pairs.push(['Detention', pdfUsd(t.shipperDetention)]);
-    pairs.push(['Project total', pdfUsd(t.total), true]);
-    pdf.totals(pairs, { after: 8 });
+function ticketsForInvoice(invoice) {
+  const out = [];
+  (invoice.loads || []).forEach((load) => {
+    const docs = db.prepare('SELECT id, filename, original_name, file_blob FROM documents WHERE load_id = ? ORDER BY id').all(load.id);
+    docs.forEach((doc) => {
+      out.push({
+        ticket_number: load.ticket_number || '',
+        filename: doc.filename,
+        original_name: doc.original_name,
+        buffer: doc.file_blob
+      });
+    });
   });
-  pdf.rule();
-  const t = invoice.totals;
-  pdf.totals([
-    ['Hauling', pdfUsd(t.hauling)],
-    ['Fuel Surcharge', pdfUsd(t.fuelSurcharge)],
-    ['Travel Time', pdfUsd(t.travelTime)],
-    ['Self Load', pdfUsd(t.selfLoad)],
-    ['Detention', pdfUsd(t.shipperDetention)],
-    ['INVOICE TOTAL', pdfUsd(t.total), true]
-  ]);
-  if (t.fscPendingCount) pdf.para(`${t.fscPendingCount} load(s) have no fuel rate posted yet for their week; fuel surcharge shows $0.00 until it is posted.`, { size: 8, gray: true });
-  return pdf.toBuffer();
+  return out;
+}
+
+function invoicePdf(invoice, opts) {
+  const o = opts || {};
+  const includeTickets = o.includeTickets !== false && o.includeTickets !== 0 && o.includeTickets !== '0';
+  return customerInvoicePdf.buildCustomerInvoicePdf(invoice, {
+    settings: customerInvoice.readSettings(db),
+    includeTickets,
+    tickets: includeTickets ? ticketsForInvoice(invoice) : []
+  });
 }
 
 function sendPdf(res, filename, buffer, inline) {
   res.set('Content-Type', 'application/pdf');
-  res.set('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${String(filename).replace(/[^A-Za-z0-9._-]+/g, '-')}"`);
+  res.set('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${String(filename).replace(/[\r\n"\\]+/g, '').replace(/[^A-Za-z0-9._ -]+/g, '-')}"`);
   res.set('Cache-Control', 'private, no-store');
   return res.send(buffer);
 }
@@ -5160,18 +5152,57 @@ app.get('/invoices', requireAuth, (req, res) => {
 
 function invoiceParams(source) {
   const customerId = parseInt(source.customer_id, 10);
+  const projectId = parseInt(source.project_id, 10);
   const week = weekBounds(source.week_start);
-  if (!Number.isInteger(customerId) || customerId < 0 || !week || week.start !== String(source.week_start || '')) return null;
-  return { customerId, week };
+  if (!Number.isInteger(customerId) || customerId < 0 || !Number.isInteger(projectId) || projectId < 0
+    || !week || week.start !== String(source.week_start || '')) return null;
+  return { customerId, projectId, week };
+}
+
+function findProjectInvoice(params) {
+  return customerInvoiceWeeks({
+    customerId: params.customerId, projectId: params.projectId, weekStart: params.week.start
+  })[0] || null;
+}
+
+function invoicePdfQuery(invoice, includeTickets) {
+  const tickets = includeTickets ? '1' : '0';
+  return `/invoices/pdf?customer_id=${invoice.customerId}&project_id=${invoice.projectId}&week_start=${invoice.week.start}&tickets=${tickets}`;
 }
 
 app.get('/invoices/pdf', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.status(404).send('Not found');
   const params = invoiceParams(req.query);
   if (!params) return res.status(404).send('Not found');
-  const invoice = customerInvoiceWeeks({ customerId: params.customerId, weekStart: params.week.start })[0];
+  const invoice = findProjectInvoice(params);
   if (!invoice) return res.status(404).send('Not found');
-  return sendPdf(res, `${invoice.number}-${invoice.customer_name}.pdf`, invoicePdf(invoice), req.query.inline === '1');
+  const includeTickets = req.query.tickets == null ? invoice.includeTickets : (req.query.tickets !== '0');
+  const filename = invoice.number
+    ? customerInvoicePdf.invoiceFileName(invoice)
+    : `DT1-${invoice.customerId}-${invoice.projectId}-${invoice.week.start.replace(/-/g, '')}.pdf`;
+  return sendPdf(res, filename, invoicePdf(invoice, { includeTickets }), req.query.inline === '1');
+});
+
+app.post('/invoices/generate', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/settlements');
+  const params = invoiceParams(req.body);
+  if (!params) return res.redirect('/invoices');
+  const invoice = findProjectInvoice(params);
+  if (!invoice) return res.redirect('/invoices');
+  const includeTickets = String(req.body.include_tickets) === '1' || req.body.include_tickets === 'on';
+  const result = customerInvoice.applyMark(db, {
+    customerId: params.customerId,
+    projectId: params.projectId,
+    week: params.week,
+    mark: 'generate',
+    amount: invoice.totals.total,
+    includeTickets,
+    actorId: req.session.user.id,
+    actorName: actorName(req)
+  });
+  logAudit(req, 'Invoice generated', 'project_invoice', params.projectId,
+    `${invoice.customer_name} · ${invoice.project_name} · week of ${params.week.range}: ${result.detail}`);
+  res.redirect(invoicePdfQuery(invoice, includeTickets));
 });
 
 app.post('/invoices/mark', requireAuth, (req, res) => {
@@ -5179,38 +5210,25 @@ app.post('/invoices/mark', requireAuth, (req, res) => {
   const params = invoiceParams(req.body);
   const back = `/invoices${req.body.return_tab === 'tracker' ? '?tab=tracker&' : '?'}`;
   if (!params) return res.redirect('/invoices');
-  const invoice = customerInvoiceWeeks({ customerId: params.customerId, weekStart: params.week.start })[0];
+  const invoice = findProjectInvoice(params);
   if (!invoice) return res.redirect('/invoices');
   const mark = String(req.body.mark || '');
-  const actor = [req.session.user.id, actorName(req)];
-  db.prepare(`
-    INSERT INTO invoice_weeks (customer_id, week_start, week_end) VALUES (?, ?, ?)
-    ON CONFLICT(customer_id, week_start) DO NOTHING
-  `).run(params.customerId, params.week.start, params.week.end);
-  const where = 'WHERE customer_id = ? AND week_start = ?';
-  const key = [params.customerId, params.week.start];
-  let detail = '';
-  if (mark === 'invoiced') {
-    db.prepare(`UPDATE invoice_weeks SET invoiced_at = CURRENT_TIMESTAMP, invoiced_by = ?, invoiced_by_name = ?, invoiced_amount = ? ${where}`)
-      .run(...actor, invoice.totals.total, ...key);
-    detail = `Marked Invoiced (${moneyInput.usd(invoice.totals.total)})`;
-  } else if (mark === 'paid') {
-    db.prepare(`UPDATE invoice_weeks SET invoiced_at = COALESCE(invoiced_at, CURRENT_TIMESTAMP), invoiced_by = COALESCE(invoiced_by, ?),
-      invoiced_by_name = COALESCE(invoiced_by_name, ?), invoiced_amount = COALESCE(invoiced_amount, ?),
-      paid_at = CURRENT_TIMESTAMP, paid_by = ?, paid_by_name = ? ${where}`)
-      .run(...actor, invoice.totals.total, ...actor, ...key);
-    detail = 'Marked Paid';
-  } else if (mark === 'unpaid') {
-    db.prepare(`UPDATE invoice_weeks SET paid_at = NULL, paid_by = NULL, paid_by_name = NULL ${where}`).run(...key);
-    detail = 'Paid mark removed';
-  } else if (mark === 'open') {
-    db.prepare(`UPDATE invoice_weeks SET invoiced_at = NULL, invoiced_by = NULL, invoiced_by_name = NULL, invoiced_amount = NULL,
-      paid_at = NULL, paid_by = NULL, paid_by_name = NULL ${where}`).run(...key);
-    detail = 'Invoiced mark removed';
-  } else {
+  if (!['invoiced', 'paid', 'unpaid', 'open'].includes(mark)) return res.redirect('/invoices');
+  try {
+    const result = customerInvoice.applyMark(db, {
+      customerId: params.customerId,
+      projectId: params.projectId,
+      week: params.week,
+      mark,
+      amount: invoice.totals.total,
+      actorId: req.session.user.id,
+      actorName: actorName(req)
+    });
+    logAudit(req, 'Invoice status', 'project_invoice', params.projectId,
+      `${invoice.customer_name} · ${invoice.project_name} · week of ${params.week.range}: ${result.detail}`);
+  } catch (err) {
     return res.redirect('/invoices');
   }
-  logAudit(req, 'Invoice status', 'invoice_week', params.customerId, `${invoice.customer_name} · week of ${params.week.range}: ${detail}`);
   res.redirect(`${back}saved=marked`);
 });
 
