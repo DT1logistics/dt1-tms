@@ -9,6 +9,8 @@ check('FSC % from weekly diesel rate', () => {
   assert.strictEqual(fuel.fscDecimal(6.485), 0.2485);
   assert.strictEqual(fuel.fscPercent(6.496), 24.96);
   assert.strictEqual(fuel.fscPercent(6.508), 25.08);
+  assert.strictEqual(fuel.fscPercent(6.309), 23.09);
+  assert.strictEqual(fuel.fscDecimal(6.309), 0.2309);
   assert.strictEqual(fuel.fscPercent(4.00), 0);
   assert.strictEqual(fuel.fscPercent(3.75), 0);
 });
