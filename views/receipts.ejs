@@ -6,7 +6,7 @@
       <% receipts.forEach(r => { %>
         <div style="background:white;padding:16px;border-radius:10px;margin-bottom:12px;">
           <strong><%= r.expense_date %></strong> — <%= r.original_name || 'No file' %>
-          <% if (r.filename) { %> · <a href="/uploads/<%= encodeURIComponent(r.filename) %>" target="_blank" rel="noopener">View file</a><% } %><br>
+          <% if (r.filename) { %> · <a href="/receipts/<%= r.id %>/file" target="_blank" rel="noopener">View file</a><% } %><br>
           Status: <span style="font-weight:bold;"><%= r.status %></span><br>
           Uploaded by: <%= r.uploader_name || 'Unknown' %>
           <% if (user.role === 'admin' && r.lines && r.lines.length) { %>
