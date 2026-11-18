@@ -5139,8 +5139,9 @@ function settlementWeekFor(driverId, weekStart, kind) {
       AND l.load_date >= ? AND l.load_date <= ?
     ORDER BY l.load_date, l.id
   `).all(driver.id, week.start, week.end).map((load) => Object.assign({}, load, { payInfo: calcDriverPay(load) }));
-  if (!loads.length) return null;
-  return settlementTotals({ driver, week, loads, final, finalizedRow });
+  // A finalized week with no loads is a valid $0 settlement ("No loads").
+  if (!loads.length && !(final && finalizedRow)) return null;
+  return settlementTotals({ driver, week, loads, final, finalizedRow, noLoads: !loads.length });
 }
 
 function pdfUsd(value) { return moneyInput.usd(Number(value) || 0); }
@@ -5161,6 +5162,15 @@ function settlementPdf(group) {
     pdf.para('Status: NOT FINALIZED (draft for review; amounts may still change)', { bold: true });
   }
   pdf.gap(6);
+  if (!group.loads.length) {
+    pdf.para('No loads – $0.00', { size: 13, bold: true });
+    pdf.gap(6);
+    pdf.totals([
+      ['Loads', '0'],
+      ['DRIVER PAY', pdfUsd(0), true]
+    ]);
+    return pdf.toBuffer();
+  }
   pdf.table([
     { label: 'Load #', width: 58 },
     { label: 'Date', width: 46 },
@@ -5229,11 +5239,18 @@ function sendPdf(res, filename, buffer, inline) {
 app.get('/settlements', requireAuth, (req, res) => {
   const isAdmin = req.session.user.role === 'admin';
   const approvedWeeks = approvedSettlementWeeks(isAdmin ? null : req.session.user.id).map(settlementTotals);
+  const pendingWeeks = isAdmin ? pendingSettlementWeeks().map(settlementTotals) : [];
+  const finalizeAllResult = req.session.finalizeAllResult || null;
+  if (req.session && Object.prototype.hasOwnProperty.call(req.session, 'finalizeAllResult')) {
+    delete req.session.finalizeAllResult;
+  }
   res.render('settlements', {
     user: req.session.user,
-    pendingWeeks: isAdmin ? pendingSettlementWeeks().map(settlementTotals) : [],
+    pendingWeeks,
+    pendingWeekBuckets: isAdmin ? pendingWeekBuckets(pendingWeeks) : [],
     approvedWeeks,
-    saved: req.query.saved || ''
+    saved: req.query.saved || '',
+    finalizeAllResult
   });
 });
 
@@ -5281,6 +5298,162 @@ app.post('/settlements/approve-week', requireAuth, (req, res) => {
   const settledEntry = db.prepare(`INSERT INTO audit_log (actor_id, actor_name, action, entity_type, entity_id, detail) VALUES (?, ?, 'Settled', 'load', ?, ?)`);
   loads.forEach((load) => settledEntry.run(req.session.user.id, actorName(req), load.id, `Weekly settlement finalized (week of ${week.range}); load locked`));
   res.redirect('/settlements?saved=week');
+});
+
+// Active drivers for Finalize All: role is driver and status is not inactive.
+// NULL status is treated as active, matching the Drivers list and load-form picker.
+function activeDrivers() {
+  return db.prepare(`
+    SELECT id, name, pay_percentage, status
+    FROM users
+    WHERE role = 'driver' AND IFNULL(status, 'active') != 'inactive'
+    ORDER BY name
+  `).all();
+}
+
+function loadsInWeek(driverId, week, sqlExtra) {
+  return db.prepare(loadQuery + `
+    WHERE l.driver_id = ? AND l.load_date >= ? AND l.load_date <= ?` + (sqlExtra || '') + `
+    ORDER BY l.load_date, l.id
+  `).all(driverId, week.start, week.end);
+}
+
+function unfinishedLoadsForWeek(driverId, week) {
+  // Not yet Approved for Settlement: drafts (including assigned and Draft – Rejected),
+  // submitted, and Accepted ("Approved") loads. Already-AFS or Settled loads are not unfinished.
+  return loadsInWeek(driverId, week, " AND l.status != 'approved'");
+}
+
+function pendingApprovedLoadsForWeek(driverId, week) {
+  return loadsInWeek(driverId, week, " AND l.status = 'approved' AND IFNULL(l.settlement_status, '') != 'approved'");
+}
+
+function existingDriverSettlement(driverId, weekStart) {
+  return db.prepare('SELECT * FROM driver_settlements WHERE driver_id = ? AND week_start = ?').get(driverId, weekStart) || null;
+}
+
+function classifyFinalizeDriver(driver, week) {
+  const existing = existingDriverSettlement(driver.id, week.start);
+  if (existing) return { status: 'already', driver, settlement: existing, loads: [] };
+  const unfinished = unfinishedLoadsForWeek(driver.id, week);
+  if (unfinished.length) return { status: 'skipped', driver, loads: unfinished };
+  const pending = pendingApprovedLoadsForWeek(driver.id, week);
+  if (pending.length) return { status: 'ready', driver, loads: pending };
+  return { status: 'noLoads', driver, loads: [] };
+}
+
+function pendingWeekBuckets(pendingWeeks) {
+  const weeks = new Map();
+  (pendingWeeks || []).forEach((group) => {
+    const start = (group.week && group.week.start) || '';
+    if (!weeks.has(start)) weeks.set(start, { week: group.week, groups: [] });
+    weeks.get(start).groups.push(group);
+  });
+  return Array.from(weeks.values()).sort((a, b) => String((b.week && b.week.start) || '').localeCompare(String((a.week && a.week.start) || ''))).map((bucket) => {
+    const week = bucket.week && bucket.week.start ? weekBounds(bucket.week.start) : null;
+    bucket.preview = week ? finalizeAllPreview(week) : { ready: [], skipped: [], noLoads: [], already: [] };
+    return bucket;
+  });
+}
+
+function finalizeAllPreview(week) {
+  const ready = [];
+  const skipped = [];
+  const noLoads = [];
+  const already = [];
+  activeDrivers().forEach((driver) => {
+    const row = classifyFinalizeDriver(driver, week);
+    if (row.status === 'already') already.push(row);
+    else if (row.status === 'skipped') skipped.push(row);
+    else if (row.status === 'ready') ready.push(row);
+    else noLoads.push(row);
+  });
+  return { ready, skipped, noLoads, already };
+}
+
+function insertDriverSettlement(driverId, week, actorId, actorName) {
+  return db.prepare(`
+    INSERT INTO driver_settlements (driver_id, week_start, week_end, status, approved_by, approved_by_name, approved_at)
+    VALUES (?, ?, ?, 'approved', ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(driver_id, week_start) DO NOTHING
+  `).run(driverId, week.start, week.end, actorId, actorName);
+}
+
+function unfinishedLoadSummary(load) {
+  const label = loadStatusLabel(load.status, load.settlement_status, load);
+  const number = loadNumber.displayLoadNumber(load.load_number) || (load.ticket_number ? `Ticket ${load.ticket_number}` : `Load #${load.id}`);
+  return `${number} (${label})`;
+}
+
+app.post('/settlements/finalize-all', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/settlements');
+  const week = weekBounds(req.body.week_start);
+  if (!week) return res.redirect('/settlements');
+  const preview = finalizeAllPreview(week);
+  const actorId = req.session.user.id;
+  const name = actorName(req);
+  const mark = db.prepare(`UPDATE loads SET settlement_status = 'approved' WHERE id = ? AND status = 'approved' AND IFNULL(settlement_status, '') != 'approved'`);
+  const applied = { ready: [], noLoads: [], skipped: preview.skipped, already: preview.already };
+  const saveAll = db.transaction(() => {
+    preview.ready.forEach((row) => {
+      if (existingDriverSettlement(row.driver.id, week.start)) {
+        applied.already.push(row);
+        return;
+      }
+      row.loads.forEach((load) => mark.run(load.id));
+      const inserted = insertDriverSettlement(row.driver.id, week, actorId, name);
+      if (!inserted.changes) {
+        applied.already.push(row);
+        return;
+      }
+      applied.ready.push(row);
+    });
+    preview.noLoads.forEach((row) => {
+      if (existingDriverSettlement(row.driver.id, week.start)) {
+        applied.already.push(row);
+        return;
+      }
+      const inserted = insertDriverSettlement(row.driver.id, week, actorId, name);
+      if (!inserted.changes) {
+        applied.already.push(row);
+        return;
+      }
+      applied.noLoads.push(row);
+    });
+  });
+  saveAll();
+  const finalizedCount = applied.ready.length + applied.noLoads.length;
+  const loadCount = applied.ready.reduce((sum, row) => sum + row.loads.length, 0);
+  logAudit(req, 'Finalized all weekly settlements', 'driver_settlement', null,
+    `Week of ${week.range} · ${finalizedCount} settlement${finalizedCount === 1 ? '' : 's'} (${applied.noLoads.length} with no loads at $0.00, ${loadCount} load${loadCount === 1 ? '' : 's'} locked) · ${applied.skipped.length} skipped · ${applied.already.length} already finalized`);
+  applied.ready.forEach((row) => {
+    logAudit(req, 'Finalized weekly settlement', 'driver_settlement', row.driver.id,
+      `Week of ${week.range} · ${row.loads.length} load${row.loads.length === 1 ? '' : 's'} locked`);
+  });
+  applied.noLoads.forEach((row) => {
+    logAudit(req, 'Finalized weekly settlement', 'driver_settlement', row.driver.id,
+      `Week of ${week.range} · No loads – $0.00`);
+  });
+  const settledEntry = db.prepare(`INSERT INTO audit_log (actor_id, actor_name, action, entity_type, entity_id, detail) VALUES (?, ?, 'Settled', 'load', ?, ?)`);
+  applied.ready.forEach((row) => {
+    row.loads.forEach((load) => settledEntry.run(actorId, name, load.id, `Weekly settlement finalized (week of ${week.range}); load locked`));
+  });
+  req.session.finalizeAllResult = {
+    weekStart: week.start,
+    weekRange: week.range,
+    finalized: applied.ready.map((row) => ({ id: row.driver.id, name: row.driver.name, loadCount: row.loads.length })),
+    noLoads: applied.noLoads.map((row) => ({ id: row.driver.id, name: row.driver.name })),
+    already: applied.already.map((row) => ({ id: row.driver.id, name: row.driver.name })),
+    skipped: applied.skipped.map((row) => ({
+      id: row.driver.id,
+      name: row.driver.name,
+      loads: row.loads.map((load) => ({
+        id: load.id,
+        summary: unfinishedLoadSummary(load)
+      }))
+    }))
+  };
+  res.redirect('/settlements?saved=finalize-all');
 });
 
 app.get('/invoices', requireAuth, (req, res) => {
