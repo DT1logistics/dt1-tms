@@ -10,7 +10,7 @@ const Database = require('better-sqlite3');
 const fuelCalc = require('./lib/fuel-surcharge');
 const loadDate = require('./lib/load-date');
 const loadNumber = require('./lib/load-number');
-const { loadStatusLabel, loadStatusClass, loadStatusLabelCounts, WEEK_SUMMARY_LABELS, canApproveForSettlement } = require('./lib/load-status');
+const { loadStatusLabel, loadStatusClass, loadStatusLabelCounts, WEEK_SUMMARY_LABELS, canApproveForSettlement, isRejectedDraft } = require('./lib/load-status');
 const loadReview = require('./lib/load-review');
 const loganWebhook = require('./lib/logan-webhook');
 const quoWebhook = require('./lib/quo-webhook');
@@ -240,7 +240,40 @@ function driverAssignedDraftLoads(driverId) {
   return db.prepare(loadQuery + `
     WHERE l.driver_id = ? AND l.status = 'draft' AND l.entry_mode = 'assigned'
     ORDER BY l.load_date DESC, l.id DESC
+  `).all(driverId).filter((load) => !isRejectedDraft(load));
+}
+
+function driverRejectedLoads(driverId) {
+  if (!driverId) return [];
+  return db.prepare(loadQuery + `
+    WHERE l.driver_id = ?
+      AND l.status = 'draft'
+      AND IFNULL(l.settlement_status, '') != 'approved'
+      AND IFNULL(l.review_decision, '') != 'accepted'
+      AND (
+        IFNULL(l.review_decision, '') = 'rejected'
+        OR TRIM(IFNULL(l.rejection_reason, '')) != ''
+        OR l.rejected_at IS NOT NULL
+      )
+    ORDER BY COALESCE(l.rejected_at, l.review_decision_at, l.updated_at) DESC, l.id DESC
   `).all(driverId);
+}
+
+function driverRejectedLoadCount(driverId) {
+  if (!driverId) return 0;
+  const row = db.prepare(`
+    SELECT COUNT(*) AS n FROM loads
+    WHERE driver_id = ?
+      AND status = 'draft'
+      AND IFNULL(settlement_status, '') != 'approved'
+      AND IFNULL(review_decision, '') != 'accepted'
+      AND (
+        IFNULL(review_decision, '') = 'rejected'
+        OR TRIM(IFNULL(rejection_reason, '')) != ''
+        OR rejected_at IS NOT NULL
+      )
+  `).get(driverId);
+  return row ? row.n : 0;
 }
 
 function ticketFileKind(name) {
@@ -333,6 +366,7 @@ app.locals.loadFuelSurcharge = loadFuelSurcharge;
 app.locals.loadStatusLabel = loadStatusLabel;
 app.locals.loadStatusClass = loadStatusClass;
 app.locals.canApproveForSettlement = canApproveForSettlement;
+app.locals.isRejectedDraft = isRejectedDraft;
 app.locals.weekSummaryLabels = WEEK_SUMMARY_LABELS;
 app.locals.loadOriginLabel = loadOriginLabel;
 app.locals.reviewStatusLabel = loadReview.reviewStatusLabel;
@@ -449,6 +483,14 @@ app.use((req, res, next) => {
   if (req.path === '/change-password' || req.path === '/logout') return next();
   if (req.path === '/api/logan' || req.path.startsWith('/api/logan/')) return next();
   return res.redirect('/change-password');
+});
+app.use((req, res, next) => {
+  res.locals.rejectedLoadCount = 0;
+  const current = req.session && req.session.user;
+  if (current && current.role === 'driver') {
+    res.locals.rejectedLoadCount = driverRejectedLoadCount(current.id);
+  }
+  next();
 });
 // Ticket, BOL, and receipt files are stored in uploadDir and served only through
 // checked routes (see /receipts/:id/file, /loads/:id/files/:fileId, equipment expense
@@ -1642,7 +1684,8 @@ function renderDashboard(req, res) {
       greenCount: levels.filter((item) => item.level === 'green').length,
       weekGroups: grouped.weeks,
       undatedLoads: grouped.undated,
-      assignedLoads: driverAssignedDraftLoads(req.session.user.id)
+      assignedLoads: driverAssignedDraftLoads(req.session.user.id),
+      rejectedLoads: driverRejectedLoads(req.session.user.id)
     });
   }
   const attention = collectAlerts(req.session.user);
@@ -2240,6 +2283,7 @@ app.get('/loads', requireAuth, (req, res) => {
       weekGroups: grouped.weeks,
       undatedLoads: grouped.undated,
       assignedLoads: driverAssignedDraftLoads(req.session.user.id).filter((load) => !q || String(load.load_number || '').includes(q)),
+      rejectedLoads: driverRejectedLoads(req.session.user.id).filter((load) => !q || String(load.load_number || '').includes(q)),
       deleted: req.query.deleted === '1',
       q
     });
@@ -2292,6 +2336,7 @@ app.post('/loads/:id/approve', requireAuth, (req, res) => {
 app.post('/loads/:id/reject', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/loads');
   const reason = String(req.body.rejection_reason || '').trim();
+  if (!reason) return res.redirect(`/loads/${req.params.id}?saved=need-reason`);
   const result = db.prepare(`
     UPDATE loads
     SET status = 'draft', rejection_reason = ?, approved_by = NULL, approved_by_name = NULL, approved_at = NULL,
@@ -3056,6 +3101,13 @@ function decideLoadReview(loadId, input) {
           review_decision_by_name = ?, review_decision_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(decision, reason || null, input.actorId || null, input.actorName, load.id);
+    if (decision === 'rejected' && !sendBack) {
+      db.prepare(`
+        UPDATE loads
+        SET rejection_reason = ?, rejected_by = ?, rejected_by_name = ?, rejected_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status = 'draft'
+      `).run(reason, input.actorId || null, input.actorName, load.id);
+    }
     if (sendBack) {
       db.prepare(`
         UPDATE loads
@@ -3083,6 +3135,20 @@ function clearStaleAcceptedReview(loadId) {
         review_decision_by_name = NULL,
         review_decision_at = NULL
     WHERE id = ? AND status = 'draft' AND review_decision = 'accepted'
+  `).run(loadId);
+}
+
+// Going forward only: resubmit leaves the rejected section by clearing the current
+// review_decision. rejection_reason / rejected_at / rejected_by stay as history.
+function clearRejectedReviewOnResubmit(loadId) {
+  db.prepare(`
+    UPDATE loads
+    SET review_decision = NULL,
+        review_decision_reason = NULL,
+        review_decision_by = NULL,
+        review_decision_by_name = NULL,
+        review_decision_at = NULL
+    WHERE id = ? AND status IN ('submitted', 'approved') AND review_decision = 'rejected'
   `).run(loadId);
 }
 
@@ -3157,7 +3223,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     }
   }
   const editChanges = afterApproval && isAdmin ? postApprovalChanges(existing, values) : [];
-  const rejectionReason = entry.status === 'submitted' || entry.status === 'approved' ? null : (existing.rejection_reason || null);
+  const rejectionReason = existing.rejection_reason || null;
   const saved = db.prepare(`
     UPDATE loads
     SET ticket_number = ?, load_date = ?, driver_id = ?, truck_id = ?, project_id = ?, description = ?,
@@ -3208,6 +3274,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
   }
   stampLoadApproval(existing.id, req, entry);
   if (entry.status === 'draft') clearStaleAcceptedReview(existing.id);
+  if (entry.status === 'submitted' || entry.status === 'approved') clearRejectedReviewOnResubmit(existing.id);
   // Standing rule: ticket files are not removed once a load is Approved for Settlement.
   if (!afterApproval) removeSelectedTickets(existing.id, req.body);
   saveTicketFiles(existing.id, req.files, req.session.user.id);

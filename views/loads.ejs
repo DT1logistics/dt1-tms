@@ -26,11 +26,12 @@
   <button type="submit">Search</button>
   <% if (qValue) { %><a href="/loads<%= user.role === 'admin' && typeof reviewFilter !== 'undefined' && reviewFilter ? '?review=' + reviewFilter : (user.role === 'admin' && typeof approvedView !== 'undefined' && approvedView ? '?view=approved' : '') %>">Clear</a><% } %>
 </form>
-<% if (qValue && ((user.role === 'driver' && !(weekGroups && weekGroups.length) && !undatedLoads) || (user.role !== 'driver' && loads.length === 0))) { %>
+<% if (qValue && ((user.role === 'driver' && !(weekGroups && weekGroups.length) && !undatedLoads && !(typeof rejectedLoads !== 'undefined' && rejectedLoads && rejectedLoads.length)) || (user.role !== 'driver' && loads.length === 0))) { %>
   <p>No loads match “<%= qValue %>”.</p>
 <% } %>
 <% if (typeof deleted !== 'undefined' && deleted) { %><div class="all-clear">Load deleted.</div><% } %>
 <% if (user.role === 'driver') { %>
+  <%- include('partials/rejected-loads-banner', { rejectedLoads: typeof rejectedLoads !== 'undefined' ? rejectedLoads : [] }) %>
   <%- include('partials/assigned-loads-banner', { assignedLoads: typeof assignedLoads !== 'undefined' ? assignedLoads : [] }) %>
   <p class="muted">Your loads are grouped by Monday–Sunday week until the weekly settlement is finalized. Your pay for a week shows on Settlements once that week is finalized.</p>
   <%- include('partials/week-summaries', { weekGroups: weekGroups, undatedLoads: undatedLoads, user: user }) %>

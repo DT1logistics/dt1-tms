@@ -6,6 +6,7 @@
   <a class="<%= active === 'loads' || active === 'new-load' ? 'active' : '' %>" href="/loads">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.2 20 7.6 12 12 4 7.6 12 3.2z"/><path d="M20 7.6v8.8L12 20.8V12"/><path d="M4 7.6v8.8L12 20.8"/></svg>
     <span>Loads</span>
+    <% if (typeof user !== 'undefined' && user && user.role !== 'admin' && typeof rejectedLoadCount !== 'undefined' && rejectedLoadCount) { %><span class="badge red nav-badge"><%= rejectedLoadCount %></span><% } %>
   </a>
   <a class="<%= active === 'receipts' ? 'active' : '' %>" href="/receipts">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 12.2 10.2 16 17.5 8"/></svg>

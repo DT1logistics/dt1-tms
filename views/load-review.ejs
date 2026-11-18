@@ -358,12 +358,12 @@
       <p>Current decision: <strong>Accepted</strong><% if (load.review_decision_by_name) { %> by <%= load.review_decision_by_name %><% if (load.review_decision_at) { %> on <%= auditStamp(load.review_decision_at) %><% } %><% } %></p>
     <% } %>
     <label for="review_decision_reason">Reason (required to reject)</label>
-    <textarea name="reason" id="review_decision_reason" rows="3" placeholder="Why this load is rejected / what the driver should fix"><%= load.review_decision === 'rejected' ? (load.review_decision_reason || '') : '' %></textarea>
+    <textarea name="reason" id="review_decision_reason" rows="3" placeholder="Why this load is rejected / what the driver should fix"><%= load.review_decision === 'rejected' ? (load.review_decision_reason || load.rejection_reason || '') : '' %></textarea>
     <button class="approve" type="submit" name="decision" value="accepted">Accept load</button>
     <% if (lockedLoad) { %>
       <p class="muted">Reject is not available: the weekly settlement is finalized and the load is locked.</p>
     <% } else { %>
-    <button class="danger" type="submit" name="decision" value="rejected" onclick="return confirm('Reject this load<%= (load.status === 'submitted' || load.status === 'approved') ? ' and send it back to the driver as Draft' : '' %>?');">Reject load</button>
+    <button class="danger" type="submit" name="decision" value="rejected" onclick="return (function (form) { var reason = (form.reason && form.reason.value || '').trim(); if (!reason) { alert('A rejection reason is required.'); if (form.reason) form.reason.focus(); return false; } return confirm('Reject this load<%= (load.status === 'submitted' || load.status === 'approved') ? ' and send it back to the driver as Draft' : '' %>?'); })(this.form);">Reject load</button>
     <% } %>
   </form>
 

@@ -953,3 +953,20 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 .generate-tickets { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: 14px; }
 .invoice-actions .generate-invoice-form button { margin: 0; }
 
+.rejected-load-banner {
+  border: 2px solid #c82333;
+  border-left: 6px solid #c82333;
+  background: linear-gradient(180deg, #fff8f8 0%, #fff 100%);
+}
+.rejected-load-banner .reject-note { margin: 8px 0 0; }
+.nav-links a .nav-badge { margin-left: 6px; vertical-align: middle; }
+.tabbar a { position: relative; }
+.tabbar a .nav-badge {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  min-width: 16px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 16px;
+}

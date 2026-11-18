@@ -9,6 +9,7 @@
     <span class="badge green"><%= greenCount %> Green</span>
   </div>
   <%- include('partials/levels', { levels: levels }) %>
+  <%- include('partials/rejected-loads-banner', { rejectedLoads: typeof rejectedLoads !== 'undefined' ? rejectedLoads : [] }) %>
   <%- include('partials/assigned-loads-banner', { assignedLoads: typeof assignedLoads !== 'undefined' ? assignedLoads : [] }) %>
   <h2>Your Loads</h2>
   <p class="muted">Approved loads stay here until an admin finalizes the weekly driver settlement. Your pay for a week shows on Settlements once that week is finalized.</p>
