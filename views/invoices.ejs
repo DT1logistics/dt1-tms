@@ -133,7 +133,7 @@
             <% invoice.loads.forEach(function (load) { %>
               <tr>
                 <td><a href="/loads/<%= load.id %>"><%= formatLoadDate(load.load_date) || '—' %></a></td>
-                <td><%= load.ticket_number || '—' %><div class="muted"><%= loadStatusLabel(load.status, load.settlement_status) %></div></td>
+                <td><%= load.ticket_number || '—' %><div class="muted"><%= loadStatusLabel(load.status, load.settlement_status, load) %></div></td>
                 <td><%= load.driver_name || '—' %></td>
                 <td><%= load.origin || '—' %></td>
                 <td><%= load.destination || load.description || '—' %></td>

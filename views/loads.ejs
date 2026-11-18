@@ -59,7 +59,7 @@
             <td><%= load.ticket_number || '—' %></td>
             <td><%= load.driver_name || 'Unassigned' %></td>
             <td><%= load.project_display || '—' %></td>
-            <td><span class="status <%= load.status %>"><%= loadStatusLabel(load.status, load.settlement_status) %></span></td>
+            <td><span class="status <%= loadStatusClass(load.status, load.settlement_status, load) %>"><%= loadStatusLabel(load.status, load.settlement_status, load) %></span></td>
           </tr>
         <% }) %>
       </tbody>

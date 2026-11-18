@@ -1,6 +1,7 @@
 // Load status labels are display text only.
-// draft, submitted, and approved stay the stored values. Settled is approved
-// plus an approved driver settlement. Run: npm test
+// draft, submitted, and approved stay the stored values. Accept and rejection
+// marks are read at display time. Settled is approved plus an approved driver
+// settlement. Run: npm test
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -9,11 +10,13 @@ const http = require('http');
 const { spawn } = require('child_process');
 const bcrypt = require('bcryptjs');
 const Database = require('better-sqlite3');
-const { loadStatusLabel } = require('../lib/load-status');
+const { loadStatusLabel, loadStatusClass } = require('../lib/load-status');
 
 const LABELS = {
   draft: 'Draft',
-  submitted: 'Submitted, pending approval',
+  rejected: 'Draft – Rejected',
+  submitted: 'Submitted – Pending Approval',
+  accepted: 'Approved',
   approved: 'Approved for Settlement',
   settled: 'Settled'
 };
@@ -124,14 +127,14 @@ function assertNoLegacyStatus(html, where) {
     'pending driver settlement',
     'Included in the approved driver settlement',
     '>Submitted<',
-    '>Approved<'
+    'Submitted, pending approval'
   ].forEach((old) => {
     assert.ok(!html.includes(old), `${where} still shows ${old}`);
   });
 }
 
 (async () => {
-  await check('the four load status labels', async () => {
+  await check('the load status labels, including Accept and Reject', async () => {
     assert.strictEqual(loadStatusLabel('draft', null), LABELS.draft);
     assert.strictEqual(loadStatusLabel('draft', ''), LABELS.draft);
     assert.strictEqual(loadStatusLabel('draft', 'approved'), LABELS.draft);
@@ -145,6 +148,35 @@ function assertNoLegacyStatus(html, where) {
     assert.strictEqual(loadStatusLabel('approved', 'approved'), LABELS.settled);
     assert.strictEqual(loadStatusLabel('', null), LABELS.draft);
     assert.strictEqual(loadStatusLabel(null, null), LABELS.draft);
+
+    // Uber Freight accepted-draft pattern (live ids 6, 44, 48): stored draft + Accept.
+    for (const extra of [null, {}, { review_decision: 'accepted' }]) {
+      const row = extra && extra.review_decision ? extra : { review_decision: 'accepted', ...(extra || {}) };
+      assert.strictEqual(loadStatusLabel('draft', null, row), LABELS.accepted, 'accepted draft');
+      assert.strictEqual(loadStatusClass('draft', null, row), 'approved');
+    }
+    // Submitted + accepted pattern (live id 43).
+    assert.strictEqual(loadStatusLabel('submitted', null, { review_decision: 'accepted' }), LABELS.accepted);
+    assert.strictEqual(loadStatusClass('submitted', null, { review_decision: 'accepted' }), 'approved');
+    // Accepting a load must leave Submitted – Pending Approval.
+    assert.notStrictEqual(
+      loadStatusLabel('submitted', null, { review_decision: 'accepted' }),
+      LABELS.submitted
+    );
+    // Approved for Settlement and Settled win over a leftover Accept mark.
+    assert.strictEqual(loadStatusLabel('approved', null, { review_decision: 'accepted' }), LABELS.approved);
+    assert.strictEqual(loadStatusLabel('approved', 'approved', { review_decision: 'accepted' }), LABELS.settled);
+    // Draft – Rejected from the reject fields, including a draft-only review reject.
+    assert.strictEqual(loadStatusLabel('draft', null, { review_decision: 'rejected' }), LABELS.rejected);
+    assert.strictEqual(loadStatusLabel('draft', null, { rejection_reason: 'Fix the ticket' }), LABELS.rejected);
+    assert.strictEqual(loadStatusLabel('draft', null, { rejected_at: '2026-11-16T12:00:00Z' }), LABELS.rejected);
+    assert.strictEqual(loadStatusClass('draft', null, { review_decision: 'rejected' }), 'rejected');
+    // A resubmitted load with a leftover reject mark stays Submitted – Pending Approval.
+    assert.strictEqual(loadStatusLabel('submitted', null, { review_decision: 'rejected' }), LABELS.submitted);
+    assert.strictEqual(loadStatusClass('submitted', null), 'submitted');
+    assert.strictEqual(loadStatusClass('draft', null), 'draft');
+    assert.strictEqual(loadStatusClass('approved', null), 'approved');
+    assert.strictEqual(loadStatusClass('approved', 'approved'), 'approved');
   });
 
   const adminPassword = 'Label-Admin-1';
@@ -175,6 +207,15 @@ function assertNoLegacyStatus(html, where) {
       body: form({ project_name: 'Yard', default_rate: '12', status: 'active' })
     });
     const projectId = readRows(dataDir, 'SELECT id FROM projects ORDER BY id DESC LIMIT 1')[0].id;
+    const ufCustomer = await request(srv.port, auth, { method: 'POST', path: '/customers', body: form({ name: 'Uber Freight' }) });
+    const ufCustomerId = String(ufCustomer.headers.location || '').split('/').pop();
+    await request(srv.port, auth, {
+      method: 'POST',
+      path: `/customers/${ufCustomerId}/projects`,
+      body: form({ project_name: 'Madison Heights', default_rate: '12', status: 'active' })
+    });
+    const ufProjectId = readRows(dataDir, 'SELECT id FROM projects ORDER BY id DESC LIMIT 1')[0].id;
+    assert.notStrictEqual(ufProjectId, projectId);
     const driverRes = await request(srv.port, auth, {
       method: 'POST',
       path: '/drivers',
@@ -199,6 +240,14 @@ function assertNoLegacyStatus(html, where) {
       insert.run('T-APPR', driverId, projectId, 'approved', null, 'none', null, null, null, null);
       insert.run('T-SET', driverId, projectId, 'approved', 'approved', 'none', null, null, null, null);
       insert.run('T-FLOW', driverId, projectId, 'submitted', null, 'none', null, null, null, null);
+      insert.run('T-PLAIN', driverId, projectId, 'draft', null, 'none', null, null, null, null);
+      insert.run('T-TO-ACCEPT', driverId, projectId, 'submitted', null, 'none', null, null, null, null);
+      // Live id 43 pattern: submitted + Accept. Same label on every project.
+      insert.run('T-43', driverId, projectId, 'submitted', null, 'none', null, 'accepted', null, null);
+      // Live Uber Freight accepted-draft pattern (ids 6, 44, 48).
+      insert.run('T-UF-6', driverId, ufProjectId, 'draft', null, 'none', null, 'accepted', null, null);
+      insert.run('T-UF-44', driverId, ufProjectId, 'draft', null, 'none', null, 'accepted', null, null);
+      insert.run('T-UF-48', driverId, ufProjectId, 'draft', null, 'none', null, 'accepted', null, null);
       database.prepare(`
         INSERT INTO driver_settlements (driver_id, week_start, week_end, status, approved_by_name)
         VALUES (?, '2026-11-09', '2026-11-15', 'approved', 'Label Admin')
@@ -208,13 +257,16 @@ function assertNoLegacyStatus(html, where) {
     const idOf = (ticket) => readRows(dataDir, 'SELECT id FROM loads WHERE ticket_number = ?', [ticket])[0].id;
     const adminCookie = { Cookie: cookieHeader(admin) };
 
-    await check('admin Loads list renders all four labels and keeps review badges', async () => {
+    await check('admin Loads list renders all labels and keeps review badges', async () => {
       // Item 5: the main Loads screen shows Draft and Submitted loads; Approved for Settlement and
-      // Settled loads are listed under ?view=approved.
+      // Settled loads are listed under ?view=approved. Accepted loads still live on the main list
+      // because Accept does not change the stored status.
       const list = await request(srv.port, adminCookie, { path: '/loads' });
       assert.strictEqual(list.status, 200, list.body.slice(0, 400));
       assertHasBadge(list.body, 'draft', LABELS.draft);
+      assertHasBadge(list.body, 'rejected', LABELS.rejected);
       assertHasBadge(list.body, 'submitted', LABELS.submitted);
+      assertHasBadge(list.body, 'approved', LABELS.accepted);
       assert.ok(!list.body.includes(`>${LABELS.approved}<`), 'approved loads left the main Loads screen');
       assert.ok(!list.body.includes(`>${LABELS.settled}<`), 'settled loads left the main Loads screen');
       const approvedList = await request(srv.port, adminCookie, { path: '/loads?view=approved' });
@@ -240,10 +292,15 @@ function assertNoLegacyStatus(html, where) {
 
     await check('load page renders each status label', async () => {
       const pages = [
-        ['T-DRAFT', 'draft', LABELS.draft],
+        ['T-DRAFT', 'rejected', LABELS.rejected],
+        ['T-PLAIN', 'draft', LABELS.draft],
         ['T-SUB', 'submitted', LABELS.submitted],
         ['T-APPR', 'approved', LABELS.approved],
-        ['T-SET', 'approved', LABELS.settled]
+        ['T-SET', 'approved', LABELS.settled],
+        ['T-43', 'approved', LABELS.accepted],
+        ['T-UF-6', 'approved', LABELS.accepted],
+        ['T-UF-44', 'approved', LABELS.accepted],
+        ['T-UF-48', 'approved', LABELS.accepted]
       ];
       for (const [ticket, status, label] of pages) {
         const page = await request(srv.port, adminCookie, { path: `/loads/${idOf(ticket)}` });
@@ -282,11 +339,13 @@ function assertNoLegacyStatus(html, where) {
         const page = await request(srv.port, driverCookie, { path: pathName });
         assert.strictEqual(page.status, 200, `${pathName} ${page.body.slice(0, 300)}`);
         assertHasBadge(page.body, 'draft', LABELS.draft);
+        assertHasBadge(page.body, 'rejected', LABELS.rejected);
         assertHasBadge(page.body, 'submitted', LABELS.submitted);
         assertHasBadge(page.body, 'approved', LABELS.approved);
+        assertHasBadge(page.body, 'approved', LABELS.accepted);
         assert.ok(page.body.includes(`${LABELS.approved} 1`), pathName);
-        assert.ok(page.body.includes(`${LABELS.submitted} 3`), pathName);
-        assert.ok(page.body.includes(`${LABELS.draft} 1`), pathName);
+        assert.ok(page.body.includes(`${LABELS.submitted} 5`), pathName);
+        assert.ok(page.body.includes(`${LABELS.draft} 5`), pathName);
         assert.ok(!page.body.includes(badge('approved', LABELS.settled)), pathName);
         assert.ok(!page.body.includes('<strong>T-SET</strong>'), pathName);
         assertNoLegacyStatus(page.body, pathName);
@@ -325,18 +384,49 @@ function assertNoLegacyStatus(html, where) {
       const loads = JSON.parse(list.body).loads;
       const byTicket = Object.fromEntries(loads.map((row) => [row.ticket_number, row]));
       assert.strictEqual(byTicket['T-DRAFT'].status, 'draft');
-      assert.strictEqual(byTicket['T-DRAFT'].status_label, LABELS.draft);
+      assert.strictEqual(byTicket['T-DRAFT'].status_label, LABELS.rejected);
+      assert.strictEqual(byTicket['T-PLAIN'].status, 'draft');
+      assert.strictEqual(byTicket['T-PLAIN'].status_label, LABELS.draft);
       assert.strictEqual(byTicket['T-SUB'].status, 'submitted');
       assert.strictEqual(byTicket['T-SUB'].status_label, LABELS.submitted);
       assert.strictEqual(byTicket['T-APPR'].status, 'approved');
       assert.strictEqual(byTicket['T-APPR'].status_label, LABELS.approved);
       assert.strictEqual(byTicket['T-SET'].status, 'approved');
       assert.strictEqual(byTicket['T-SET'].status_label, LABELS.settled);
+      assert.strictEqual(byTicket['T-43'].status, 'submitted');
+      assert.strictEqual(byTicket['T-43'].status_label, LABELS.accepted);
+      assert.strictEqual(byTicket['T-UF-6'].status, 'draft');
+      assert.strictEqual(byTicket['T-UF-6'].status_label, LABELS.accepted);
+      assert.strictEqual(byTicket['T-UF-44'].status, 'draft');
+      assert.strictEqual(byTicket['T-UF-44'].status_label, LABELS.accepted);
+      assert.strictEqual(byTicket['T-UF-48'].status, 'draft');
+      assert.strictEqual(byTicket['T-UF-48'].status_label, LABELS.accepted);
       const one = await request(srv.port, { Authorization: `Bearer ${token}` }, { path: `/api/logan/loads/${idOf('T-SET')}` });
       assert.strictEqual(one.status, 200);
       const load = JSON.parse(one.body).load;
       assert.strictEqual(load.status, 'approved');
       assert.strictEqual(load.status_label, LABELS.settled);
+    });
+
+    await check('Accepting a load moves the label off Submitted – Pending Approval', async () => {
+      const acceptId = idOf('T-TO-ACCEPT');
+      const before = await request(srv.port, adminCookie, { path: `/loads/${acceptId}` });
+      assertHasBadge(before.body, 'submitted', LABELS.submitted);
+      const accepted = await request(srv.port, auth, {
+        method: 'POST',
+        path: `/loads/${acceptId}/review-decision`,
+        body: form({ decision: 'accepted' })
+      });
+      assert.strictEqual(accepted.status, 302, accepted.body.slice(0, 300));
+      const row = readRows(dataDir, 'SELECT status, settlement_status, review_decision FROM loads WHERE id = ?', [acceptId])[0];
+      assert.strictEqual(row.status, 'submitted');
+      assert.ok(row.settlement_status == null || row.settlement_status === '');
+      assert.strictEqual(row.review_decision, 'accepted');
+      const page = await request(srv.port, adminCookie, { path: `/loads/${acceptId}` });
+      assert.strictEqual(page.status, 200, page.body.slice(0, 300));
+      assertHasBadge(page.body, 'approved', LABELS.accepted);
+      assert.ok(!page.body.includes(badge('submitted', LABELS.submitted)));
+      assertNoLegacyStatus(page.body, 'accept review page');
     });
 
     await check('Approve keeps status approved and the flash uses Approved for Settlement', async () => {
@@ -357,7 +447,7 @@ function assertNoLegacyStatus(html, where) {
       assertNoLegacyStatus(page.body, 'approve flash');
     });
 
-    await check('Reject to Draft stores draft and shows Draft', async () => {
+    await check('Reject to Draft stores draft and shows Draft – Rejected', async () => {
       const flowId = idOf('T-FLOW');
       const rejected = await request(srv.port, auth, {
         method: 'POST',
@@ -372,7 +462,7 @@ function assertNoLegacyStatus(html, where) {
       assert.strictEqual(row.rejection_reason, 'Need a clearer ticket');
       const page = await request(srv.port, adminCookie, { path: rejected.headers.location });
       assert.strictEqual(page.status, 200, page.body.slice(0, 300));
-      assertHasBadge(page.body, 'draft', LABELS.draft);
+      assertHasBadge(page.body, 'rejected', LABELS.rejected);
       assert.ok(page.body.includes('Load sent back to the driver as Draft.'));
       assert.ok(!page.body.includes('>Approve for Settlement</button>'));
       assertNoLegacyStatus(page.body, 'reject flash');

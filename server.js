@@ -10,7 +10,7 @@ const Database = require('better-sqlite3');
 const fuelCalc = require('./lib/fuel-surcharge');
 const loadDate = require('./lib/load-date');
 const loadNumber = require('./lib/load-number');
-const { loadStatusLabel } = require('./lib/load-status');
+const { loadStatusLabel, loadStatusClass } = require('./lib/load-status');
 const loadReview = require('./lib/load-review');
 const loganWebhook = require('./lib/logan-webhook');
 const quoWebhook = require('./lib/quo-webhook');
@@ -327,6 +327,7 @@ function loadFuelSurcharge(load, fuelRates) {
 }
 app.locals.loadFuelSurcharge = loadFuelSurcharge;
 app.locals.loadStatusLabel = loadStatusLabel;
+app.locals.loadStatusClass = loadStatusClass;
 app.locals.loadOriginLabel = loadOriginLabel;
 app.locals.reviewStatusLabel = loadReview.reviewStatusLabel;
 app.locals.reviewStatusClass = loadReview.reviewStatusClass;
@@ -1381,7 +1382,7 @@ function assessLoad(load, hasFile) {
     if (rankLevel(next) < rankLevel(level)) level = next;
     notes.push(note);
   };
-  if (load.status === 'submitted') bump('yellow', loadStatusLabel(load.status, load.settlement_status));
+  if (load.status === 'submitted') bump('yellow', loadStatusLabel(load.status, load.settlement_status, load));
   if (!hasFile && !load.ticket_number) bump('red', 'Missing ticket number and ticket file');
   else if (!hasFile) bump('yellow', 'Missing ticket file');
   else if (!load.ticket_number) bump('yellow', 'Missing ticket number');
@@ -1592,7 +1593,7 @@ function collectAlerts(user) {
         const onlyTruck = gaps.length === 1 && gaps[0] === 'Truck';
         pushAlert(alerts, onlyTruck ? 'yellow' : 'red', 'Load', name, `Submitted load missing: ${gaps.join(', ')}`, href);
       } else {
-        pushAlert(alerts, 'yellow', 'Load', name, loadStatusLabel(load.status, load.settlement_status), href);
+        pushAlert(alerts, 'yellow', 'Load', name, loadStatusLabel(load.status, load.settlement_status, load), href);
       }
       return;
     }
@@ -2318,7 +2319,7 @@ app.post('/loads/:id/delete', requireAuth, (req, res) => {
     `date ${load.load_date || '—'}`,
     `driver ${load.driver_name || 'Unassigned'}`,
     `project ${load.project_display || '—'}`,
-    `status ${loadStatusLabel(load.status, load.settlement_status)}`,
+    `status ${loadStatusLabel(load.status, load.settlement_status, load)}`,
     `${files.length} ticket file${files.length === 1 ? '' : 's'}`
   ].join(' · ');
   const erase = db.transaction(() => {

@@ -1,7 +1,7 @@
 <%- include('partials/open', { title: 'Review Load', user: user, active: 'loads', headerTitle: 'Review Load', backHref: '/loads', bodyClass: 'load-screen' }) %>
 <h1>Review Load <%= displayLoadNumber(load.load_number) %></h1>
 <p>
-  <span class="status <%= load.status %>"><%= loadStatusLabel(load.status, load.settlement_status) %></span>
+  <span class="status <%= loadStatusClass(load.status, load.settlement_status, load) %>"><%= loadStatusLabel(load.status, load.settlement_status, load) %></span>
   <% const origin = loadOriginLabel(load); %>
   <% if (origin) { %><span class="origin-badge"><%= origin %></span><% } %>
   <% if (load.load_date && (load.status === 'approved' || load.settlement_status === 'approved')) { %>
@@ -41,7 +41,7 @@
     </div>
   </div>
 <% } %>
-<% if (saved === 'approved') { %><div class="all-clear"><%= loadStatusLabel(load.status, load.settlement_status) %><%= load.load_date ? ' · ' + settlementWeekLabel(load.load_date) : '' %>.</div><% } %>
+<% if (saved === 'approved') { %><div class="all-clear"><%= loadStatusLabel(load.status, load.settlement_status, load) %><%= load.load_date ? ' · ' + settlementWeekLabel(load.load_date) : '' %>.</div><% } %>
 <% if (saved === 'rejected') { %><div class="reject-note">Load sent back to the driver as Draft.</div><% } %>
 <% if (saved === 'edited') { %><div class="all-clear">Load saved.</div><% } %>
 <% if (saved === 'flag') { %><div class="all-clear">Missing info flag saved.</div><% } %>

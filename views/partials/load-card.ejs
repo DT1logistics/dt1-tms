@@ -2,7 +2,7 @@
   <div>
     <span class="load-number-label">Load # <%= displayLoadNumber(load.load_number) %></span>
     <strong><%= load.ticket_number || 'No Ticket' %></strong>
-    <span class="status <%= load.status %>"><%= loadStatusLabel(load.status, load.settlement_status) %></span>
+    <span class="status <%= loadStatusClass(load.status, load.settlement_status, load) %>"><%= loadStatusLabel(load.status, load.settlement_status, load) %></span>
     <% const origin = loadOriginLabel(load); %>
     <% if (origin) { %><span class="origin-badge"><%= origin %></span><% } %>
     <% if (user.role === 'admin' && load.review_status === 'flagged_missing_info') { %>
