@@ -86,13 +86,14 @@ const h = require('./helpers/server');
       assert.strictEqual(row(id).review_decision, 'accepted');
     });
 
-    await check('rejecting a Draft only records the decision (nothing to send back)', async () => {
+    await check('rejecting a Draft stays Draft and always saves the rejection reason', async () => {
       const id = await create('REJ-DRAFT', 'draft');
       await reject(id, 'Not needed');
       const r = row(id);
       assert.strictEqual(r.status, 'draft');
       assert.strictEqual(r.review_decision, 'rejected');
-      assert.strictEqual(r.rejection_reason, null);
+      assert.strictEqual(r.rejection_reason, 'Not needed');
+      assert.ok(r.rejected_at);
     });
   } finally {
     await h.stop(srv.child);

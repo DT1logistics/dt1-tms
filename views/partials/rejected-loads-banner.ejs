@@ -1,0 +1,33 @@
+<% if (typeof rejectedLoads !== 'undefined' && rejectedLoads && rejectedLoads.length) { %>
+  <div class="card assigned-load-banner rejected-load-banner" id="rejected-loads-banner">
+    <div class="assigned-load-banner-head">
+      <span class="assigned-load-icon">⚠️</span>
+      <div>
+        <strong>Rejected – needs your attention</strong>
+        <div class="muted"><%= rejectedLoads.length === 1 ? 'This load was sent back as Draft – Rejected. Open it, fix what was requested, and resubmit.' : ('You have ' + rejectedLoads.length + ' loads sent back as Draft – Rejected. Open each one, fix what was requested, and resubmit.') %></div>
+      </div>
+    </div>
+    <div class="assigned-load-list">
+      <% rejectedLoads.forEach(function(load) { %>
+        <div class="assigned-load-item" data-rejected-load="<%= load.id %>">
+          <div class="assigned-load-info">
+            <strong><%= load.load_number ? load.load_number : ('Load #' + load.id) %><%= load.ticket_number ? ' · Ticket ' + load.ticket_number : '' %><%= load.project_display ? ' — ' + load.project_display : '' %></strong>
+            <div>
+              <span class="status <%= loadStatusClass(load.status, load.settlement_status, load) %>"><%= loadStatusLabel(load.status, load.settlement_status, load) %></span>
+            </div>
+            <div class="muted">
+              Date: <%= formatLoadDate(load.load_date) || 'TBD' %>
+              <% const rejectedAt = load.rejected_at || load.review_decision_at; %>
+              <% if (rejectedAt) { %> · Rejected <%= auditStamp(rejectedAt) %><% } %>
+            </div>
+            <% const reason = String(load.rejection_reason || load.review_decision_reason || '').trim(); %>
+            <% if (reason) { %>
+              <div class="reject-note"><strong>Reason:</strong> <%= reason %></div>
+            <% } %>
+          </div>
+          <a href="/loads/<%= load.id %>/edit" class="btn assigned-load-cta">Open and resubmit &rarr;</a>
+        </div>
+      <% }) %>
+    </div>
+  </div>
+<% } %>

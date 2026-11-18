@@ -1,8 +1,8 @@
 <%- include('partials/open', { title: load && load.id ? 'Edit Load' : 'New Load', user: user, active: load && load.id ? 'loads' : 'new-load', headerTitle: load && load.id ? 'Edit Load' : 'New Load', backHref: '/loads', bodyClass: 'load-screen' }) %>
 <h1><%= load && load.id ? 'Edit Load' : 'New Load' %><% if (load && load.id) { %> <%= displayLoadNumber(load.load_number) %><% } %></h1>
 <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
-<% if (load && load.status === 'draft' && load.rejection_reason) { %>
-  <div class="reject-note"><strong>This load was sent back as Draft.</strong> <%= load.rejection_reason %></div>
+<% if (load && isRejectedDraft(load)) { %>
+  <div class="reject-note"><strong>This load was sent back as Draft.</strong> <%= load.rejection_reason || load.review_decision_reason || '' %></div>
 <% } %>
 <% if (user.role !== 'admin' && load && load.id && load.status === 'submitted') { %>
   <p class="muted">This load is Submitted. You can edit it until the admin approves it for settlement; it stays Submitted when you save.</p>

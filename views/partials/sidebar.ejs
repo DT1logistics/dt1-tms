@@ -4,7 +4,7 @@
   </a>
   <nav class="nav-links">
     <a class="<%= active === 'home' ? 'active' : '' %>" href="/">Home</a>
-    <a class="<%= active === 'loads' ? 'active' : '' %>" href="/loads">Loads</a>
+    <a class="<%= active === 'loads' ? 'active' : '' %>" href="/loads">Loads<% if (user.role !== 'admin' && typeof rejectedLoadCount !== 'undefined' && rejectedLoadCount) { %> <span class="badge red nav-badge"><%= rejectedLoadCount %></span><% } %></a>
     <a class="<%= active === 'new-load' ? 'active' : '' %>" href="/loads/new">New Load</a>
     <a class="<%= active === 'receipts' ? 'active' : '' %>" href="/receipts">Receipts</a>
     <a class="<%= active === 'fuel' ? 'active' : '' %>" href="/fuel">Fuel Log</a>
