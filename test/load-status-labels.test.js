@@ -344,8 +344,10 @@ function assertNoLegacyStatus(html, where) {
         assertHasBadge(page.body, 'approved', LABELS.approved);
         assertHasBadge(page.body, 'approved', LABELS.accepted);
         assert.ok(page.body.includes(`${LABELS.approved} 1`), pathName);
-        assert.ok(page.body.includes(`${LABELS.submitted} 5`), pathName);
-        assert.ok(page.body.includes(`${LABELS.draft} 5`), pathName);
+        assert.ok(page.body.includes(`${LABELS.accepted} 4`), pathName);
+        assert.ok(page.body.includes(`${LABELS.submitted} 4`), pathName);
+        assert.ok(page.body.includes(`${LABELS.rejected} 1`), pathName);
+        assert.ok(page.body.includes(`${LABELS.draft} 1`), pathName);
         assert.ok(!page.body.includes(badge('approved', LABELS.settled)), pathName);
         assert.ok(!page.body.includes('<strong>T-SET</strong>'), pathName);
         assertNoLegacyStatus(page.body, pathName);

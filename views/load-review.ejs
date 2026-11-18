@@ -368,7 +368,7 @@
   </form>
 
   <div class="review-actions">
-    <% if (load.status === 'submitted') { %>
+    <% if (canApproveForSettlement(load)) { %>
       <form method="POST" action="/loads/<%= load.id %>/approve">
         <button class="approve" type="submit">Approve for Settlement</button>
       </form>

@@ -10,9 +10,9 @@
         <%= week.count %> load<%= week.count === 1 ? '' : 's' %>
         · Qty/Wet Ton <%= week.qty %>
         <% if (user.role === 'admin') { %>· Driver Pay <%= usd(week.approvedPay) %><% } %>
-        · <%= loadStatusLabel('approved', null) %> <%= week.approvedCount %>
-        · <%= loadStatusLabel('submitted', null) %> <%= week.submittedCount %>
-        · <%= loadStatusLabel('draft', null) %> <%= week.draftCount %>
+        <% (weekSummaryLabels || []).forEach(function (label) { %>
+        · <%= label %> <%= (week.statusLabelCounts && week.statusLabelCounts[label]) || 0 %>
+        <% }) %>
       </div>
     </summary>
     <div class="week-loads">

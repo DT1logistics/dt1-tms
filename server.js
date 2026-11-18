@@ -10,7 +10,7 @@ const Database = require('better-sqlite3');
 const fuelCalc = require('./lib/fuel-surcharge');
 const loadDate = require('./lib/load-date');
 const loadNumber = require('./lib/load-number');
-const { loadStatusLabel, loadStatusClass } = require('./lib/load-status');
+const { loadStatusLabel, loadStatusClass, loadStatusLabelCounts, WEEK_SUMMARY_LABELS, canApproveForSettlement } = require('./lib/load-status');
 const loadReview = require('./lib/load-review');
 const loganWebhook = require('./lib/logan-webhook');
 const quoWebhook = require('./lib/quo-webhook');
@@ -220,9 +220,13 @@ function driverWeekGroups(driverId, opts) {
     group.collapsed = group.loads.length > 1;
     group.qty = group.loads.reduce((sum, load) => sum + (Number(load.weight_quantity) || 0), 0);
     group.approvedPay = group.loads.reduce((sum, load) => sum + (load.showPay ? load.payInfo.pay : 0), 0);
-    group.approvedCount = group.loads.filter((load) => load.status === 'approved').length;
-    group.submittedCount = group.loads.filter((load) => load.status === 'submitted').length;
-    group.draftCount = group.loads.filter((load) => load.status === 'draft').length;
+    const statusLabelCounts = loadStatusLabelCounts(group.loads);
+    group.statusLabelCounts = statusLabelCounts;
+    group.approvedCount = statusLabelCounts['Approved for Settlement'];
+    group.acceptedCount = statusLabelCounts['Approved'];
+    group.submittedCount = statusLabelCounts['Submitted – Pending Approval'];
+    group.rejectedCount = statusLabelCounts['Draft – Rejected'];
+    group.draftCount = statusLabelCounts['Draft'];
     return group;
   };
   return {
@@ -328,6 +332,8 @@ function loadFuelSurcharge(load, fuelRates) {
 app.locals.loadFuelSurcharge = loadFuelSurcharge;
 app.locals.loadStatusLabel = loadStatusLabel;
 app.locals.loadStatusClass = loadStatusClass;
+app.locals.canApproveForSettlement = canApproveForSettlement;
+app.locals.weekSummaryLabels = WEEK_SUMMARY_LABELS;
 app.locals.loadOriginLabel = loadOriginLabel;
 app.locals.reviewStatusLabel = loadReview.reviewStatusLabel;
 app.locals.reviewStatusClass = loadReview.reviewStatusClass;
@@ -2268,11 +2274,16 @@ app.get('/loads', requireAuth, (req, res) => {
 
 app.post('/loads/:id/approve', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/loads');
+  const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+  if (!load) return res.redirect('/loads');
+  if (!canApproveForSettlement(load)) {
+    return res.redirect(`/loads/${req.params.id}`);
+  }
   const result = db.prepare(`
     UPDATE loads
     SET status = 'approved', approved_by = ?, approved_by_name = ?, approved_at = CURRENT_TIMESTAMP,
         rejection_reason = NULL, rejected_by = NULL, rejected_by_name = NULL, rejected_at = NULL
-    WHERE id = ? AND status = 'submitted'
+    WHERE id = ? AND status IN ('submitted', 'draft') AND IFNULL(settlement_status, '') != 'approved'
   `).run(req.session.user.id, actorName(req), req.params.id);
   if (result.changes) logAudit(req, 'Approved', 'load', req.params.id, loadStatusLabel('approved', null));
   res.redirect(`/loads/${req.params.id}${result.changes ? '?saved=approved' : ''}`);
@@ -2284,9 +2295,11 @@ app.post('/loads/:id/reject', requireAuth, (req, res) => {
   const result = db.prepare(`
     UPDATE loads
     SET status = 'draft', rejection_reason = ?, approved_by = NULL, approved_by_name = NULL, approved_at = NULL,
-        settlement_status = NULL, rejected_by = ?, rejected_by_name = ?, rejected_at = CURRENT_TIMESTAMP
+        settlement_status = NULL, rejected_by = ?, rejected_by_name = ?, rejected_at = CURRENT_TIMESTAMP,
+        review_decision = 'rejected', review_decision_reason = ?, review_decision_by = ?,
+        review_decision_by_name = ?, review_decision_at = CURRENT_TIMESTAMP
     WHERE id = ? AND status IN ('submitted', 'approved') AND IFNULL(settlement_status, '') != 'approved'
-  `).run(reason || null, req.session.user.id, actorName(req), req.params.id);
+  `).run(reason || null, req.session.user.id, actorName(req), reason || null, req.session.user.id, actorName(req), req.params.id);
   if (result.changes) logAudit(req, 'Rejected', 'load', req.params.id, reason || 'Sent back to draft');
   if (!result.changes && settlementFinalized(db.prepare('SELECT settlement_status FROM loads WHERE id = ?').get(req.params.id))) {
     return res.redirect(`/loads/${req.params.id}?saved=locked`);
@@ -3057,6 +3070,22 @@ function decideLoadReview(loadId, input) {
   return { load: db.prepare('SELECT * FROM loads WHERE id = ?').get(load.id), sentBack: sendBack };
 }
 
+
+// Going forward only: if an accepted load is reassigned or otherwise saved back
+// to draft, drop the leftover Accept mark so the label is Draft again. Existing
+// rows are not rewritten until one of those actions runs.
+function clearStaleAcceptedReview(loadId) {
+  db.prepare(`
+    UPDATE loads
+    SET review_decision = NULL,
+        review_decision_reason = NULL,
+        review_decision_by = NULL,
+        review_decision_by_name = NULL,
+        review_decision_at = NULL
+    WHERE id = ? AND status = 'draft' AND review_decision = 'accepted'
+  `).run(loadId);
+}
+
 app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) => {
   const isAdmin = req.session.user.role === 'admin';
   const entry = resolveLoadEntry(req, null);
@@ -3178,6 +3207,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     return res.redirect(isAdmin ? `/loads/${existing.id}?saved=locked` : `/loads/${existing.id}`);
   }
   stampLoadApproval(existing.id, req, entry);
+  if (entry.status === 'draft') clearStaleAcceptedReview(existing.id);
   // Standing rule: ticket files are not removed once a load is Approved for Settlement.
   if (!afterApproval) removeSelectedTickets(existing.id, req.body);
   saveTicketFiles(existing.id, req.files, req.session.user.id);
