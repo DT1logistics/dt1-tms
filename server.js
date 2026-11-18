@@ -443,9 +443,9 @@ app.use((req, res, next) => {
   if (req.path === '/api/logan' || req.path.startsWith('/api/logan/')) return next();
   return res.redirect('/change-password');
 });
-// Ticket, BOL, and receipt files live here. The same URLs stay usable for a logged-in
-// driver or admin; anonymous requests are sent to sign in instead of the file.
-app.use('/uploads', requireAuth, express.static(uploadDir));
+// Ticket, BOL, and receipt files are stored in uploadDir and served only through
+// checked routes (see /receipts/:id/file, /loads/:id/files/:fileId, equipment expense
+// files, and the guarded /uploads/:filename handler). There is no open static mount.
 
 function ensureColumn(table, column, definition) {
   try {
@@ -2126,6 +2126,15 @@ function canViewLoad(req, load) {
   return String(load.driver_id) === String(req.session.user.id);
 }
 
+// Receipt files: admin can see every row; a driver can see only a receipt they uploaded.
+// A receipt with no uploader is admin-only.
+function canViewReceipt(user, receipt) {
+  if (!user || !receipt) return false;
+  if (user.role === 'admin') return true;
+  if (receipt.uploaded_by == null || receipt.uploaded_by === '') return false;
+  return String(receipt.uploaded_by) === String(user.id);
+}
+
 function fileContentType(name) {
   const ext = path.extname(String(name || '')).toLowerCase();
   const types = {
@@ -2155,6 +2164,48 @@ function storedTicketPath(file) {
   if (full !== root && !full.startsWith(root + path.sep)) return null;
   return full;
 }
+
+function sendStoredUpload(req, res, file) {
+  if (!file || !file.filename) return res.status(404).send('Not found');
+  const name = file.original_name || file.filename;
+  const download = req.query.download === '1' || ticketFileKind(name) === 'file';
+  res.setHeader('Content-Type', fileContentType(name));
+  res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${safeDownloadName(name)}"`);
+  const full = storedTicketPath(file);
+  if (full && fs.existsSync(full)) return res.sendFile(full);
+  if (file.file_blob) return res.send(Buffer.isBuffer(file.file_blob) ? file.file_blob : Buffer.from(file.file_blob));
+  return res.status(404).send('Not found');
+}
+
+// Old /uploads/<filename> bookmarks: map the name to its record and apply the same
+// ownership checks as the official file routes. Unresolved names are 404.
+app.get('/uploads/:filename', requireAuth, (req, res) => {
+  const filename = path.basename(String(req.params.filename || ''));
+  if (!filename || filename === '.' || filename === '..') return res.status(404).send('Not found');
+  const receipt = db.prepare('SELECT * FROM receipts WHERE filename = ?').get(filename);
+  if (receipt) {
+    if (!canViewReceipt(req.session.user, receipt)) return res.status(404).send('Not found');
+    return sendStoredUpload(req, res, receipt);
+  }
+  const doc = db.prepare('SELECT * FROM documents WHERE filename = ?').get(filename);
+  if (doc) {
+    const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(doc.load_id);
+    if (!canViewLoad(req, load)) return res.status(404).send('Not found');
+    return sendStoredUpload(req, res, doc);
+  }
+  const expense = db.prepare('SELECT * FROM equipment_expenses WHERE filename = ?').get(filename);
+  if (expense) {
+    if (req.session.user.role !== 'admin') return res.status(404).send('Not found');
+    return sendStoredUpload(req, res, expense);
+  }
+  const driverDoc = db.prepare('SELECT * FROM driver_documents WHERE filename = ?').get(filename);
+  if (driverDoc) {
+    const own = String(driverDoc.driver_id) === String(req.session.user.id);
+    if (req.session.user.role !== 'admin' && !own) return res.status(404).send('Not found');
+    return sendStoredUpload(req, res, driverDoc);
+  }
+  return res.status(404).send('Not found');
+});
 
 function removeStoredTicket(file) {
   if (!file) return;
@@ -2289,13 +2340,7 @@ app.get('/loads/:id/files/:fileId', requireAuth, (req, res) => {
   if (!canViewLoad(req, load)) return res.status(404).send('Not found');
   const file = db.prepare('SELECT * FROM documents WHERE id = ? AND load_id = ?').get(req.params.fileId, load.id);
   if (!file) return res.status(404).send('Not found');
-  const download = req.query.download === '1' || ticketFileKind(file.original_name || file.filename) === 'file';
-  res.setHeader('Content-Type', fileContentType(file.original_name || file.filename));
-  res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${safeDownloadName(file.original_name || file.filename)}"`);
-  const full = storedTicketPath(file);
-  if (full && fs.existsSync(full)) return res.sendFile(full);
-  if (file.file_blob) return res.send(Buffer.isBuffer(file.file_blob) ? file.file_blob : Buffer.from(file.file_blob));
-  return res.status(404).send('Not found');
+  return sendStoredUpload(req, res, file);
 });
 
 function findProjectById(projectId) {
@@ -3943,13 +3988,17 @@ app.post('/drivers/:id', requireAuth, (req, res) => {
 
 // Receipts
 app.get('/receipts', requireAuth, (req, res) => {
-  const receipts = db.prepare(`
+  const isAdmin = req.session.user.role === 'admin';
+  const receiptSql = `
     SELECT r.*, u.name as uploader_name
     FROM receipts r
     LEFT JOIN users u ON r.uploaded_by = u.id
+    ${isAdmin ? '' : 'WHERE r.uploaded_by = ?'}
     ORDER BY r.created_at DESC
-  `).all();
-  const isAdmin = req.session.user.role === 'admin';
+  `;
+  const receipts = isAdmin
+    ? db.prepare(receiptSql).all()
+    : db.prepare(receiptSql).all(req.session.user.id);
   let equipmentList = [];
   if (isAdmin) {
     const lines = db.prepare(`
@@ -4083,8 +4132,20 @@ app.post('/receipts', requireAuth, upload.single('receipt_file'), (req, res) => 
   res.redirect('/receipts');
 });
 
+app.get('/receipts/:id/file', requireAuth, (req, res) => {
+  const receipt = db.prepare('SELECT * FROM receipts WHERE id = ?').get(req.params.id);
+  if (!canViewReceipt(req.session.user, receipt)) return res.status(404).send('Not found');
+  return sendStoredUpload(req, res, receipt);
+});
+
+app.get('/receipts/:id', requireAuth, (req, res) => {
+  const receipt = db.prepare('SELECT * FROM receipts WHERE id = ?').get(req.params.id);
+  if (!canViewReceipt(req.session.user, receipt)) return res.status(404).send('Not found');
+  res.redirect('/receipts');
+});
+
 app.post('/receipts/:id/approve', requireAuth, (req, res) => {
-  if (req.session.user.role !== 'admin') return res.redirect('/receipts');
+  if (req.session.user.role !== 'admin') return res.status(404).send('Not found');
   db.prepare(`UPDATE receipts SET status = 'approved' WHERE id = ? AND status = 'pending'`).run(req.params.id);
   // Placeholder: copy to SharePoint would happen here
   res.redirect('/receipts');
@@ -4557,14 +4618,7 @@ app.get('/equipment/:id/expenses/:expenseId/file', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.status(404).send('Not found');
   const file = db.prepare('SELECT * FROM equipment_expenses WHERE id = ? AND equipment_id = ?').get(req.params.expenseId, req.params.id);
   if (!file || !file.filename) return res.status(404).send('Not found');
-  const name = file.original_name || file.filename;
-  const download = req.query.download === '1' || ticketFileKind(name) === 'file';
-  res.setHeader('Content-Type', fileContentType(name));
-  res.setHeader('Content-Disposition', `${download ? 'attachment' : 'inline'}; filename="${safeDownloadName(name)}"`);
-  const full = storedTicketPath(file);
-  if (full && fs.existsSync(full)) return res.sendFile(full);
-  if (file.file_blob) return res.send(Buffer.isBuffer(file.file_blob) ? file.file_blob : Buffer.from(file.file_blob));
-  return res.status(404).send('Not found');
+  return sendStoredUpload(req, res, file);
 });
 
 // "Log to Equipment": create a line item from an existing Receipts / Fuel Log line, reusing its file.
