@@ -2,6 +2,11 @@
 <h1>New Receipt</h1>
 <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
 <form method="POST" action="/receipts" enctype="multipart/form-data" id="receiptForm">
+      <label>Receipt type</label>
+      <div class="receipt-type-picker">
+        <label><input type="radio" name="receipt_type" value="fuel" required> Fuel</label>
+        <label><input type="radio" name="receipt_type" value="expense" required checked> Expense</label>
+      </div>
       <label>Expense Date</label>
       <input type="date" name="expense_date" required>
       <label>Receipt Image / File</label>

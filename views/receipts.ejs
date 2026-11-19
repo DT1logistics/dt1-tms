@@ -1,14 +1,64 @@
 <%- include('partials/open', { title: `Receipts`, user: user, active: 'receipts' }) %>
 <h1>Receipts</h1>
 <% if (typeof logError !== 'undefined' && logError) { %><div class="reject-note"><%= logError %></div><% } %>
+<% if (typeof receiptNotice !== 'undefined' && receiptNotice) { %><div class="success-note"><%= receiptNotice %></div><% } %>
 <a href="/receipts/new" style="display:inline-block;background:#1B365D;color:white;padding:10px 16px;border-radius:8px;text-decoration:none;margin-bottom:16px;">+ New Receipt</a>
+    <% if (user.role === 'admin' && typeof weeklySummary !== 'undefined' && weeklySummary && weeklySummary.length) { %>
+      <section class="weekly-receipt-summary" aria-label="Weekly receipt totals">
+        <h2>Weekly totals</h2>
+        <p class="muted">Monday–Sunday work week. Untyped receipts are counted as Expense. Rejected receipts are left out.</p>
+        <% weeklySummary.forEach(function (week) { %>
+          <div class="weekly-receipt-week">
+            <h3>Week of <%= week.range %></h3>
+            <p class="weekly-receipt-totals"><strong>Fuel</strong> <%= usd(week.totals.fuel) %> · <strong>Expense</strong> <%= usd(week.totals.expense) %> · <strong>Total</strong> <%= usd(week.totals.total) %></p>
+            <div class="weekly-receipt-grid">
+              <div>
+                <h4>By driver</h4>
+                <table>
+                  <thead><tr><th>Driver</th><th>Fuel</th><th>Expense</th><th>Total</th></tr></thead>
+                  <tbody>
+                    <% week.drivers.forEach(function (row) { %>
+                      <tr>
+                        <td><%= row.name %></td>
+                        <td><%= usd(row.totals.fuel) %></td>
+                        <td><%= usd(row.totals.expense) %></td>
+                        <td><%= usd(row.totals.total) %></td>
+                      </tr>
+                    <% }) %>
+                  </tbody>
+                </table>
+              </div>
+              <div>
+                <h4>By truck / unit</h4>
+                <table>
+                  <thead><tr><th>Unit</th><th>Fuel</th><th>Expense</th><th>Total</th></tr></thead>
+                  <tbody>
+                    <% week.units.forEach(function (row) { %>
+                      <tr>
+                        <td><%= row.name %></td>
+                        <td><%= usd(row.totals.fuel) %></td>
+                        <td><%= usd(row.totals.expense) %></td>
+                        <td><%= usd(row.totals.total) %></td>
+                      </tr>
+                    <% }) %>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        <% }) %>
+      </section>
+    <% } %>
     <% if (receipts && receipts.length) { %>
       <% receipts.forEach(r => { %>
         <div style="background:white;padding:16px;border-radius:10px;margin-bottom:12px;">
           <strong><%= r.expense_date %></strong> — <%= r.original_name || 'No file' %>
           <% if (r.filename) { %> · <a href="/receipts/<%= r.id %>/file" target="_blank" rel="noopener">View file</a><% } %><br>
+          Type: <span class="badge"><%= receiptTypeLabel(r.receipt_type) %></span><br>
           Status: <span style="font-weight:bold;"><%= r.status %></span><br>
           Uploaded by: <%= r.uploader_name || 'Unknown' %>
+          <% if (r.flag) { %><div class="reject-note">Needs attention: <%= r.flag %></div><% } %>
+          <% if (r.status === 'rejected' && r.rejection_reason) { %><div class="reject-note">Rejected: <%= r.rejection_reason %></div><% } %>
           <% if (user.role === 'admin' && r.lines && r.lines.length) { %>
             <div class="receipt-lines">
               <% r.lines.forEach(line => { %>
@@ -33,8 +83,19 @@
             </div>
           <% } %>
           <% if (user.role === 'admin' && r.status === 'pending') { %>
-            <form method="POST" action="/receipts/<%= r.id %>/approve" style="margin-top:8px;">
-              <button type="submit" style="background:#155724;color:white;border:none;padding:6px 12px;border-radius:6px;">Approve</button>
+            <div class="receipt-actions">
+              <form method="POST" action="/receipts/<%= r.id %>/approve">
+                <button type="submit" style="background:#155724;color:white;border:none;padding:6px 12px;border-radius:6px;">Approve</button>
+              </form>
+              <form method="POST" action="/receipts/<%= r.id %>/reject" class="receipt-reject-form">
+                <input type="text" name="rejection_reason" placeholder="Rejection reason (optional)" maxlength="2000">
+                <button type="submit" class="secondary">Reject</button>
+              </form>
+            </div>
+          <% } %>
+          <% if (user.role === 'admin' && r.status === 'approved') { %>
+            <form method="POST" action="/receipts/<%= r.id %>/undo" style="margin-top:8px;" onsubmit="return confirm('Undo this approval? Auto-created equipment expenses will be voided. The receipt is kept.');">
+              <button type="submit" class="secondary">Undo approval</button>
             </form>
           <% } %>
         </div>

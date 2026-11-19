@@ -987,3 +987,20 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 .finalize-all-week-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .finalize-all-week-row input[type="date"] { width: auto; margin: 0; }
 .finalize-all-week-row button { margin: 0; }
+
+.receipt-type-picker { display: flex; gap: 16px; margin: 4px 0 12px; }
+.receipt-type-picker label { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.success-note { background: #d4edda; color: #155724; border-radius: 10px; padding: 12px 14px; margin: 10px 0; }
+.weekly-receipt-summary { margin: 8px 0 24px; }
+.weekly-receipt-summary h2 { margin-bottom: 4px; }
+.weekly-receipt-week { background: white; padding: 16px; border-radius: 10px; margin: 12px 0; }
+.weekly-receipt-week h3 { margin: 0 0 8px; }
+.weekly-receipt-totals { margin: 0 0 12px; }
+.weekly-receipt-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.weekly-receipt-grid table { width: 100%; border-collapse: collapse; }
+.weekly-receipt-grid th, .weekly-receipt-grid td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+.weekly-receipt-grid th:not(:first-child), .weekly-receipt-grid td:not(:first-child) { text-align: right; }
+.receipt-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 8px; }
+.receipt-actions form { margin: 0; }
+.receipt-reject-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.receipt-reject-form input[type="text"] { margin: 0; min-width: 220px; }
