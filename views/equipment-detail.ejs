@@ -69,7 +69,7 @@
       <details class="expense-add" <%= candidates.matched.length ? 'open' : '' %>>
         <summary><strong>Log to Equipment from a receipt</strong> <span class="muted">(<%= candidates.matched.length %> tagged to this unit)</span></summary>
         <form class="expense-form" method="POST" action="/equipment/<%= equipment.id %>/expenses-from-receipt">
-          <label for="receipt_line_id">Receipt line (from Receipts / Fuel Log)</label>
+          <label for="receipt_line_id">Receipt line (from Receipts)</label>
           <select id="receipt_line_id" name="receipt_line_id" required>
             <% function candOption(c) { %><option value="<%= c.line_id %>"><%= c.expense_date || 'No date' %> — <%= c.tag || 'untagged' %> — <%= c.description %> — <%= usd(c.amount) %><%= c.uploader_name ? ' (' + c.uploader_name + ')' : '' %><%= c.filename ? '' : ' [no file]' %></option><% } %>
             <% if (candidates.matched.length) { %><optgroup label="Tagged to <%= equipment.number %>"><% candidates.matched.forEach(candOption) %></optgroup><% } %>

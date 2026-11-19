@@ -4690,7 +4690,7 @@ function equipmentExpenseRows(equipmentId) {
   `).all(equipmentId);
 }
 
-// Receipt lines (Receipts / Fuel Log) not yet logged to any equipment; lines whose Truck/Trailer
+// Receipt lines not yet logged to any equipment; lines whose Truck/Trailer
 // tag matches this unit's number are flagged so they are listed first.
 function receiptLineCandidates(equipment) {
   const rows = db.prepare(`
@@ -4846,7 +4846,7 @@ app.get('/equipment/:id/expenses/:expenseId/file', requireAuth, (req, res) => {
   return sendStoredUpload(req, res, file);
 });
 
-// "Log to Equipment": create a line item from an existing Receipts / Fuel Log line, reusing its file.
+// "Log to Equipment": create a line item from an existing Receipts line, reusing its file.
 function logReceiptLineToEquipment(req, lineId, equipment) {
   const line = db.prepare(`
     SELECT rl.*, r.expense_date AS receipt_date, r.filename, r.original_name
@@ -4961,12 +4961,13 @@ app.post('/fuel-rate', requireAuth, (req, res) => {
   res.redirect('/fuel-rate');
 });
 
-// Fuel
+// The Fuel log page was removed in favor of Receipts. Keep the URL from 404ing.
+// Do not touch fuel_rates or /fuel-rate (admin diesel-rate entry and FSC still use those).
 app.get('/fuel', requireAuth, (req, res) => {
-  const rates = db.prepare('SELECT * FROM fuel_rates ORDER BY effective_date DESC').all()
-    .map((row) => ({ ...row, surcharge_percent: calculateSurchargePercent(row.central_atlantic_rate) }));
-  const current = rates[0] || null;
-  res.render('fuel', { user: req.session.user, current, rates });
+  res.redirect('/receipts');
+});
+app.post('/fuel', requireAuth, (req, res) => {
+  res.redirect('/receipts');
 });
 
 // Profile

@@ -387,7 +387,7 @@ function auth(jar, extra) {
       assert.strictEqual(h.readRows(dataDir, 'SELECT status FROM receipts WHERE id = ?', [fuelId])[0].status, 'approved');
     });
 
-    await check('drivers cannot approve, reject, or undo, and Fuel log plus diesel-rate pages stay available', async () => {
+    await check('drivers cannot approve, reject, or undo; Fuel log is gone and diesel-rate entry stays on /fuel-rate', async () => {
       const approve = await h.request(srv.port, driverACookie, { method: 'POST', path: `/receipts/${untypedId}/approve` });
       assert.strictEqual(approve.status, 404);
       const reject = await h.request(srv.port, auth(driverA, { 'Content-Type': 'application/x-www-form-urlencoded' }), {
@@ -399,11 +399,31 @@ function auth(jar, extra) {
       assert.strictEqual(h.readRows(dataDir, 'SELECT status FROM receipts WHERE id = ?', [untypedId])[0].status, 'pending');
       assert.strictEqual(h.readRows(dataDir, 'SELECT status FROM receipts WHERE id = ?', [fuelId])[0].status, 'approved');
 
-      const fuel = await h.request(srv.port, adminCookie, { path: '/fuel' });
-      assert.strictEqual(fuel.status, 200, fuel.body.slice(0, 200));
+      function assertNoFuelLogNav(body, label) {
+        assert.ok(!/href="\/fuel"(?:\s|>)/.test(body), label + ' has no Fuel log link');
+        assert.ok(!/Fuel Log/.test(body), label + ' has no Fuel Log menu text');
+      }
+
+      const driverFuel = await h.request(srv.port, driverACookie, { path: '/fuel' });
+      assert.strictEqual(driverFuel.status, 302, driverFuel.body.slice(0, 200));
+      assert.strictEqual(driverFuel.headers.location, '/receipts');
+      const adminFuel = await h.request(srv.port, adminCookie, { path: '/fuel' });
+      assert.strictEqual(adminFuel.status, 302, adminFuel.body.slice(0, 200));
+      assert.strictEqual(adminFuel.headers.location, '/receipts');
+
+      const receipts = await h.request(srv.port, driverACookie, { path: '/receipts' });
+      assert.strictEqual(receipts.status, 200, receipts.body.slice(0, 200));
+      assertNoFuelLogNav(receipts.body, 'driver receipts');
+      const adminHome = await h.request(srv.port, adminCookie, { path: '/' });
+      assert.strictEqual(adminHome.status, 200, adminHome.body.slice(0, 200));
+      assertNoFuelLogNav(adminHome.body, 'admin home');
+      assert.ok(adminHome.body.includes('href="/fuel-rate"'), 'admin still has Fuel Rate entry point');
+
       const rate = await h.request(srv.port, adminCookie, { path: '/fuel-rate' });
       assert.strictEqual(rate.status, 200, rate.body.slice(0, 200));
       assert.ok(/diesel|fuel rate|central atlantic/i.test(rate.body), 'diesel rate entry still present');
+      assert.ok(/name="central_atlantic_rate"/.test(rate.body), 'diesel rate form still present');
+      assert.ok(/<form[^>]*action="\/fuel-rate"/.test(rate.body), 'diesel rate posts to /fuel-rate');
     });
   } finally {
     await h.stop(srv.child);
