@@ -24,6 +24,14 @@
             <option value="other">Other — type it in</option>
           </select>
           <input type="text" name="lines[0][equipment]" class="equip-other" placeholder="e.g. Truck #1002, Hotshot #1006, or Trailer #5" hidden>
+          <label>Expense type</label>
+          <select name="lines[0][expense_type]" required>
+            <option value="">Select a type…</option>
+            <option value="Fuel">Fuel</option>
+            <option value="Parts">Parts</option>
+            <option value="Maintenance">Maintenance</option>
+            <option value="Other">Other</option>
+          </select>
           <label>Description</label>
           <input type="text" name="lines[0][description]" required>
           <label>Amount</label>
@@ -52,6 +60,14 @@
           ${first ? first.innerHTML : '<option value="">Select a unit…</option><option value="general">General / Shop Supplies &amp; Business Expense</option><option value="other">Other — type it in</option>'}
         </select>
         <input type="text" name="lines[${lineCount}][equipment]" class="equip-other" placeholder="e.g. Truck #1002, Hotshot #1006, or Trailer #5" hidden>
+        <label>Expense type</label>
+        <select name="lines[${lineCount}][expense_type]" required>
+          <option value="">Select a type…</option>
+          <option value="Fuel">Fuel</option>
+          <option value="Parts">Parts</option>
+          <option value="Maintenance">Maintenance</option>
+          <option value="Other">Other</option>
+        </select>
         <label>Description</label>
         <input type="text" name="lines[${lineCount}][description]" required>
         <label>Amount</label>

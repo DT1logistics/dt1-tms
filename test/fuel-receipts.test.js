@@ -225,6 +225,7 @@ function auth(jar, extra) {
         expense_date: '2026-11-18',
         'lines[0][equipment_id]': 'other',
         'lines[0][equipment]': 'Truck #1002',
+        'lines[0][expense_type]': 'Fuel',
         'lines[0][description]': 'Uploaded fuel',
         'lines[0][amount]': '9.50'
       }, { field: 'receipt_file', name: 'upload-fuel.jpg', body: 'FUEL-BYTES' });
@@ -242,6 +243,7 @@ function auth(jar, extra) {
         expense_date: '2026-11-18',
         'lines[0][equipment_id]': 'other',
         'lines[0][equipment]': 'Truck #1002',
+        'lines[0][expense_type]': 'Fuel',
         'lines[0][description]': 'No type',
         'lines[0][amount]': '1.00'
       }, { field: 'receipt_file', name: 'no-type.jpg', body: 'NO-TYPE' });
