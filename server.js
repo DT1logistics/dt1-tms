@@ -16,6 +16,7 @@ const loganWebhook = require('./lib/logan-webhook');
 const quoWebhook = require('./lib/quo-webhook');
 const loganApi = require('./lib/logan-api');
 const equipExpenses = require('./lib/equipment-expenses');
+const receiptsLib = require('./lib/receipts');
 const backup = require('./lib/backup');
 const dataStore = require('./lib/data-store');
 const SqliteSessionStore = require('./lib/sqlite-session-store');
@@ -382,6 +383,7 @@ app.locals.equipmentBadges = equipment.equipmentBadges;
 app.locals.equipmentPowerLabel = equipment.equipmentPowerLabel;
 app.locals.loadTruckLabel = equipment.loadTruckLabel;
 app.locals.equipmentChoiceLabel = equipment.equipmentChoiceLabel;
+app.locals.receiptTypeLabel = receiptsLib.receiptTypeLabel;
 app.locals.auditStamp = auditStamp;
 
 app.use((req, res, next) => {
@@ -1005,6 +1007,14 @@ function initDB() {
     CREATE INDEX IF NOT EXISTS idx_equipment_expenses_equipment ON equipment_expenses(equipment_id, expense_date);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_equipment_expenses_receipt_line ON equipment_expenses(source_receipt_line_id) WHERE source_receipt_line_id IS NOT NULL;
   `);
+  // Additive only: existing receipt rows are not rewritten. NULL receipt_type displays as Expense (untyped).
+  ensureColumn('receipts', 'receipt_type', "TEXT DEFAULT 'expense'");
+  ensureColumn('receipts', 'flag', 'TEXT');
+  ensureColumn('receipts', 'rejection_reason', 'TEXT');
+  ensureColumn('equipment_expenses', 'status', "TEXT DEFAULT 'active'");
+  ensureColumn('equipment_expenses', 'created_via', 'TEXT');
+  ensureColumn('equipment_expenses', 'voided_at', 'DATETIME');
+  ensureColumn('equipment_expenses', 'voided_by', 'INTEGER');
   ensureColumn('equipment', 'vin', 'TEXT');
   ensureColumn('equipment', 'year', 'TEXT');
   ensureColumn('equipment', 'make', 'TEXT');
@@ -4102,7 +4112,7 @@ app.get('/receipts', requireAuth, (req, res) => {
     const lines = db.prepare(`
       SELECT rl.*, e.equipment_id AS logged_equipment_id, eq.number AS logged_equipment_number, eq.type AS logged_equipment_type
       FROM receipt_lines rl
-      LEFT JOIN equipment_expenses e ON e.source_receipt_line_id = rl.id
+      LEFT JOIN equipment_expenses e ON e.source_receipt_line_id = rl.id AND IFNULL(e.status, 'active') != 'voided'
       LEFT JOIN equipment eq ON eq.id = e.equipment_id
       ORDER BY rl.id
     `).all();
@@ -4117,17 +4127,20 @@ app.get('/receipts', requireAuth, (req, res) => {
       r.lines = byReceipt[r.id] || [];
       r.lines.forEach((line) => {
         const match = equipmentList.find((eq) => equipExpenses.receiptTagMatches(line.equipment_type, eq.number));
-        line.is_general = isGeneralReceiptTag(line.equipment_type);
+        line.is_general = receiptsLib.isGeneralReceiptTag(line.equipment_type);
         line.suggested_equipment_id = line.is_general || !match ? null : match.id;
       });
     });
   }
+  const weeklySummary = isAdmin ? receiptsLib.buildWeeklyReceiptSummary(receipts) : [];
   res.render('receipts', {
     user: req.session.user,
     receipts,
     equipmentList,
     categories: equipExpenses.CATEGORIES,
-    logError: isAdmin ? String(req.query.log_error || '') : ''
+    weeklySummary,
+    logError: isAdmin ? String(req.query.log_error || '') : '',
+    receiptNotice: isAdmin ? String(req.query.notice || '') : ''
   });
 });
 
@@ -4146,11 +4159,8 @@ function equipmentUnitTag(eq) {
   return `${kind} ${number.startsWith('#') ? number : '#' + number}`;
 }
 
-const GENERAL_RECEIPT_TAG = 'General / Shop Supplies & Business Expense';
-
-function isGeneralReceiptTag(tag) {
-  return String(tag || '').trim().toLowerCase() === GENERAL_RECEIPT_TAG.toLowerCase();
-}
+const GENERAL_RECEIPT_TAG = receiptsLib.GENERAL_RECEIPT_TAG;
+const isGeneralReceiptTag = receiptsLib.isGeneralReceiptTag;
 
 function receiptLinesFromBody(body) {
   if (Array.isArray(body.lines)) return body.lines.filter(Boolean);
@@ -4206,6 +4216,8 @@ app.get('/receipts/new', requireAuth, (req, res) => {
 
 app.post('/receipts', requireAuth, upload.single('receipt_file'), (req, res) => {
   const parsed = normalizeReceiptLines(req.body);
+  const typed = receiptsLib.parseUploadedReceiptType(req.body.receipt_type);
+  if (typed.error) parsed.errors.push(typed.error);
   if (parsed.errors.length) {
     discardUpload(req.file);
     return res.status(400).render('receipt-form', {
@@ -4216,9 +4228,9 @@ app.post('/receipts', requireAuth, upload.single('receipt_file'), (req, res) => 
   }
   const { expense_date } = req.body;
   const result = db.prepare(`
-    INSERT INTO receipts (expense_date, uploaded_by, filename, original_name, status)
-    VALUES (?, ?, ?, ?, 'pending')
-  `).run(expense_date, req.session.user.id, req.file ? req.file.filename : null, req.file ? req.file.originalname : null);
+    INSERT INTO receipts (expense_date, uploaded_by, filename, original_name, status, receipt_type)
+    VALUES (?, ?, ?, ?, 'pending', ?)
+  `).run(expense_date, req.session.user.id, req.file ? req.file.filename : null, req.file ? req.file.originalname : null, typed.value);
   const receiptId = result.lastInsertRowid;
   const insertLine = db.prepare(`
     INSERT INTO receipt_lines (receipt_id, equipment_type, description, amount)
@@ -4242,11 +4254,126 @@ app.get('/receipts/:id', requireAuth, (req, res) => {
   res.redirect('/receipts');
 });
 
+function receiptEquipmentList() {
+  return db.prepare(`
+    SELECT id, type, number, status, maintenance_status, inactive_reason
+    FROM equipment
+    ORDER BY CASE type WHEN 'truck' THEN 0 WHEN 'hotshot' THEN 1 ELSE 2 END, number
+  `).all();
+}
+
+function approveReceiptToEquipment(req, receipt) {
+  if (receipt.status === 'approved') return { ok: true, already: true };
+  if (receipt.status !== 'pending') return { error: 'Only pending receipts can be approved.' };
+  const lines = db.prepare('SELECT * FROM receipt_lines WHERE receipt_id = ? ORDER BY id').all(receipt.id);
+  const equipmentList = receiptEquipmentList();
+  const problems = [];
+  const toPost = [];
+  lines.forEach((line, index) => {
+    const match = receiptsLib.matchReceiptLineToEquipment(line, equipmentList);
+    if (match.kind === 'general') return;
+    if (match.kind !== 'matched') {
+      const tag = String(line.equipment_type || '').trim() || 'no unit tag';
+      problems.push(`Line ${index + 1} (${tag}): ${match.reason}`);
+      return;
+    }
+    toPost.push({ line, equipment: match.equipment });
+  });
+  if (problems.length) {
+    const flag = problems.join(' ');
+    db.prepare('UPDATE receipts SET flag = ? WHERE id = ?').run(flag, receipt.id);
+    return {
+      error: 'This receipt could not be approved because one or more unit lines could not be matched to equipment. ' + flag,
+      flagged: true
+    };
+  }
+
+  const category = receiptsLib.receiptTypeCategory(receipt.receipt_type);
+  const existingForLine = db.prepare('SELECT * FROM equipment_expenses WHERE source_receipt_line_id = ?');
+  const unvoid = db.prepare(`
+    UPDATE equipment_expenses
+    SET status = 'active', equipment_id = ?, expense_date = ?, category = ?, description = ?, amount = ?,
+        filename = ?, original_name = ?, file_blob = ?, source_receipt_id = ?, created_via = 'receipt_approval',
+        voided_at = NULL, voided_by = NULL, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+  const insert = db.prepare(`
+    INSERT INTO equipment_expenses (
+      equipment_id, expense_date, category, vendor, description, amount, odometer,
+      filename, original_name, file_blob, source_receipt_id, source_receipt_line_id,
+      created_by, status, created_via
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'receipt_approval')
+  `);
+
+  db.transaction(() => {
+    toPost.forEach(({ line, equipment }) => {
+      const existing = existingForLine.get(line.id);
+      const fileName = line.filename || receipt.filename || null;
+      const originalName = line.original_name || receipt.original_name || null;
+      const blob = fileName ? storedFileBytes(fileName) : null;
+      const description = String(line.description || '').trim() || receiptsLib.receiptTypeLabel(receipt.receipt_type);
+      const amount = Number(line.amount) || 0;
+      const expenseDate = receipt.expense_date;
+      if (existing && receiptsLib.isActiveExpense(existing)) return;
+      if (existing) {
+        unvoid.run(equipment.id, expenseDate, category, description, amount, fileName, originalName, blob, receipt.id, existing.id);
+        return;
+      }
+      insert.run(
+        equipment.id, expenseDate, category, null, description, amount, null,
+        fileName, originalName, blob, receipt.id, line.id, req.session.user.id
+      );
+    });
+    db.prepare(`UPDATE receipts SET status = 'approved', flag = NULL WHERE id = ?`).run(receipt.id);
+  })();
+  // Placeholder: copy to SharePoint would happen here
+  return { ok: true };
+}
+
+function voidApprovalExpenses(req, receipt) {
+  if (receipt.status !== 'approved') return { error: 'Only approved receipts can be undone.' };
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE equipment_expenses
+      SET status = 'voided', voided_at = CURRENT_TIMESTAMP, voided_by = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE source_receipt_id = ? AND created_via = 'receipt_approval' AND IFNULL(status, 'active') != 'voided'
+    `).run(req.session.user.id, receipt.id);
+    db.prepare(`UPDATE receipts SET status = 'pending', flag = NULL WHERE id = ?`).run(receipt.id);
+  })();
+  return { ok: true };
+}
+
 app.post('/receipts/:id/approve', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.status(404).send('Not found');
-  db.prepare(`UPDATE receipts SET status = 'approved' WHERE id = ? AND status = 'pending'`).run(req.params.id);
-  // Placeholder: copy to SharePoint would happen here
-  res.redirect('/receipts');
+  const receipt = db.prepare('SELECT * FROM receipts WHERE id = ?').get(req.params.id);
+  if (!receipt) return res.redirect('/receipts');
+  const result = approveReceiptToEquipment(req, receipt);
+  if (result.error) return res.redirect(`/receipts?log_error=${encodeURIComponent(result.error)}`);
+  logAudit(req, 'receipt_approved', 'receipt', receipt.id, result.already ? 'Already approved' : `Approved as ${receiptsLib.receiptTypeLabel(receipt.receipt_type)}`);
+  res.redirect('/receipts?notice=' + encodeURIComponent(result.already ? 'Receipt was already approved.' : 'Receipt approved and posted to equipment.'));
+});
+
+app.post('/receipts/:id/reject', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.status(404).send('Not found');
+  const receipt = db.prepare('SELECT * FROM receipts WHERE id = ?').get(req.params.id);
+  if (!receipt) return res.redirect('/receipts');
+  if (receipt.status !== 'pending') {
+    return res.redirect('/receipts?log_error=' + encodeURIComponent('Only pending receipts can be rejected.'));
+  }
+  const reason = String(req.body.rejection_reason || '').trim().slice(0, 2000) || null;
+  db.prepare(`UPDATE receipts SET status = 'rejected', rejection_reason = ?, flag = NULL WHERE id = ?`).run(reason, receipt.id);
+  logAudit(req, 'receipt_rejected', 'receipt', receipt.id, reason || 'Rejected');
+  res.redirect('/receipts?notice=' + encodeURIComponent('Receipt rejected.'));
+});
+
+app.post('/receipts/:id/undo', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.status(404).send('Not found');
+  const receipt = db.prepare('SELECT * FROM receipts WHERE id = ?').get(req.params.id);
+  if (!receipt) return res.redirect('/receipts');
+  const result = voidApprovalExpenses(req, receipt);
+  if (result.error) return res.redirect(`/receipts?log_error=${encodeURIComponent(result.error)}`);
+  logAudit(req, 'receipt_approval_undone', 'receipt', receipt.id, 'Approval undone; auto-created expenses voided');
+  res.redirect('/receipts?notice=' + encodeURIComponent('Approval undone. Auto-created equipment expenses were voided.'));
 });
 
 // Compliance
@@ -4361,7 +4488,7 @@ app.get('/equipment', requireAuth, (req, res) => {
   if (wantsJson(req)) return res.json({ trucks, hotshots, trailers });
   const expenseYear = expenseReportYear(req);
   const expenseTotals = equipExpenses.totalsByEquipment(
-    db.prepare('SELECT equipment_id, expense_date, amount FROM equipment_expenses').all(), expenseYear);
+    db.prepare("SELECT equipment_id, expense_date, amount FROM equipment_expenses WHERE IFNULL(status, 'active') != 'voided'").all(), expenseYear);
   res.render('equipment', {
     user: req.session.user,
     trucks,
@@ -4558,7 +4685,7 @@ function equipmentExpenseRows(equipmentId) {
            u.name AS created_by_name
     FROM equipment_expenses e
     LEFT JOIN users u ON u.id = e.created_by
-    WHERE e.equipment_id = ?
+    WHERE e.equipment_id = ? AND IFNULL(e.status, 'active') != 'voided'
     ORDER BY e.expense_date DESC, e.id DESC
   `).all(equipmentId);
 }
@@ -4572,7 +4699,7 @@ function receiptLineCandidates(equipment) {
     FROM receipt_lines rl
     JOIN receipts r ON r.id = rl.receipt_id
     LEFT JOIN users u ON u.id = r.uploaded_by
-    WHERE NOT EXISTS (SELECT 1 FROM equipment_expenses e WHERE e.source_receipt_line_id = rl.id)
+    WHERE NOT EXISTS (SELECT 1 FROM equipment_expenses e WHERE e.source_receipt_line_id = rl.id AND IFNULL(e.status, 'active') != 'voided')
     ORDER BY r.expense_date DESC, rl.id DESC
   `).all();
   const loggable = rows.filter((row) => !isGeneralReceiptTag(row.tag));
@@ -4728,8 +4855,10 @@ function logReceiptLineToEquipment(req, lineId, equipment) {
   `).get(lineId);
   if (!line) return { error: 'That receipt line no longer exists.' };
   if (isGeneralReceiptTag(line.equipment_type)) return { error: 'General shop and business expenses are not logged to a truck or trailer.' };
-  const already = db.prepare('SELECT equipment_id FROM equipment_expenses WHERE source_receipt_line_id = ?').get(line.id);
-  if (already) return { error: 'That receipt line is already logged to equipment.', equipmentId: already.equipment_id };
+  const already = db.prepare('SELECT * FROM equipment_expenses WHERE source_receipt_line_id = ?').get(line.id);
+  if (already && receiptsLib.isActiveExpense(already)) {
+    return { error: 'That receipt line is already logged to equipment.', equipmentId: already.equipment_id };
+  }
   const parsed = equipExpenses.parseExpenseInput({
     expense_date: req.body.expense_date || line.receipt_date,
     category: req.body.category,
@@ -4740,13 +4869,29 @@ function logReceiptLineToEquipment(req, lineId, equipment) {
   });
   if (parsed.errors.length) return { error: parsed.errors.join(' ') };
   const v = parsed.value;
-  const result = db.prepare(`
-    INSERT INTO equipment_expenses (equipment_id, expense_date, category, vendor, description, amount, odometer, filename, original_name, file_blob, source_receipt_id, source_receipt_line_id, created_by)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(equipment.id, v.expense_date, v.category, v.vendor, v.description, v.amount, v.odometer,
-    line.filename || null, line.original_name || null, line.filename ? storedFileBytes(line.filename) : null,
-    line.receipt_id, line.id, req.session.user.id);
-  logAudit(req, 'expense_logged_from_receipt', 'equipment', equipment.id, `Expense #${result.lastInsertRowid} from receipt #${line.receipt_id} line #${line.id}: ${v.category} $${v.amount.toFixed(2)}`);
+  const fileName = line.filename || null;
+  const originalName = line.original_name || null;
+  const blob = fileName ? storedFileBytes(fileName) : null;
+  let expenseId;
+  if (already) {
+    db.prepare(`
+      UPDATE equipment_expenses
+      SET equipment_id = ?, expense_date = ?, category = ?, vendor = ?, description = ?, amount = ?, odometer = ?,
+          filename = ?, original_name = ?, file_blob = ?, source_receipt_id = ?, status = 'active',
+          voided_at = NULL, voided_by = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(equipment.id, v.expense_date, v.category, v.vendor, v.description, v.amount, v.odometer,
+      fileName, originalName, blob, line.receipt_id, already.id);
+    expenseId = already.id;
+  } else {
+    const result = db.prepare(`
+      INSERT INTO equipment_expenses (equipment_id, expense_date, category, vendor, description, amount, odometer, filename, original_name, file_blob, source_receipt_id, source_receipt_line_id, created_by, status, created_via)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'manual')
+    `).run(equipment.id, v.expense_date, v.category, v.vendor, v.description, v.amount, v.odometer,
+      fileName, originalName, blob, line.receipt_id, line.id, req.session.user.id);
+    expenseId = result.lastInsertRowid;
+  }
+  logAudit(req, 'expense_logged_from_receipt', 'equipment', equipment.id, `Expense #${expenseId} from receipt #${line.receipt_id} line #${line.id}: ${v.category} $${v.amount.toFixed(2)}`);
   return { ok: true };
 }
 
