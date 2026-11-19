@@ -1,6 +1,13 @@
 <%- include('partials/open', { title: 'Settlements', user: user, active: 'settlements' }) %>
 <h1>Settlements</h1>
 <% if (saved === 'week') { %><div class="all-clear">Weekly driver settlement finalized. Those loads are now Settled and locked, and the driver can see that week's pay.</div><% } %>
+<% if (saved === 'reopened') { %><div class="all-clear">Weekly settlement reopened. Those loads are Approved for Settlement again and can be edited until you re-finalize the week.</div><% } %>
+<% if (typeof error !== 'undefined' && error === 'reopen-reason') { %><div class="error">Enter a reason to reopen a finalized weekly settlement.</div><% } %>
+<% if (user.role === 'admin' && typeof payChangeNotices !== 'undefined' && payChangeNotices && payChangeNotices.length) { %>
+  <% payChangeNotices.forEach(function (change) { %>
+    <div class="reject-note pay-change-note"><strong><%= change.driverName %></strong> (week of <%= change.weekRange %>): Driver pay changed from <%= usd(change.from) %> to <%= usd(change.to) %> after reopen.</div>
+  <% }) %>
+<% } %>
 <% if (saved === 'finalize-all' && typeof finalizeAllResult !== 'undefined' && finalizeAllResult) { %>
   <% const fa = finalizeAllResult; %>
   <% const finalizedCount = (fa.finalized || []).length + (fa.noLoads || []).length; %>
@@ -21,6 +28,11 @@
       </ul>
       Those drivers were not finalized. Use the per-driver Finalize button after those loads are Approved for Settlement.
     </div>
+  <% } %>
+  <% if (user.role === 'admin' && fa.payChanges && fa.payChanges.length) { %>
+    <% fa.payChanges.forEach(function (change) { %>
+      <div class="reject-note pay-change-note"><strong><%= change.driverName %></strong> (week of <%= change.weekRange %>): Driver pay changed from <%= usd(change.from) %> to <%= usd(change.to) %> after reopen.</div>
+    <% }) %>
   <% } %>
   <% if (fa.already && fa.already.length) { %>
     <p class="muted"><%= fa.already.length %> settlement<%= fa.already.length === 1 ? '' : 's' %> were already finalized and were left unchanged.</p>
@@ -65,8 +77,11 @@
             <div class="settlement-meta">
               <%= group.loads.length %> load<%= group.loads.length === 1 ? '' : 's' %>
               · Qty/Wet Ton <%= group.qty %>
-              · Not finalized
+              · <%= group.reopenedSettlement ? 'Reopened (pending re-finalize)' : 'Not finalized' %>
             </div>
+            <% if (group.reopenedSettlement) { %>
+              <div class="muted">Reopened by <%= group.reopenedSettlement.reopened_by_name || 'Admin' %><% if (group.reopenedSettlement.reopened_at) { %> on <%= auditStamp(group.reopenedSettlement.reopened_at) %><% } %><% if (group.reopenedSettlement.reopened_reason) { %> — <%= group.reopenedSettlement.reopened_reason %><% } %> (prior Driver Pay <%= usd(group.reopenedSettlement.prior_driver_pay || 0) %>).</div>
+            <% } %>
             <div class="settlement-amounts">
               <div class="pay-line admin-driver-pay">Driver Pay <%= usd(group.total) %></div>
               <div class="total-load-pay-line">Total Load Pay (invoiced) <%= usd(group.totalLoadPay) %></div>
@@ -127,10 +142,26 @@
         </div>
         <div class="muted">Base <%= usd(group.base) %> · Drive Time <%= usd(group.drive) %> · Self Load <%= usd(group.self) %> · Detention <%= usd(group.detention) %></div>
       <% } %>
+      <% if (user.role === 'admin' && group.prior_driver_pay != null && roundMoney(group.total) !== roundMoney(group.prior_driver_pay)) { %>
+        <div class="reject-note pay-change-note">Driver pay changed from <%= usd(group.prior_driver_pay) %> to <%= usd(group.total) %> after reopen.</div>
+      <% } %>
       <% if (group.approved_by_name) { %>
         <div class="muted">Finalized by <%= group.approved_by_name %><% if (group.approved_at) { %> on <%= auditStamp(group.approved_at) %><% } %></div>
       <% } %>
-      <p><a class="btn btn-secondary" href="/settlements/pdf?<%= user.role === 'admin' ? 'driver_id=' + group.driver_id + '&' : '' %>week_start=<%= group.week_start %>">Download PDF</a></p>
+      <% if (user.role === 'admin' && group.reopened_at) { %>
+        <div class="muted">Reopened earlier by <%= group.reopened_by_name || 'Admin' %> on <%= auditStamp(group.reopened_at) %><% if (group.reopened_reason) { %> — <%= group.reopened_reason %><% } %></div>
+      <% } %>
+      <div class="settlement-actions">
+        <a class="btn btn-secondary" href="/settlements/pdf?<%= user.role === 'admin' ? 'driver_id=' + group.driver_id + '&' : '' %>week_start=<%= group.week_start %>">Download PDF</a>
+        <% if (user.role === 'admin') { %>
+          <form method="POST" action="/settlements/reopen-week" class="reopen-week-form">
+            <input type="hidden" name="driver_id" value="<%= group.driver_id %>">
+            <input type="hidden" name="week_start" value="<%= group.week_start %>">
+            <input type="text" name="reason" placeholder="Reason to reopen" maxlength="2000" required>
+            <button type="submit" class="btn-draft">Reopen week</button>
+          </form>
+        <% } %>
+      </div>
       <% if (group.loads.length) { %>
         <%- include('partials/settlement-loads', { loads: group.loads, user: user }) %>
       <% } %>

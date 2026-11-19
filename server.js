@@ -384,6 +384,7 @@ app.locals.equipmentPowerLabel = equipment.equipmentPowerLabel;
 app.locals.loadTruckLabel = equipment.loadTruckLabel;
 app.locals.equipmentChoiceLabel = equipment.equipmentChoiceLabel;
 app.locals.receiptTypeLabel = receiptsLib.receiptTypeLabel;
+app.locals.roundMoney = roundMoney;
 app.locals.auditStamp = auditStamp;
 
 app.use((req, res, next) => {
@@ -1024,6 +1025,11 @@ function initDB() {
   ensureColumn('fuel_rates', 'updated_by_id', 'INTEGER');
   ensureColumn('fuel_rates', 'updated_at', 'DATETIME');
   ensureColumn('driver_settlements', 'approved_by_name', 'TEXT');
+  ensureColumn('driver_settlements', 'reopened_at', 'DATETIME');
+  ensureColumn('driver_settlements', 'reopened_by', 'INTEGER');
+  ensureColumn('driver_settlements', 'reopened_by_name', 'TEXT');
+  ensureColumn('driver_settlements', 'reopened_reason', 'TEXT');
+  ensureColumn('driver_settlements', 'prior_driver_pay', 'REAL');
   ensureColumn('equipment', 'registration_expiration', 'DATE');
   ensureColumn('equipment', 'inspection_expiration', 'DATE');
   ensureColumn('equipment', 'maintenance_status', "TEXT DEFAULT 'active'");
@@ -3293,6 +3299,16 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
     if (added.length) editChanges.push(`Added ${added.length} ticket file${added.length === 1 ? '' : 's'}`);
     logAudit(req, 'Edited after approval', 'load', existing.id,
       editChanges.length ? editChanges.join('; ') : 'Saved with no field changes');
+    const oldWeek = weekBounds(existing.load_date);
+    const newWeek = weekBounds(values.load_date);
+    const reopenedMatch = (oldWeek && existingDriverSettlement(existing.driver_id, oldWeek.start)?.status === 'reopened')
+      || (newWeek && existingDriverSettlement(values.driver_id, newWeek.start)?.status === 'reopened');
+    if (reopenedMatch) {
+      const oldProj = existing.project_id ? findProjectById(existing.project_id) : null;
+      const newProj = values.project_id ? findProjectById(values.project_id) : null;
+      if (oldWeek && oldProj) markInvoicesNeedingResend([{ project_customer_id: oldProj.customer_id, project_id: oldProj.id }], oldWeek);
+      if (newWeek && newProj) markInvoicesNeedingResend([{ project_customer_id: newProj.customer_id, project_id: newProj.id }], newWeek);
+    }
   } else {
     logAudit(req, entry.auditAction, 'load', existing.id, entry.auditDetail);
   }
@@ -5077,6 +5093,28 @@ function pendingSettlementWeeks() {
     group.loads.push(Object.assign({}, load, { payInfo }));
     group.total += payInfo.pay;
   });
+  const reopenedRows = db.prepare(`
+    SELECT s.*, u.name AS driver_name, u.pay_percentage
+    FROM driver_settlements s
+    JOIN users u ON u.id = s.driver_id
+    WHERE s.status = 'reopened'
+    ORDER BY s.week_start DESC, u.name
+  `).all();
+  reopenedRows.forEach((row) => {
+    const key = `${row.driver_id}:${row.week_start}`;
+    if (!groups.has(key)) {
+      const week = weekBounds(row.week_start) || { start: row.week_start, end: row.week_end, range: `${row.week_start} - ${row.week_end}` };
+      groups.set(key, {
+        driverId: row.driver_id,
+        driver: row.driver_name || 'Driver',
+        percentage: row.pay_percentage,
+        week,
+        loads: [],
+        total: 0
+      });
+    }
+    groups.get(key).reopenedSettlement = row;
+  });
   return Array.from(groups.values()).map((group) => {
     group.qty = group.loads.reduce((sum, load) => sum + (Number(load.weight_quantity) || 0), 0);
     group.status = 'pending';
@@ -5228,6 +5266,7 @@ function customerInvoiceWeeks(filter) {
     invoice.status = customerInvoice.statusFromMark(invoice.mark);
     invoice.changedSinceInvoiced = !!(invoice.mark && invoice.mark.invoiced_at && invoice.mark.invoiced_amount != null
       && roundMoney(invoice.mark.invoiced_amount) !== roundMoney(invoice.totals.total));
+    invoice.needsResending = !!(projectMark && Number(projectMark.needs_resending) === 1 && projectMark.invoiced_at);
     invoice.number = (projectMark && projectMark.invoice_number) || '';
     invoice.invoiceDate = (projectMark && projectMark.invoice_date) || '';
     invoice.includeTickets = projectMark ? Number(projectMark.include_tickets) !== 0 : true;
@@ -5390,13 +5429,19 @@ app.get('/settlements', requireAuth, (req, res) => {
   if (req.session && Object.prototype.hasOwnProperty.call(req.session, 'finalizeAllResult')) {
     delete req.session.finalizeAllResult;
   }
+  const payChangeNotices = req.session.payChangeNotices || [];
+  if (req.session && Object.prototype.hasOwnProperty.call(req.session, 'payChangeNotices')) {
+    delete req.session.payChangeNotices;
+  }
   res.render('settlements', {
     user: req.session.user,
     pendingWeeks,
     pendingWeekBuckets: isAdmin ? pendingWeekBuckets(pendingWeeks) : [],
     approvedWeeks,
     saved: req.query.saved || '',
-    finalizeAllResult
+    error: req.query.error || '',
+    finalizeAllResult,
+    payChangeNotices
   });
 });
 
@@ -5410,6 +5455,57 @@ app.get('/settlements/pdf', requireAuth, (req, res) => {
   return sendPdf(res, name, settlementPdf(group), req.query.inline === '1');
 });
 
+function markInvoicesNeedingResend(loads, week) {
+  if (!week || !week.start || !Array.isArray(loads) || !loads.length) return;
+  const seen = new Set();
+  const findProjectMark = db.prepare('SELECT * FROM project_invoices WHERE customer_id = ? AND project_id = ? AND week_start = ?');
+  const flagProject = db.prepare('UPDATE project_invoices SET needs_resending = 1 WHERE id = ?');
+  const findWeekMark = db.prepare('SELECT * FROM invoice_weeks WHERE customer_id = ? AND week_start = ?');
+  const insertFromWeek = db.prepare(`
+    INSERT INTO project_invoices (
+      customer_id, project_id, week_start, week_end,
+      invoiced_at, invoiced_by, invoiced_by_name, invoiced_amount,
+      paid_at, paid_by, paid_by_name, migrated_from_invoice_week, needs_resending
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+    ON CONFLICT(customer_id, project_id, week_start) DO UPDATE SET needs_resending = 1
+  `);
+  loads.forEach((load) => {
+    const customerId = Number(load.project_customer_id) || 0;
+    const projectId = Number(load.project_id) || 0;
+    const key = `${customerId}:${projectId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const projectMark = findProjectMark.get(customerId, projectId, week.start);
+    if (projectMark) {
+      if (projectMark.invoiced_at) flagProject.run(projectMark.id);
+      return;
+    }
+    const weekMark = findWeekMark.get(customerId, week.start);
+    if (weekMark && weekMark.invoiced_at) {
+      insertFromWeek.run(
+        customerId, projectId, week.start, week.end,
+        weekMark.invoiced_at, weekMark.invoiced_by, weekMark.invoiced_by_name, null,
+        weekMark.paid_at, weekMark.paid_by, weekMark.paid_by_name
+      );
+    }
+  });
+}
+
+function finalizeDriverSettlementRow(driverId, week, actorId, name) {
+  const updated = db.prepare(`
+    UPDATE driver_settlements
+    SET week_end = ?, status = 'approved', approved_by = ?, approved_by_name = ?, approved_at = CURRENT_TIMESTAMP
+    WHERE driver_id = ? AND week_start = ? AND status = 'reopened'
+  `).run(week.end, actorId, name, driverId, week.start);
+  if (updated.changes) return { changes: updated.changes, refinalized: true };
+  const inserted = db.prepare(`
+    INSERT INTO driver_settlements (driver_id, week_start, week_end, status, approved_by, approved_by_name, approved_at)
+    VALUES (?, ?, ?, 'approved', ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(driver_id, week_start) DO NOTHING
+  `).run(driverId, week.start, week.end, actorId, name);
+  return { changes: inserted.changes, refinalized: false };
+}
+
 app.post('/settlements/approve-week', requireAuth, (req, res) => {
   if (req.session.user.role !== 'admin') return res.redirect('/settlements');
   const driverId = parseInt(req.body.driver_id, 10);
@@ -5417,33 +5513,83 @@ app.post('/settlements/approve-week', requireAuth, (req, res) => {
   if (!Number.isInteger(driverId) || !week || week.start !== String(req.body.week_start || '')) {
     return res.redirect('/settlements');
   }
-  const loads = db.prepare(`
-    SELECT id, load_date FROM loads
-    WHERE driver_id = ? AND status = 'approved' AND IFNULL(settlement_status, '') != 'approved'
+  const existing = existingDriverSettlement(driverId, week.start);
+  if (existing && existing.status === 'approved') return res.redirect('/settlements');
+  const wasReopened = !!(existing && existing.status === 'reopened');
+  const loads = db.prepare(loadQuery + `
+    WHERE l.driver_id = ? AND l.status = 'approved' AND IFNULL(l.settlement_status, '') != 'approved'
+    ORDER BY l.load_date, l.id
   `).all(driverId).filter((load) => {
     const bounds = weekBounds(load.load_date);
     return bounds && bounds.start === week.start;
   });
-  if (!loads.length) return res.redirect('/settlements');
+  if (!loads.length && !wasReopened) return res.redirect('/settlements');
+  const newPay = roundMoney(loads.reduce((sum, load) => sum + calcDriverPay(load).pay, 0));
   const mark = db.prepare(`UPDATE loads SET settlement_status = 'approved' WHERE id = ?`);
   const saveWeek = db.transaction(() => {
     loads.forEach((load) => mark.run(load.id));
-    db.prepare(`
-      INSERT INTO driver_settlements (driver_id, week_start, week_end, status, approved_by, approved_by_name, approved_at)
-      VALUES (?, ?, ?, 'approved', ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(driver_id, week_start) DO UPDATE SET
-        week_end = excluded.week_end,
-        status = 'approved',
-        approved_by = excluded.approved_by,
-        approved_by_name = excluded.approved_by_name,
-        approved_at = CURRENT_TIMESTAMP
-    `).run(driverId, week.start, week.end, req.session.user.id, actorName(req));
+    finalizeDriverSettlementRow(driverId, week, req.session.user.id, actorName(req));
   });
   saveWeek();
   logAudit(req, 'Finalized weekly settlement', 'driver_settlement', driverId, `Week of ${week.range} · ${loads.length} load${loads.length === 1 ? '' : 's'} locked`);
   const settledEntry = db.prepare(`INSERT INTO audit_log (actor_id, actor_name, action, entity_type, entity_id, detail) VALUES (?, ?, 'Settled', 'load', ?, ?)`);
   loads.forEach((load) => settledEntry.run(req.session.user.id, actorName(req), load.id, `Weekly settlement finalized (week of ${week.range}); load locked`));
+  if (wasReopened && existing.prior_driver_pay != null && newPay !== roundMoney(existing.prior_driver_pay)) {
+    const prior = roundMoney(existing.prior_driver_pay);
+    const driver = db.prepare('SELECT name FROM users WHERE id = ?').get(driverId);
+    const driverName = (driver && driver.name) || 'Driver';
+    req.session.payChangeNotices = [{ driverId, driverName, weekRange: week.range, from: prior, to: newPay }];
+    logAudit(req, 'Settlement pay changed after reopen', 'driver_settlement', driverId,
+      `Week of ${week.range} · Driver pay changed from ${moneyInput.usd(prior)} to ${moneyInput.usd(newPay)} after reopen`);
+  }
   res.redirect('/settlements?saved=week');
+});
+
+app.post('/settlements/reopen-week', requireAuth, (req, res) => {
+  if (req.session.user.role !== 'admin') return res.redirect('/settlements');
+  const driverId = parseInt(req.body.driver_id, 10);
+  const week = weekBounds(req.body.week_start);
+  if (!Number.isInteger(driverId) || !week || week.start !== String(req.body.week_start || '')) {
+    return res.redirect('/settlements');
+  }
+  const reason = String(req.body.reason || '').trim().slice(0, 2000);
+  if (!reason) return res.redirect('/settlements?error=reopen-reason');
+  const existing = db.prepare("SELECT * FROM driver_settlements WHERE driver_id = ? AND week_start = ? AND status = 'approved'").get(driverId, week.start);
+  if (!existing) return res.redirect('/settlements');
+  const loads = db.prepare(loadQuery + `
+    WHERE l.driver_id = ? AND l.settlement_status = 'approved'
+    ORDER BY l.load_date, l.id
+  `).all(driverId).filter((load) => {
+    const bounds = weekBounds(load.load_date);
+    return bounds && bounds.start === week.start;
+  });
+  const priorPay = roundMoney(loads.reduce((sum, load) => sum + calcDriverPay(load).pay, 0));
+  const unlock = db.prepare(`UPDATE loads SET settlement_status = NULL WHERE id = ? AND settlement_status = 'approved'`);
+  const reopenRow = db.prepare(`
+    UPDATE driver_settlements
+    SET status = 'reopened',
+        reopened_at = CURRENT_TIMESTAMP,
+        reopened_by = ?,
+        reopened_by_name = ?,
+        reopened_reason = ?,
+        prior_driver_pay = ?
+    WHERE id = ? AND status = 'approved'
+  `);
+  const loadHistory = db.prepare(`
+    INSERT INTO audit_log (actor_id, actor_name, action, entity_type, entity_id, detail)
+    VALUES (?, ?, 'Reopened', 'load', ?, ?)
+  `);
+  const actorId = req.session.user.id;
+  const name = actorName(req);
+  db.transaction(() => {
+    loads.forEach((load) => unlock.run(load.id));
+    reopenRow.run(actorId, name, reason, priorPay, existing.id);
+    markInvoicesNeedingResend(loads, week);
+    loads.forEach((load) => loadHistory.run(actorId, name, load.id, `Weekly settlement reopened (week of ${week.range}): ${reason}`));
+  })();
+  logAudit(req, 'Reopened weekly settlement', 'driver_settlement', driverId,
+    `Week of ${week.range} · Prior pay ${moneyInput.usd(priorPay)} · ${loads.length} load${loads.length === 1 ? '' : 's'} unlocked · Reason: ${reason}`);
+  res.redirect('/settlements?saved=reopened');
 });
 
 // Active drivers for Finalize All: role is driver and status is not inactive.
@@ -5480,12 +5626,12 @@ function existingDriverSettlement(driverId, weekStart) {
 
 function classifyFinalizeDriver(driver, week) {
   const existing = existingDriverSettlement(driver.id, week.start);
-  if (existing) return { status: 'already', driver, settlement: existing, loads: [] };
+  if (existing && existing.status === 'approved') return { status: 'already', driver, settlement: existing, loads: [] };
   const unfinished = unfinishedLoadsForWeek(driver.id, week);
   if (unfinished.length) return { status: 'skipped', driver, loads: unfinished };
   const pending = pendingApprovedLoadsForWeek(driver.id, week);
-  if (pending.length) return { status: 'ready', driver, loads: pending };
-  return { status: 'noLoads', driver, loads: [] };
+  if (pending.length) return { status: 'ready', driver, settlement: existing, loads: pending };
+  return { status: 'noLoads', driver, settlement: existing, loads: [] };
 }
 
 function pendingWeekBuckets(pendingWeeks) {
@@ -5518,11 +5664,7 @@ function finalizeAllPreview(week) {
 }
 
 function insertDriverSettlement(driverId, week, actorId, actorName) {
-  return db.prepare(`
-    INSERT INTO driver_settlements (driver_id, week_start, week_end, status, approved_by, approved_by_name, approved_at)
-    VALUES (?, ?, ?, 'approved', ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(driver_id, week_start) DO NOTHING
-  `).run(driverId, week.start, week.end, actorId, actorName);
+  return finalizeDriverSettlementRow(driverId, week, actorId, actorName);
 }
 
 function unfinishedLoadSummary(load) {
@@ -5539,10 +5681,11 @@ app.post('/settlements/finalize-all', requireAuth, (req, res) => {
   const actorId = req.session.user.id;
   const name = actorName(req);
   const mark = db.prepare(`UPDATE loads SET settlement_status = 'approved' WHERE id = ? AND status = 'approved' AND IFNULL(settlement_status, '') != 'approved'`);
-  const applied = { ready: [], noLoads: [], skipped: preview.skipped, already: preview.already };
+  const applied = { ready: [], noLoads: [], skipped: preview.skipped, already: preview.already, payChanges: [] };
   const saveAll = db.transaction(() => {
     preview.ready.forEach((row) => {
-      if (existingDriverSettlement(row.driver.id, week.start)) {
+      const existing = existingDriverSettlement(row.driver.id, week.start);
+      if (existing && existing.status === 'approved') {
         applied.already.push(row);
         return;
       }
@@ -5552,10 +5695,18 @@ app.post('/settlements/finalize-all', requireAuth, (req, res) => {
         applied.already.push(row);
         return;
       }
+      if (existing && existing.status === 'reopened' && existing.prior_driver_pay != null) {
+        const newPay = roundMoney(row.loads.reduce((sum, load) => sum + calcDriverPay(load).pay, 0));
+        const prior = roundMoney(existing.prior_driver_pay);
+        if (newPay !== prior) {
+          applied.payChanges.push({ driverId: row.driver.id, driverName: row.driver.name, weekRange: week.range, from: prior, to: newPay });
+        }
+      }
       applied.ready.push(row);
     });
     preview.noLoads.forEach((row) => {
-      if (existingDriverSettlement(row.driver.id, week.start)) {
+      const existing = existingDriverSettlement(row.driver.id, week.start);
+      if (existing && existing.status === 'approved') {
         applied.already.push(row);
         return;
       }
@@ -5564,10 +5715,20 @@ app.post('/settlements/finalize-all', requireAuth, (req, res) => {
         applied.already.push(row);
         return;
       }
+      if (existing && existing.status === 'reopened' && existing.prior_driver_pay != null) {
+        const prior = roundMoney(existing.prior_driver_pay);
+        if (prior !== 0) {
+          applied.payChanges.push({ driverId: row.driver.id, driverName: row.driver.name, weekRange: week.range, from: prior, to: 0 });
+        }
+      }
       applied.noLoads.push(row);
     });
   });
   saveAll();
+  applied.payChanges.forEach((change) => {
+    logAudit(req, 'Settlement pay changed after reopen', 'driver_settlement', change.driverId,
+      `Week of ${change.weekRange} · Driver pay changed from ${moneyInput.usd(change.from)} to ${moneyInput.usd(change.to)} after reopen`);
+  });
   const finalizedCount = applied.ready.length + applied.noLoads.length;
   const loadCount = applied.ready.reduce((sum, row) => sum + row.loads.length, 0);
   logAudit(req, 'Finalized all weekly settlements', 'driver_settlement', null,
@@ -5590,6 +5751,7 @@ app.post('/settlements/finalize-all', requireAuth, (req, res) => {
     finalized: applied.ready.map((row) => ({ id: row.driver.id, name: row.driver.name, loadCount: row.loads.length })),
     noLoads: applied.noLoads.map((row) => ({ id: row.driver.id, name: row.driver.name })),
     already: applied.already.map((row) => ({ id: row.driver.id, name: row.driver.name })),
+    payChanges: applied.payChanges,
     skipped: applied.skipped.map((row) => ({
       id: row.driver.id,
       name: row.driver.name,
