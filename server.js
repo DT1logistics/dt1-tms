@@ -65,6 +65,7 @@ const moneyInput = require('./lib/money-input');
 const { SimplePdf } = require('./lib/simple-pdf');
 const customerInvoice = require('./lib/customer-invoice');
 const customerInvoicePdf = require('./lib/customer-invoice-pdf');
+const formFlag = require('./lib/form-flag');
 app.locals.usd = moneyInput.usd;
 app.locals.invoiceBillingModeLabel = (mode) => (mode === 'flat_qty_1' ? 'Flat quantity 1 at the project default rate' : 'Actual quantity');
 
@@ -5660,7 +5661,7 @@ app.post('/invoices/generate', requireAuth, (req, res) => {
   if (!params) return res.redirect('/invoices');
   const invoice = findProjectInvoice(params);
   if (!invoice) return res.redirect('/invoices');
-  const includeTickets = String(req.body.include_tickets) === '1' || req.body.include_tickets === 'on';
+  const includeTickets = formFlag.isOn(req.body.include_tickets);
   const result = customerInvoice.applyMark(db, {
     customerId: params.customerId,
     projectId: params.projectId,
