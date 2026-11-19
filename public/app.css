@@ -970,3 +970,20 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
   font-size: 10px;
   line-height: 16px;
 }
+
+.finalize-week { margin: 16px 0 28px; }
+.finalize-week-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.finalize-week-head h3 { margin: 0 0 4px; }
+.finalize-week-head form { margin: 0; }
+.finalize-all-warning ul { margin: 8px 0 0; padding-left: 20px; }
+.finalize-all-week-form { max-width: 640px; margin-top: 20px; }
+.finalize-all-week-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.finalize-all-week-row input[type="date"] { width: auto; margin: 0; }
+.finalize-all-week-row button { margin: 0; }
