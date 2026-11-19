@@ -61,6 +61,8 @@ Review status on a load is `none`, `needs_review`, `flagged_missing_info`, or `c
 | GET | `/api/logan/drivers` | Driver id, name, email, and status, for assignment |
 | POST | `/api/logan/loads` | Create a load. Same checks as the admin form: a driver is required, and a project is required unless `action` is `draft` |
 | POST or PATCH | `/api/logan/loads/:id/review` | Set `review_status` and notes. Cannot accept or reject |
+| GET | `/api/logan/fuel-rate` | Current weekly diesel rate (latest effective date) and computed FSC % |
+| POST | `/api/logan/fuel-rate` | Save the weekly Central Atlantic diesel rate and effective date |
 
 ```bash
 curl -s -H "Authorization: Bearer $LOGAN_API_TOKEN" \
@@ -75,7 +77,19 @@ curl -s -H "Authorization: Bearer $LOGAN_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"action":"submit","driver_id":3,"project_id":5,"ticket_number":"T-100","load_date":"2026-11-03","origin":"Richmond Yard","destination":"Norfolk Pier","weight_quantity":18,"rate":12.5}' \
   https://dt1-tms.onrender.com/api/logan/loads
+
+curl -s -H "Authorization: Bearer $LOGAN_API_TOKEN" \
+  https://dt1-tms.onrender.com/api/logan/fuel-rate
+
+curl -s -H "Authorization: Bearer $LOGAN_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"effective_date":"2026-11-16","central_atlantic_rate":6.309}' \
+  https://dt1-tms.onrender.com/api/logan/fuel-rate
 ```
+
+`POST /api/logan/fuel-rate` does the same save as the admin Fuel Rate form (`POST /fuel-rate`): it writes `fuel_rates.central_atlantic_rate` and stores Surcharge % as `(rate − 4.00) / 10` shown as a percent (so $6.309 → 23.09%). Body fields are `effective_date` (required, `YYYY-MM-DD`) and the diesel price as `central_atlantic_rate` (aliases: `diesel_price`, `diesel_rate`, or `rate`). The price must be greater than 0 and at most 20. Unlike the admin form, which always inserts a new history row, the API is idempotent for the same effective date: a second POST updates the existing row for that date (the latest row, if the form already created more than one) and returns 200. A first POST for that date returns 201.
+
+Fuel surcharge on a load is computed at display and invoice time from the weekly rate whose effective date is on or before the Load Date. It is not stored as a frozen amount on the load. Posting a rate therefore changes the computed FSC for matching loads the same way the admin form does; the `loads` table is not updated.
 
 Reject and accept stay on the admin load page (`POST /loads/:id/review-decision`). The API returns 403 for reject, accept, approve, delete, user, password, and equipment changes.
 
