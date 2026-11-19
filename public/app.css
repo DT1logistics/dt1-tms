@@ -1004,3 +1004,6 @@ a.driver-link { display: block; text-decoration: none; color: inherit; }
 .receipt-actions form { margin: 0; }
 .receipt-reject-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .receipt-reject-form input[type="text"] { margin: 0; min-width: 220px; }
+
+.reopen-week-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.reopen-week-form input[type="text"] { margin: 0; min-width: 200px; }
