@@ -59,7 +59,7 @@
                 <% } else { %>—<% } %>
               </td>
               <td class="num"><%= usd((invoice.amountInvoicedRecorded != null ? invoice.amountInvoicedRecorded : invoice.totals.total) - (invoice.amountReceived || 0)) %></td>
-              <td><span class="status invoice-<%= invoice.status %>"><%= invoiceStatusLabel(invoice.status) %></span></td>
+              <td><span class="status invoice-<%= invoice.status %>"><%= invoiceStatusLabel(invoice.status) %></span><% if (invoice.needsResending) { %> <span class="badge red">Needs re-sending</span><% } %></td>
             </tr>
         <% }) %>
       </tbody>
@@ -88,11 +88,15 @@
       <h3 style="margin-top:0;"><%= invoice.customer_name %> · <%= invoice.project_name %> · Week of <%= invoice.week.range %></h3>
       <p>
         <span class="status invoice-<%= invoice.status %>"><%= invoiceStatusLabel(invoice.status) %></span>
+        <% if (invoice.needsResending) { %><span class="badge red">Needs re-sending</span><% } %>
         <% if (invoice.number) { %><span class="muted">Invoice # <%= invoice.number %></span><% } %>
         <% if (invoice.mark && invoice.mark.invoiced_at) { %><span class="muted"> · Invoiced by <%= invoice.mark.invoiced_by_name %> on <%= auditStamp(invoice.mark.invoiced_at) %> (<%= usd(invoice.mark.invoiced_amount) %>)</span><% } %>
         <% if (invoice.mark && invoice.mark.paid_at) { %><span class="muted"> · Paid, marked by <%= invoice.mark.paid_by_name %> on <%= auditStamp(invoice.mark.paid_at) %></span><% } %>
         <% if (invoice.legacyWeekMark) { %><span class="muted"> · Status carried over from the earlier customer-week mark</span><% } %>
       </p>
+      <% if (invoice.needsResending) { %>
+        <div class="reject-note">Needs re-sending: a finalized driver week on this invoice was reopened. Regenerate the invoice to send an updated copy under the same invoice number<% if (invoice.number) { %> (<%= invoice.number %>)<% } %>.</div>
+      <% } %>
       <% if (invoice.changedSinceInvoiced) { %>
         <div class="reject-note">The total changed after this invoice was marked Invoiced (was <%= usd(invoice.mark.invoiced_amount) %>, now <%= usd(invoice.totals.total) %>). Generate the invoice again to send a corrected PDF under the same invoice number.</div>
       <% } %>
