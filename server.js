@@ -386,6 +386,7 @@ app.locals.loadTruckLabel = equipment.loadTruckLabel;
 app.locals.equipmentChoiceLabel = equipment.equipmentChoiceLabel;
 app.locals.receiptTypeLabel = receiptsLib.receiptTypeLabel;
 app.locals.roundMoney = roundMoney;
+app.locals.lineExpenseTypeLabel = receiptsLib.lineExpenseTypeLabel;
 app.locals.auditStamp = auditStamp;
 
 app.use((req, res, next) => {
@@ -1013,6 +1014,8 @@ function initDB() {
   ensureColumn('receipts', 'receipt_type', "TEXT DEFAULT 'expense'");
   ensureColumn('receipts', 'flag', 'TEXT');
   ensureColumn('receipts', 'rejection_reason', 'TEXT');
+  // Additive only: existing receipt_lines rows are left NULL (no backfill).
+  ensureColumn('receipt_lines', 'expense_type', 'TEXT');
   ensureColumn('equipment_expenses', 'status', "TEXT DEFAULT 'active'");
   ensureColumn('equipment_expenses', 'created_via', 'TEXT');
   ensureColumn('equipment_expenses', 'voided_at', 'DATETIME');
@@ -4125,30 +4128,39 @@ app.get('/receipts', requireAuth, (req, res) => {
     ? db.prepare(receiptSql).all()
     : db.prepare(receiptSql).all(req.session.user.id);
   let equipmentList = [];
-  if (isAdmin) {
+  const receiptIds = receipts.map((r) => r.id);
+  const byReceipt = {};
+  if (receiptIds.length) {
+    const placeholders = receiptIds.map(() => '?').join(', ');
     const lines = db.prepare(`
       SELECT rl.*, e.equipment_id AS logged_equipment_id, eq.number AS logged_equipment_number, eq.type AS logged_equipment_type
       FROM receipt_lines rl
       LEFT JOIN equipment_expenses e ON e.source_receipt_line_id = rl.id AND IFNULL(e.status, 'active') != 'voided'
       LEFT JOIN equipment eq ON eq.id = e.equipment_id
+      WHERE rl.receipt_id IN (${placeholders})
       ORDER BY rl.id
-    `).all();
-    const byReceipt = {};
+    `).all(...receiptIds);
     lines.forEach((line) => { (byReceipt[line.receipt_id] = byReceipt[line.receipt_id] || []).push(line); });
+  }
+  if (isAdmin) {
     equipmentList = db.prepare(`
       SELECT id, type, number, status, maintenance_status, inactive_reason
       FROM equipment
       ORDER BY CASE type WHEN 'truck' THEN 0 WHEN 'hotshot' THEN 1 ELSE 2 END, number
     `).all();
-    receipts.forEach((r) => {
-      r.lines = byReceipt[r.id] || [];
-      r.lines.forEach((line) => {
-        const match = equipmentList.find((eq) => equipExpenses.receiptTagMatches(line.equipment_type, eq.number));
-        line.is_general = receiptsLib.isGeneralReceiptTag(line.equipment_type);
-        line.suggested_equipment_id = line.is_general || !match ? null : match.id;
-      });
-    });
   }
+  receipts.forEach((r) => {
+    r.lines = byReceipt[r.id] || [];
+    r.lines.forEach((line) => {
+      line.is_general = receiptsLib.isGeneralReceiptTag(line.equipment_type);
+      if (!isAdmin) {
+        line.suggested_equipment_id = null;
+        return;
+      }
+      const match = equipmentList.find((eq) => equipExpenses.receiptTagMatches(line.equipment_type, eq.number));
+      line.suggested_equipment_id = line.is_general || !match ? null : match.id;
+    });
+  });
   const weeklySummary = isAdmin ? receiptsLib.buildWeeklyReceiptSummary(receipts) : [];
   res.render('receipts', {
     user: req.session.user,
@@ -4216,12 +4228,15 @@ function normalizeReceiptLines(body) {
     const amountText = String(line.amount == null ? '' : line.amount).trim();
     const equipmentId = String(line.equipment_id || '').trim();
     const equipmentText = String(line.equipment || '').trim();
-    if (!description && !amountText && !equipmentId && !equipmentText) return;
+    const expenseTypeRaw = String(line.expense_type || '').trim();
+    if (!description && !amountText && !equipmentId && !equipmentText && !expenseTypeRaw) return;
     const label = `Line ${index + 1}`;
     if (!description) errors.push(`${label} needs a description.`);
     const amount = parseFloat(amountText);
     if (!amountText || !Number.isFinite(amount)) errors.push(`${label} needs an amount.`);
-    lines.push(Object.assign({}, line, { description, amount }));
+    const typed = receiptsLib.parseLineExpenseType(expenseTypeRaw, { required: true });
+    if (typed.error) errors.push(`${label} ${typed.error}`);
+    lines.push(Object.assign({}, line, { description, amount, expense_type: typed.value || null }));
   });
   if (!lines.length && !errors.length) errors.push('Add at least one receipt line with a description.');
   return { lines, errors };
@@ -4250,11 +4265,11 @@ app.post('/receipts', requireAuth, upload.single('receipt_file'), (req, res) => 
   `).run(expense_date, req.session.user.id, req.file ? req.file.filename : null, req.file ? req.file.originalname : null, typed.value);
   const receiptId = result.lastInsertRowid;
   const insertLine = db.prepare(`
-    INSERT INTO receipt_lines (receipt_id, equipment_type, description, amount)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO receipt_lines (receipt_id, equipment_type, description, amount, expense_type)
+    VALUES (?, ?, ?, ?, ?)
   `);
   parsed.lines.forEach((line) => {
-    insertLine.run(receiptId, receiptLineEquipmentText(line), line.description, line.amount);
+    insertLine.run(receiptId, receiptLineEquipmentText(line), line.description, line.amount, line.expense_type || null);
   });
   res.redirect('/receipts');
 });
@@ -4305,7 +4320,6 @@ function approveReceiptToEquipment(req, receipt) {
     };
   }
 
-  const category = receiptsLib.receiptTypeCategory(receipt.receipt_type);
   const existingForLine = db.prepare('SELECT * FROM equipment_expenses WHERE source_receipt_line_id = ?');
   const unvoid = db.prepare(`
     UPDATE equipment_expenses
@@ -4331,6 +4345,7 @@ function approveReceiptToEquipment(req, receipt) {
       const description = String(line.description || '').trim() || receiptsLib.receiptTypeLabel(receipt.receipt_type);
       const amount = Number(line.amount) || 0;
       const expenseDate = receipt.expense_date;
+      const category = receiptsLib.expenseCategoryForLine(line, receipt);
       if (existing && receiptsLib.isActiveExpense(existing)) return;
       if (existing) {
         unvoid.run(equipment.id, expenseDate, category, description, amount, fileName, originalName, blob, receipt.id, existing.id);

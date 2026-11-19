@@ -59,16 +59,16 @@
           Uploaded by: <%= r.uploader_name || 'Unknown' %>
           <% if (r.flag) { %><div class="reject-note">Needs attention: <%= r.flag %></div><% } %>
           <% if (r.status === 'rejected' && r.rejection_reason) { %><div class="reject-note">Rejected: <%= r.rejection_reason %></div><% } %>
-          <% if (user.role === 'admin' && r.lines && r.lines.length) { %>
+          <% if (r.lines && r.lines.length) { %>
             <div class="receipt-lines">
               <% r.lines.forEach(line => { %>
                 <div class="receipt-line">
-                  <div><strong><%= line.equipment_type || 'No truck/trailer tag' %></strong><% if (line.is_general) { %> <span class="badge">General</span><% } %> — <%= line.description %> — <%= usd(line.amount) %></div>
-                  <% if (line.is_general) { %>
+                  <div><strong><%= line.equipment_type || 'No truck/trailer tag' %></strong><% if (line.is_general) { %> <span class="badge">General</span><% } %><% if (lineExpenseTypeLabel(line.expense_type)) { %> · <%= lineExpenseTypeLabel(line.expense_type) %><% } %> — <%= line.description %> — <%= usd(line.amount) %></div>
+                  <% if (user.role === 'admin' && line.is_general) { %>
                     <div class="muted">Shop supplies and business expenses stay off the equipment log.</div>
-                  <% } else if (line.logged_equipment_id) { %>
+                  <% } else if (user.role === 'admin' && line.logged_equipment_id) { %>
                     <div class="muted">Logged to <a href="/equipment/<%= line.logged_equipment_id %>#expenses"><%= equipmentTypeLabel(line.logged_equipment_type) %> <%= line.logged_equipment_number %></a></div>
-                  <% } else if (equipmentList.length) { %>
+                  <% } else if (user.role === 'admin' && equipmentList.length) { %>
                     <form method="POST" action="/receipts/lines/<%= line.id %>/log-equipment" class="log-equipment-form">
                       <select name="equipment_id" required aria-label="Truck, hotshot, or trailer">
                         <option value="">Truck / Hotshot / Trailer…</option>
