@@ -5221,8 +5221,17 @@ function finishInvoiceTotals(totals) {
 // project-week has no project_invoices row yet; those rows are never deleted.
 function projectBillingMap() {
   const map = new Map();
-  db.prepare('SELECT id, default_rate AS project_default_rate, invoice_min_qty, invoice_billing_mode, project_name FROM projects').all()
-    .forEach((row) => map.set(row.id, row));
+  // Keep project id as the map key only. Merging row.id (or project_name) onto a
+  // load would overwrite load.id, and ticket lookup / invoice line links would
+  // use the project id instead of the load id.
+  db.prepare('SELECT id, default_rate AS project_default_rate, invoice_min_qty, invoice_billing_mode FROM projects').all()
+    .forEach((row) => {
+      map.set(row.id, {
+        project_default_rate: row.project_default_rate,
+        invoice_min_qty: row.invoice_min_qty,
+        invoice_billing_mode: row.invoice_billing_mode
+      });
+    });
   return map;
 }
 

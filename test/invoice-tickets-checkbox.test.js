@@ -59,14 +59,24 @@ function generateBody(fields, ticketValues) {
   const srv = await h.startServer({ DATA_DIR: dataDir, LOGAN_TMS_PASSWORD: adminPassword, LOGAN_API_TOKEN: '', SESSION_SECRET: 'invoice-tickets-test' });
   try {
     const admin = await h.loginAdmin(srv.port, adminPassword);
-    const ids = await h.seedBasics(srv.port, dataDir, admin, { customer: 'Synagro', project: 'West Rock' });
+    // Dummy project first so the invoiced project id is not 1, which would
+    // collide with the first load id and hide a load.id overwrite.
+    const ids = await h.seedBasics(srv.port, dataDir, admin, { customer: 'Synagro', project: 'Dummy Pad' });
     const auth = ids.auth;
     const post = (path, fields) => h.request(srv.port, auth, { method: 'POST', path, body: h.form(fields) });
+
+    const createdProject = await post(`/customers/${ids.customerId}/projects`, {
+      project_name: 'West Rock',
+      default_rate: '9.26',
+      status: 'active'
+    });
+    assert.strictEqual(createdProject.status, 302, createdProject.body.slice(0, 200));
+    const projectId = h.readRows(dataDir, "SELECT id FROM projects WHERE project_name = 'West Rock'")[0].id;
 
     const created = await post('/loads', {
       action: 'approve',
       load_date: '2026-11-13',
-      project_id: ids.projectId,
+      project_id: projectId,
       driver_id: ids.driverId,
       ticket_number: '273698',
       weight_quantity: '23.9',
@@ -75,13 +85,25 @@ function generateBody(fields, ticketValues) {
     });
     assert.strictEqual(created.status, 302, created.body.slice(0, 200));
     const loadId = h.readRows(dataDir, "SELECT id FROM loads WHERE ticket_number = '273698'")[0].id;
+    assert.notStrictEqual(Number(projectId), Number(loadId),
+      `test must use a project id (${projectId}) that differs from the load id (${loadId})`);
     h.writeDb(dataDir, (db) => {
       db.prepare('INSERT INTO documents (load_id, filename, original_name, category, file_blob) VALUES (?, ?, ?, ?, ?)')
         .run(loadId, 'a.jpg', 'ticket-a.jpg', 'load_document', TINY_JPEG);
     });
 
-    const weekFields = { customer_id: ids.customerId, project_id: ids.projectId, week_start: '2026-11-09' };
+    const weekFields = { customer_id: ids.customerId, project_id: projectId, week_start: '2026-11-09' };
 
+    await check('invoice line id is the load id, not the project id', async () => {
+      const page = await h.request(srv.port, auth, { path: '/invoices' });
+      assert.strictEqual(page.status, 200, page.body.slice(0, 200));
+      assert.ok(
+        page.body.includes(`href="/loads/${loadId}"`),
+        `expected invoice line link /loads/${loadId}, project id is ${projectId}`
+      );
+    });
+
+    let checkedPdf;
     await check('checked Attach ticket images redirects with tickets=1 and the PDF has the ticket page', async () => {
       const res = await h.request(srv.port, auth, {
         method: 'POST',
@@ -98,6 +120,7 @@ function generateBody(fields, ticketValues) {
       const text = pdfText(pdf.body);
       assert.ok(text.startsWith('%PDF-1.4'));
       assert.ok(text.includes('Ticket #: 273698'), 'invoicePdf should attach the raster ticket page');
+      checkedPdf = pdf;
     });
 
     await check('unchecked Attach ticket images redirects with tickets=0 and omits ticket pages', async () => {
@@ -114,6 +137,8 @@ function generateBody(fields, ticketValues) {
       const text = pdfText(pdf.body);
       assert.ok(text.startsWith('%PDF-1.4'));
       assert.ok(!text.includes('Ticket #: 273698'), 'unchecked box leaves tickets off');
+      assert.ok(checkedPdf && checkedPdf.body.length > pdf.body.length,
+        `checked PDF (${checkedPdf && checkedPdf.body.length}) should be larger than unchecked (${pdf.body.length})`);
     });
   } finally {
     await h.stop(srv.child);
