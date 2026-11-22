@@ -9,7 +9,7 @@
       <div class="week-meta">
         <%= week.count %> load<%= week.count === 1 ? '' : 's' %>
         · Qty/Wet Ton <%= week.qty %>
-        <% if (user.role === 'admin') { %>· Driver Pay <%= usd(week.approvedPay) %><% } %>
+        <% if (user.role === 'admin') { %>· Contractor Pay <%= usd(week.approvedPay) %><% } %>
         <% (weekSummaryLabels || []).forEach(function (label) { %>
         · <%= label %> <%= (week.statusLabelCounts && week.statusLabelCounts[label]) || 0 %>
         <% }) %>

@@ -44,7 +44,7 @@ const h = require('./helpers/server');
       assert.strictEqual(row.status, 'submitted');
       assert.strictEqual(Number(row.weight_quantity), 22);
       assert.strictEqual(row.origin, 'Quarry B');
-      assert.ok(audit(id, 'Edited').some((e) => /Driver edited the submitted load/.test(e.detail)));
+      assert.ok(audit(id, 'Edited').some((e) => /Contractor edited the submitted load/.test(e.detail)));
     });
 
     await check('after approval the driver cannot edit (no link, server refuses)', async () => {
@@ -85,7 +85,7 @@ const h = require('./helpers/server');
       assert.ok(history.body.includes('Edited after approval by Logan (Operations Manager)'));
       // 30% of 25 x $12 = $90.00
       const settlements = await aGet('/settlements');
-      assert.ok(settlements.body.includes('Driver Pay $90.00'));
+      assert.ok(settlements.body.includes('Contractor Pay $90.00'));
     });
 
     await check('finalizing the week locks the load: no edit, no reject, no delete (server enforced)', async () => {

@@ -5,7 +5,7 @@
       <div class="settlement-load">
         <div><strong>Load # <%= displayLoadNumber(load.load_number) %></strong> · <%= formatLoadDate(load.load_date) || '—' %> · Ticket <%= load.ticket_number || '—' %> · <span class="status <%= loadStatusClass(load.status, load.settlement_status, load) %>"><%= loadStatusLabel(load.status, load.settlement_status, load) %></span></div>
         <div><%= load.project_display || 'Unassigned' %><% if (load.customer_name) { %> · <%= load.customer_name %><% } %></div>
-        <div>Qty/Wet Ton <%= load.weight_quantity != null ? load.weight_quantity : '—' %> · <%= load.payInfo.basis %> · Driver Pay <%= usd(load.payInfo.pay) %><% if (Number(load.detention) === 1) { %> · Detention <%= usd(load.payInfo.detention) %><% } %></div>
+        <div>Qty/Wet Ton <%= load.weight_quantity != null ? load.weight_quantity : '—' %> · <%= load.payInfo.basis %> · Contractor Pay <%= usd(load.payInfo.pay) %><% if (Number(load.detention) === 1) { %> · Detention <%= usd(load.payInfo.detention) %><% } %></div>
         <% if (typeof user !== 'undefined' && user && user.role === 'admin') { %>
           <div class="total-load-pay-line">Total Load Pay (invoiced) <%= usd(loadTotalFor(user, load)) %></div>
         <% } %>

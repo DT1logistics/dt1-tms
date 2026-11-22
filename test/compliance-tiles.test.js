@@ -26,7 +26,7 @@ const sample = [
   { level: 'red', category: 'Equipment', name: 'Truck 2002 inspection', detail: 'Expired · 2020-06-01' },
   { level: 'yellow', category: 'Equipment', name: 'Trailer 3001 registration', detail: 'Expiring ≤45 days · 2026-12-06' },
   { level: 'green', category: 'Equipment', name: 'Truck 2001 inspection', detail: 'Active · 2027-06-01' },
-  { level: 'yellow', category: 'Driver Document', name: 'Alex Driver — Medical Card', detail: 'Expiring ≤45 days · 2026-12-06' },
+  { level: 'yellow', category: 'Contractor Document', name: 'Alex Driver — Medical Card', detail: 'Expiring ≤45 days · 2026-12-06' },
   { level: 'red', category: 'Load', name: 'Load #4 (Alex Driver)', detail: 'Missing ticket number and ticket file' },
   { level: 'yellow', category: 'Load', name: 'Load #5 (Alex Driver)', detail: 'Pending review' },
   { level: 'red', category: 'Password Reset', name: 'Alex Driver', detail: 'Requested a password reset. Email could not be sent.' }
@@ -41,7 +41,7 @@ function queued(name, fn) {
 queued('counts red and yellow alerts separately and ignores other levels', () => {
   const built = tiles.buildComplianceTiles(sample);
   const equipment = built.find((item) => item.title === 'Equipment');
-  const documents = built.find((item) => item.title === 'Driver Documents');
+  const documents = built.find((item) => item.title === 'Contractor Documents');
   const compliance = built.find((item) => item.title === 'Compliance');
   const loads = built.find((item) => item.title === 'Loads');
   const reset = built.find((item) => item.title === 'Password Reset');
@@ -66,10 +66,10 @@ queued('tile accent is red only when the red count is greater than zero', () => 
   assert.strictEqual(byTitle.Equipment.red, true);
   assert.strictEqual(byTitle.Equipment.className, 'quick quick-alert');
 
-  assert.strictEqual(byTitle['Driver Documents'].accent, 'yellow');
-  assert.strictEqual(byTitle['Driver Documents'].red, false);
-  assert.strictEqual(byTitle['Driver Documents'].className, 'quick quick-warn');
-  assert.ok(!byTitle['Driver Documents'].className.includes('quick-alert'));
+  assert.strictEqual(byTitle['Contractor Documents'].accent, 'yellow');
+  assert.strictEqual(byTitle['Contractor Documents'].red, false);
+  assert.strictEqual(byTitle['Contractor Documents'].className, 'quick quick-warn');
+  assert.ok(!byTitle['Contractor Documents'].className.includes('quick-alert'));
 
   assert.strictEqual(byTitle.Compliance.accent, 'neutral');
   assert.strictEqual(byTitle.Compliance.red, false);
@@ -82,7 +82,7 @@ queued('tile accent is red only when the red count is greater than zero', () => 
 queued('a yellow-only category never uses the red accent', () => {
   const built = tiles.buildComplianceTiles([
     { level: 'yellow', category: 'Equipment', name: 'Trailer 3001 registration', detail: 'Expiring ≤45 days · 2026-12-06' },
-    { level: 'yellow', category: 'Driver Document', name: 'Alex Driver — CDL License', detail: 'Expiring ≤45 days · 2026-12-06' },
+    { level: 'yellow', category: 'Contractor Document', name: 'Alex Driver — CDL License', detail: 'Expiring ≤45 days · 2026-12-06' },
     { level: 'yellow', category: 'Compliance', name: 'Insurance', detail: 'Expiring ≤45 days · 2026-12-06' }
   ]);
   built.filter((item) => item.yellowCount > 0).forEach((item) => {
@@ -99,14 +99,14 @@ queued('maps existing categories and keeps an unknown flagged category', () => {
   ]);
   assert.deepStrictEqual(built.map((item) => item.title), [
     'Compliance',
-    'Driver Documents',
+    'Contractor Documents',
     'Equipment',
     'Loads',
     'Password Reset',
     'Shop'
   ]);
   assert.strictEqual(built.find((item) => item.title === 'Compliance').href, '/compliance');
-  assert.strictEqual(built.find((item) => item.title === 'Driver Documents').href, '/drivers?compliance=attention');
+  assert.strictEqual(built.find((item) => item.title === 'Contractor Documents').href, '/drivers?compliance=attention');
   assert.strictEqual(built.find((item) => item.title === 'Equipment').href, '/equipment?compliance=attention');
   assert.strictEqual(built.find((item) => item.title === 'Loads').href, '/loads');
   const shop = built.find((item) => item.title === 'Shop');
@@ -129,7 +129,7 @@ queued('rendered badges hide a zero count and stay neutral when both counts are 
     { complianceTiles: tiles.buildComplianceTiles(sample) }
   ).then((html) => {
     const equipment = tileHtml(html, 'Equipment');
-    const documents = tileHtml(html, 'Driver Documents');
+    const documents = tileHtml(html, 'Contractor Documents');
     const compliance = tileHtml(html, 'Compliance');
 
     assert.match(equipment, /class="quick quick-alert"/);

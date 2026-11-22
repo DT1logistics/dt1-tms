@@ -79,7 +79,7 @@ const h = require('./helpers/server');
       assert.strictEqual(driverPage.status, 200);
       assert.ok(!driverPage.body.includes('/settlements/reopen-week'), 'no reopen action for driver');
       assert.ok(!driverPage.body.includes('>Reopen week</button>'), 'no reopen button for driver');
-      assert.ok(driverPage.body.includes('Driver Pay $60.00'));
+      assert.ok(driverPage.body.includes('Contractor Pay $60.00'));
 
       const driverAttempt = await dPost('/settlements/reopen-week', {
         driver_id: ids.driverId, week_start: '2026-11-09', reason: 'Driver trying'
@@ -148,7 +148,7 @@ const h = require('./helpers/server');
 
       // Driver does not see unfinalized pay while reopened
       const driverSettlements = await dGet('/settlements');
-      assert.ok(!driverSettlements.body.includes('Driver Pay $60.00'));
+      assert.ok(!driverSettlements.body.includes('Contractor Pay $60.00'));
       assert.strictEqual((await dGet('/settlements/pdf?week_start=2026-11-09')).status, 404);
     });
 
@@ -202,13 +202,13 @@ const h = require('./helpers/server');
 
       // Notice on redirect AND persistent on reload
       const noticePage = await aGet(refinalRes.headers.location);
-      assert.ok(noticePage.body.includes('Driver pay changed from $60.00 to $90.00 after reopen'));
+      assert.ok(noticePage.body.includes('Contractor pay changed from $60.00 to $90.00 after reopen'));
       const reloadPage = await aGet('/settlements');
-      assert.ok(reloadPage.body.includes('Driver pay changed from $60.00 to $90.00 after reopen'));
+      assert.ok(reloadPage.body.includes('Contractor pay changed from $60.00 to $90.00 after reopen'));
 
       // Driver sees updated pay and PDF, and no other driver's settlement
       const driverPage = await dGet('/settlements');
-      assert.ok(driverPage.body.includes('Driver Pay $90.00'));
+      assert.ok(driverPage.body.includes('Contractor Pay $90.00'));
       assert.ok(!driverPage.body.includes('Olly Other'));
       const pdf = await dGet('/settlements/pdf?week_start=2026-11-09');
       assert.strictEqual(pdf.status, 200);
@@ -242,7 +242,7 @@ const h = require('./helpers/server');
       const faRes = await post('/settlements/finalize-all', { week_start: '2026-11-09' });
       assert.strictEqual(faRes.status, 302);
       const faPage = await aGet(faRes.headers.location);
-      assert.ok(!faPage.body.includes('Driver pay changed from'), 'no pay-change notice when pay stayed $90.00');
+      assert.ok(!faPage.body.includes('Contractor pay changed from'), 'no pay-change notice when pay stayed $90.00');
       assert.strictEqual(h.readRows(dataDir, 'SELECT settlement_status FROM loads WHERE id = ?', [loadId])[0].settlement_status, 'approved');
       assert.strictEqual(h.readRows(dataDir, 'SELECT status FROM driver_settlements WHERE driver_id = ? AND week_start = ?', [ids.driverId, '2026-11-09'])[0].status, 'approved');
 
