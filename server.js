@@ -24,6 +24,7 @@ const equipmentPlate = require('./lib/equipment-plate');
 const equipImport = require('./lib/equipment-import');
 const accountSecurity = require('./lib/account-security');
 const equipment = require('./lib/equipment');
+const equipmentSort = require('./lib/equipment-sort');
 const complianceTiles = require('./lib/compliance-tiles');
 const crypto = require('crypto');
 
@@ -1507,13 +1508,12 @@ function collectDriverLevels(driverId, hrefs) {
 
   // Keep this off the name `equipment`. That identifier is the ./lib/equipment module,
   // and shadowing it makes equipmentTypeLabel throw when a driver has assigned units.
-  const assignedUnits = db.prepare(`
+  const assignedUnits = equipmentSort.sortEquipmentByNumber(db.prepare(`
     SELECT DISTINCT e.*
     FROM loads l
     JOIN equipment e ON e.id = l.truck_id
     WHERE l.driver_id = ?
-    ORDER BY e.number
-  `).all(driverId);
+  `).all(driverId));
   assignedUnits.forEach((item) => {
     const assessed = assessEquipment(item);
     const label = `${equipment.equipmentTypeLabel(item.type)} ${item.number || ''}`.trim();
@@ -1626,7 +1626,7 @@ function collectAlerts(user) {
         '/compliance'
       );
     });
-    db.prepare('SELECT * FROM equipment ORDER BY type, number').all().forEach((item) => {
+    equipmentSort.sortEquipment(db.prepare('SELECT * FROM equipment').all(), 'type').forEach((item) => {
       equipmentComplianceFlags(item).forEach((flag) => {
         pushAlert(alerts, flag.level, flag.category, flag.name, flag.detail, flag.href);
       });
@@ -4143,11 +4143,10 @@ app.get('/receipts', requireAuth, (req, res) => {
     lines.forEach((line) => { (byReceipt[line.receipt_id] = byReceipt[line.receipt_id] || []).push(line); });
   }
   if (isAdmin) {
-    equipmentList = db.prepare(`
+    equipmentList = equipmentSort.sortEquipment(db.prepare(`
       SELECT id, type, number, status, maintenance_status, inactive_reason
       FROM equipment
-      ORDER BY CASE type WHEN 'truck' THEN 0 WHEN 'hotshot' THEN 1 ELSE 2 END, number
-    `).all();
+    `).all(), 'truck-hotshot-trailer');
   }
   receipts.forEach((r) => {
     r.lines = byReceipt[r.id] || [];
@@ -4174,11 +4173,10 @@ app.get('/receipts', requireAuth, (req, res) => {
 });
 
 function activeEquipmentUnits() {
-  return db.prepare(`
+  return equipmentSort.sortEquipment(db.prepare(`
     SELECT id, type, number, description, status, maintenance_status, inactive_reason FROM equipment
     WHERE status IS NULL OR status = 'active'
-    ORDER BY CASE type WHEN 'truck' THEN 0 WHEN 'hotshot' THEN 1 ELSE 2 END, number
-  `).all();
+  `).all(), 'truck-hotshot-trailer');
 }
 
 function equipmentUnitTag(eq) {
@@ -4287,11 +4285,10 @@ app.get('/receipts/:id', requireAuth, (req, res) => {
 });
 
 function receiptEquipmentList() {
-  return db.prepare(`
+  return equipmentSort.sortEquipment(db.prepare(`
     SELECT id, type, number, status, maintenance_status, inactive_reason
     FROM equipment
-    ORDER BY CASE type WHEN 'truck' THEN 0 WHEN 'hotshot' THEN 1 ELSE 2 END, number
-  `).all();
+  `).all(), 'truck-hotshot-trailer');
 }
 
 function approveReceiptToEquipment(req, receipt) {
@@ -4514,9 +4511,9 @@ app.get('/equipment', requireAuth, (req, res) => {
     if (!complianceFilter) return true;
     return equipmentComplianceFlags(item).some((flag) => flag.level === 'red' || flag.level === 'yellow');
   };
-  const trucks = db.prepare("SELECT * FROM equipment WHERE type = 'truck' ORDER BY number").all().filter((item) => matchesQuery(item) && matchesAttention(item));
-  const hotshots = db.prepare("SELECT * FROM equipment WHERE type = 'hotshot' ORDER BY number").all().filter((item) => matchesQuery(item) && matchesAttention(item));
-  const trailers = db.prepare("SELECT * FROM equipment WHERE type = 'trailer' ORDER BY number").all().filter((item) => matchesQuery(item) && matchesAttention(item));
+  const trucks = equipmentSort.sortEquipmentByNumber(db.prepare("SELECT * FROM equipment WHERE type = 'truck'").all().filter((item) => matchesQuery(item) && matchesAttention(item)));
+  const hotshots = equipmentSort.sortEquipmentByNumber(db.prepare("SELECT * FROM equipment WHERE type = 'hotshot'").all().filter((item) => matchesQuery(item) && matchesAttention(item)));
+  const trailers = equipmentSort.sortEquipmentByNumber(db.prepare("SELECT * FROM equipment WHERE type = 'trailer'").all().filter((item) => matchesQuery(item) && matchesAttention(item)));
   if (wantsJson(req)) return res.json({ trucks, hotshots, trailers });
   const expenseYear = expenseReportYear(req);
   const expenseTotals = equipExpenses.totalsByEquipment(
