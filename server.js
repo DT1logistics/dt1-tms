@@ -95,10 +95,10 @@ app.locals.getStatusText = getStatusText;
 
 function loadOriginLabel(load) {
   if (!load) return '';
-  if (load.entry_mode === 'entered') return 'Entered by Admin for Driver';
-  if (load.entry_mode === 'assigned' && load.status === 'draft') return 'Assigned by Admin (Driver Draft)';
-  if (load.status === 'submitted' || load.status === 'approved') return 'Submitted by Driver';
-  if (load.entry_mode === 'assigned') return 'Assigned by Admin (Driver Draft)';
+  if (load.entry_mode === 'entered') return 'Entered by Admin for Contractor';
+  if (load.entry_mode === 'assigned' && load.status === 'draft') return 'Assigned by Admin (Contractor Draft)';
+  if (load.status === 'submitted' || load.status === 'approved') return 'Submitted by Contractor';
+  if (load.entry_mode === 'assigned') return 'Assigned by Admin (Contractor Draft)';
   return '';
 }
 
@@ -121,7 +121,7 @@ function weekBounds(dateStr) {
     start: iso(monday),
     end: iso(sunday),
     range,
-    title: `Driver Load Summary - Week of ${range}`
+    title: `Contractor Load Summary - Week of ${range}`
   };
 }
 
@@ -1332,7 +1332,7 @@ function loadFormData(user, load) {
 
 function submittedLoadGaps(load, hasFile) {
   const gaps = [];
-  if (!load.driver_id) gaps.push('Driver');
+  if (!load.driver_id) gaps.push('Contractor');
   if (!load.truck_id) gaps.push('Truck');
   if (!load.project_id) gaps.push('Shipper / Project');
   if (!load.load_date) gaps.push('Load Date');
@@ -1352,12 +1352,12 @@ function resolveLoadEntry(req, existing) {
   if (!isAdmin) {
     const editingSubmitted = !!(existing && existing.status === 'submitted');
     let auditAction = action === 'draft' ? 'Saved draft' : 'Submitted';
-    let auditDetail = action === 'draft' ? 'Driver saved a draft' : 'Submitted by Driver';
+    let auditDetail = action === 'draft' ? 'Contractor saved a draft' : 'Submitted by Contractor';
     if (editingSubmitted && action !== 'draft') {
       auditAction = 'Edited';
-      auditDetail = 'Driver edited the submitted load (still pending approval)';
+      auditDetail = 'Contractor edited the submitted load (still pending approval)';
     } else if (editingSubmitted) {
-      auditDetail = 'Driver moved the submitted load back to Draft';
+      auditDetail = 'Contractor moved the submitted load back to Draft';
     }
     return {
       status: action === 'draft' ? 'draft' : 'submitted',
@@ -1384,8 +1384,8 @@ function resolveLoadEntry(req, existing) {
       entryMode: 'assigned',
       createdByRole: 'admin',
       approveNow: false,
-      auditAction: 'Assigned to Driver',
-      auditDetail: `Assigned to Driver by ${actorName(req)}`
+      auditAction: 'Assigned to Contractor',
+      auditDetail: `Assigned to Contractor by ${actorName(req)}`
     };
   }
   if (action === 'approve') {
@@ -1395,7 +1395,7 @@ function resolveLoadEntry(req, existing) {
       createdByRole: existing && existing.created_by_role ? existing.created_by_role : 'admin',
       approveNow: true,
       auditAction: 'Submitted and approved',
-      auditDetail: `Entered by Admin for Driver by ${actorName(req)}`
+      auditDetail: `Entered by Admin for Contractor by ${actorName(req)}`
     };
   }
   return {
@@ -1403,8 +1403,8 @@ function resolveLoadEntry(req, existing) {
     entryMode: 'entered',
     createdByRole: existing && existing.created_by_role ? existing.created_by_role : 'admin',
     approveNow: false,
-    auditAction: 'Entered for Driver',
-    auditDetail: `Entered by Admin for Driver by ${actorName(req)}`
+    auditAction: 'Entered for Contractor',
+    auditDetail: `Entered by Admin for Contractor by ${actorName(req)}`
   };
 }
 
@@ -1550,7 +1550,7 @@ function driverDocumentFlags(driver, docs, href) {
     const exp = doc ? doc.expiration_date : null;
     return {
       level: getStatusClass(exp),
-      category: 'Driver Document',
+      category: 'Contractor Document',
       name: `${driver.name || driver.email} — ${label}`,
       detail: `${getStatusText(exp)}${exp ? ' · ' + exp : ''}`,
       href: href || ''
@@ -1612,7 +1612,7 @@ function collectAlerts(user) {
       WHERE r.status = 'pending'
       ORDER BY r.id DESC
     `).all().forEach((request) => {
-      const who = request.name || request.email || 'Driver';
+      const who = request.name || request.email || 'Contractor';
       const href = request.role === 'driver' && request.user_id ? `/drivers/${request.user_id}` : '/drivers';
       pushAlert(alerts, 'red', 'Password Reset', who, 'Requested a password reset. Email could not be sent.', href);
     });
@@ -2395,7 +2395,7 @@ app.post('/loads/:id/delete', requireAuth, (req, res) => {
     `Load #${load.id}`,
     `ticket ${load.ticket_number || '—'}`,
     `date ${load.load_date || '—'}`,
-    `driver ${load.driver_name || 'Unassigned'}`,
+    `contractor ${load.driver_name || 'Unassigned'}`,
     `project ${load.project_display || '—'}`,
     `status ${loadStatusLabel(load.status, load.settlement_status, load)}`,
     `${files.length} ticket file${files.length === 1 ? '' : 's'}`
@@ -2478,8 +2478,8 @@ function recordRateAudit(req, loadId, existing, values, project) {
     const projectRate = roundMoney(Number(project.default_rate) || 0);
     if (newRate === projectRate && (oldRate === null || oldRate === projectRate)) return;
     const detail = newRate === projectRate
-      ? `Driver set Load Rate back to the project default ${moneyInput.usd(projectRate)}`
-      : `Driver set Load Rate ${moneyInput.usd(newRate)} (project default ${moneyInput.usd(projectRate)})`;
+      ? `Contractor set Load Rate back to the project default ${moneyInput.usd(projectRate)}`
+      : `Contractor set Load Rate ${moneyInput.usd(newRate)} (project default ${moneyInput.usd(projectRate)})`;
     logAudit(req, 'Rate override', 'load', loadId, detail);
     return;
   }
@@ -2693,7 +2693,7 @@ function editableLoad(req, id) {
 const POST_APPROVAL_FIELDS = [
   ['ticket_number', 'ticket_number', 'Ticket #', 'text'],
   ['load_date', 'load_date', 'Load Date', 'text'],
-  ['driver_id', 'driver_id', 'Driver', 'driver'],
+  ['driver_id', 'driver_id', 'Contractor', 'driver'],
   ['truck_id', 'truck_id', 'Truck', 'truck'],
   ['project_id', 'project_id', 'Project', 'project'],
   ['origin', 'origin', 'Origin', 'text'],
@@ -2710,8 +2710,8 @@ const POST_APPROVAL_FIELDS = [
   ['detention_amount', 'detentionAmount', 'Detention amount', 'money'],
   ['shipper_detention', 'hasShipperDetention', 'Shipper detention', 'flag'],
   ['shipper_detention_amount', 'shipperDetentionAmount', 'Shipper detention amount', 'money'],
-  ['driver_pay_type', 'payType', 'Driver Pay Basis', 'text'],
-  ['driver_flat_rate', 'flatRate', 'Driver Flat / Daily Rate', 'money'],
+  ['driver_pay_type', 'payType', 'Contractor Pay Basis', 'text'],
+  ['driver_flat_rate', 'flatRate', 'Contractor Flat / Daily Rate', 'money'],
   ['total_load_pay', 'totalLoadPay', 'Total Load Pay', 'optmoney']
 ];
 
@@ -3185,7 +3185,7 @@ app.post('/loads', requireAuth, upload.array('tickets', 10), async (req, res) =>
     return renderLoadForm(req, res, 400, loadFormErrorView(req), values.detentionError || values.shipperDetentionError);
   }
   if (isAdmin && !values.driver_id) {
-    return renderLoadForm(req, res, 400, loadFormErrorView(req), 'Select a driver');
+    return renderLoadForm(req, res, 400, loadFormErrorView(req), 'Select a contractor');
   }
   if (!project && req.body.action !== 'draft') {
     return renderLoadForm(req, res, 400, loadFormErrorView(req), 'Select an active project');
@@ -3220,7 +3220,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
   const entry = resolveLoadEntry(req, existing);
   const project = findActiveProject(req.body.project_id);
   if (isAdmin && req.body.action !== 'save' && !buildLoadValues(req, project, existing).driver_id) {
-    return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), 'Select a driver');
+    return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), 'Select a contractor');
   }
   if (!project && req.body.action !== 'draft' && !(isAdmin && req.body.action === 'save')) {
     return renderLoadForm(req, res, 400, loadFormErrorView(req, existing), 'Select an active project');
@@ -3239,7 +3239,7 @@ app.post('/loads/:id', requireAuth, upload.array('tickets', 10), async (req, res
       || (weekBounds(values.load_date) || {}).start !== (weekBounds(existing.load_date) || {}).start;
     if (finalized && movesWeek) {
       return renderLoadForm(req, res, 400, loadFormErrorView(req, existing),
-        `That driver's settlement for the week of ${weekBounds(values.load_date).range} is already finalized. Pick another driver or Load Date.`);
+        `That contractor's settlement for the week of ${weekBounds(values.load_date).range} is already finalized. Pick another contractor or Load Date.`);
     }
   }
   const editChanges = afterApproval && isAdmin ? postApprovalChanges(existing, values) : [];
@@ -3415,7 +3415,7 @@ function buildWelcomeEmail({ name, email, tempPassword, phone }) {
   const text = [
     `Hi ${name},`,
     '',
-    'Welcome to DT1 Logistics. Your driver account is ready.',
+    'Welcome to DT1 Logistics. Your contractor account is ready.',
     '',
     `App: ${APP_URL}`,
     `Login email: ${email}`,
@@ -3450,7 +3450,7 @@ function buildWelcomeEmail({ name, email, tempPassword, phone }) {
   const safePassword = escapeHtml(tempPassword);
   const html = `
     <p>Hi ${safeName},</p>
-    <p>Welcome to DT1 Logistics. Your driver account is ready.</p>
+    <p>Welcome to DT1 Logistics. Your contractor account is ready.</p>
     <p><strong>App:</strong> <a href="${APP_URL}">${APP_URL}</a><br>
     <strong>Login email:</strong> ${safeEmail}<br>
     <strong>Temporary password:</strong> ${safePassword}</p>
@@ -3701,7 +3701,7 @@ const COMM_PRESETS = [
 ];
 
 function personalizeMessage(template, driver) {
-  const name = String(driver.name || '').trim() || [driver.first_name, driver.last_name].filter(Boolean).join(' ') || driver.email || 'Driver';
+  const name = String(driver.name || '').trim() || [driver.first_name, driver.last_name].filter(Boolean).join(' ') || driver.email || 'Contractor';
   const first = String(driver.first_name || '').trim() || name.split(/\s+/)[0] || name;
   return String(template || '')
     .replace(/\{\{\s*first_name\s*\}\}/gi, first)
@@ -3781,14 +3781,14 @@ app.post('/communications/send', requireAuth, async (req, res) => {
     return renderCommunications(req, res, Object.assign({ statusCode: 400, error: 'Enter a subject for the email.' }, formState));
   }
   if (!selectedIds.length) {
-    return renderCommunications(req, res, Object.assign({ statusCode: 400, error: 'Select at least one driver.' }, formState));
+    return renderCommunications(req, res, Object.assign({ statusCode: 400, error: 'Select at least one contractor.' }, formState));
   }
   const placeholders = selectedIds.map(() => '?').join(',');
   const found = db.prepare(`SELECT * FROM users WHERE role = 'driver' AND id IN (${placeholders})`).all(...selectedIds);
   const byId = new Map(found.map((driver) => [driver.id, driver]));
   const drivers = selectedIds.map((id) => byId.get(id)).filter(Boolean);
   if (!drivers.length) {
-    return renderCommunications(req, res, Object.assign({ statusCode: 400, error: 'Select at least one driver.' }, formState));
+    return renderCommunications(req, res, Object.assign({ statusCode: 400, error: 'Select at least one contractor.' }, formState));
   }
   const channels = sendEmail && sendSms ? 'Email + Text' : (sendEmail ? 'Email' : 'Text');
   const insert = db.prepare(`
@@ -5122,7 +5122,7 @@ function pendingSettlementWeeks() {
       const week = weekBounds(row.week_start) || { start: row.week_start, end: row.week_end, range: `${row.week_start} - ${row.week_end}` };
       groups.set(key, {
         driverId: row.driver_id,
-        driver: row.driver_name || 'Driver',
+        driver: row.driver_name || 'Contractor',
         percentage: row.pay_percentage,
         week,
         loads: [],
@@ -5359,11 +5359,11 @@ function pdfDate(value) { return loadDate.formatLoadDate(value) || '—'; }
 function pdfStamp(value) { return value ? `${auditStamp(value)} UTC` : ''; }
 
 function settlementPdf(group) {
-  const pdf = new SimplePdf({ footer: `DT1 Logistics · Driver Settlement · ${group.driver.name} · Week of ${group.week.range}` });
+  const pdf = new SimplePdf({ footer: `DT1 Logistics · Contractor Settlement · ${group.driver.name} · Week of ${group.week.range}` });
   pdf.heading('DT1 Logistics');
-  pdf.para('Driver Settlement', { size: 13, bold: true });
+  pdf.para('Contractor Settlement', { size: 13, bold: true });
   pdf.gap(4);
-  pdf.para(`Driver: ${group.driver.name}`, { bold: true });
+  pdf.para(`Contractor: ${group.driver.name}`, { bold: true });
   pdf.para(`Work week (Monday–Sunday, by Load Date): ${group.week.range}, ${group.week.start.slice(0, 4)}`);
   if (group.final) {
     const row = group.finalizedRow || {};
@@ -5377,7 +5377,7 @@ function settlementPdf(group) {
     pdf.gap(6);
     pdf.totals([
       ['Loads', '0'],
-      ['DRIVER PAY', pdfUsd(0), true]
+      ['CONTRACTOR PAY', pdfUsd(0), true]
     ]);
     return pdf.toBuffer();
   }
@@ -5392,7 +5392,7 @@ function settlementPdf(group) {
     { label: 'Drive Time', width: 48, align: 'right' },
     { label: 'Self Load', width: 44, align: 'right' },
     { label: 'Detention', width: 46, align: 'right' },
-    { label: 'Driver Pay', width: 48, align: 'right' }
+    { label: 'Contractor Pay', width: 48, align: 'right' }
   ], group.loads.map((load) => [
     loadNumber.displayLoadNumber(load.load_number), pdfDate(load.load_date), load.ticket_number || '—', load.project_display || '—',
     load.weight_quantity != null ? String(load.weight_quantity) : '—', pdfUsd(load.rate), load.payInfo.basis,
@@ -5405,11 +5405,11 @@ function settlementPdf(group) {
     ['Drive Time', pdfUsd(group.drive)],
     ['Self Load', pdfUsd(group.self)],
     ['Detention', pdfUsd(group.detention)],
-    ['DRIVER PAY', pdfUsd(group.total), true]
+    ['CONTRACTOR PAY', pdfUsd(group.total), true]
   ]);
   pdf.gap(6);
-  pdf.para('Percentage loads pay the driver\'s pay percentage of Qty × Rate and of the drive-time fee. Flat / daily-rate loads include the full drive-time fee.', { size: 8, gray: true });
-  pdf.para('Self load and detention are added in full. Fuel surcharge is not included in driver pay.', { size: 8, gray: true });
+  pdf.para('Percentage loads pay the contractor\'s pay percentage of Qty × Rate and of the drive-time fee. Flat / daily-rate loads include the full drive-time fee.', { size: 8, gray: true });
+  pdf.para('Self load and detention are added in full. Fuel surcharge is not included in contractor pay.', { size: 8, gray: true });
   return pdf.toBuffer();
 }
 
@@ -5562,10 +5562,10 @@ app.post('/settlements/approve-week', requireAuth, (req, res) => {
   if (wasReopened && existing.prior_driver_pay != null && newPay !== roundMoney(existing.prior_driver_pay)) {
     const prior = roundMoney(existing.prior_driver_pay);
     const driver = db.prepare('SELECT name FROM users WHERE id = ?').get(driverId);
-    const driverName = (driver && driver.name) || 'Driver';
+    const driverName = (driver && driver.name) || 'Contractor';
     req.session.payChangeNotices = [{ driverId, driverName, weekRange: week.range, from: prior, to: newPay }];
     logAudit(req, 'Settlement pay changed after reopen', 'driver_settlement', driverId,
-      `Week of ${week.range} · Driver pay changed from ${moneyInput.usd(prior)} to ${moneyInput.usd(newPay)} after reopen`);
+      `Week of ${week.range} · Contractor pay changed from ${moneyInput.usd(prior)} to ${moneyInput.usd(newPay)} after reopen`);
   }
   res.redirect('/settlements?saved=week');
 });
@@ -5752,7 +5752,7 @@ app.post('/settlements/finalize-all', requireAuth, (req, res) => {
   saveAll();
   applied.payChanges.forEach((change) => {
     logAudit(req, 'Settlement pay changed after reopen', 'driver_settlement', change.driverId,
-      `Week of ${change.weekRange} · Driver pay changed from ${moneyInput.usd(change.from)} to ${moneyInput.usd(change.to)} after reopen`);
+      `Week of ${change.weekRange} · Contractor pay changed from ${moneyInput.usd(change.from)} to ${moneyInput.usd(change.to)} after reopen`);
   });
   const finalizedCount = applied.ready.length + applied.noLoads.length;
   const loadCount = applied.ready.reduce((sum, row) => sum + row.loads.length, 0);

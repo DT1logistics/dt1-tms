@@ -146,7 +146,7 @@ function assertOrder(html, markers) {
       assert.ok(adminForm.body.includes('id="drive_time_wrap" class="addon-amount"'));
       assert.ok(adminForm.body.includes('id="self_load_wrap" class="addon-amount"'));
       assert.ok(adminForm.body.includes('id="detention_wrap" class="addon-amount"'));
-      assert.ok(adminForm.body.includes('(Drive Time × Driver Pay %)'));
+      assert.ok(adminForm.body.includes('(Drive Time × Contractor Pay %)'));
       assertOrder(adminForm.body, [
         'id="load_rate"',
         'id="has_self_load"',
@@ -230,12 +230,12 @@ function assertOrder(html, markers) {
 
       const detail = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: `/loads/${row.id}` });
       assert.ok(detail.body.includes('<strong>Total Load Pay (invoiced)</strong> $135.00'));
-      assert.ok(detail.body.includes('<strong>Driver Pay</strong> $79.74'));
+      assert.ok(detail.body.includes('<strong>Contractor Pay</strong> $79.74'));
       assert.ok(detail.body.includes('Drive Time $4.50'));
       assert.ok(detail.body.includes('<strong>Drive Time</strong> $15.00'));
-      assert.ok(detail.body.includes("Drive Time is the driver's pay percentage of the drive-time fee."));
-      assert.ok(!detail.body.includes('Driver Pay</strong> $90.24'));
-      assert.ok(!detail.body.includes('Driver Pay</strong> $65.74'));
+      assert.ok(detail.body.includes("Drive Time is the contractor's pay percentage of the drive-time fee."));
+      assert.ok(!detail.body.includes('Contractor Pay</strong> $90.24'));
+      assert.ok(!detail.body.includes('Contractor Pay</strong> $65.74'));
       const edit = detail.body.slice(detail.body.indexOf('<h2>Edit Load</h2>'));
       assert.ok(!edit.includes('drive-detention-pair'));
       assertOrder(edit, [
@@ -268,7 +268,7 @@ function assertOrder(html, markers) {
 
       const pending = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/settlements' });
       assert.strictEqual(pending.status, 200);
-      assert.ok(pending.body.includes('Driver Pay $79.74') || pending.body.includes('<strong>Driver Pay</strong> $79.74'));
+      assert.ok(pending.body.includes('Contractor Pay $79.74') || pending.body.includes('<strong>Contractor Pay</strong> $79.74'));
       // Item 5: the weekly customer invoice moved to /invoices.
       const invoice = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/invoices' });
       assert.ok(invoice.body.includes('<span>Travel Time</span><span>$15.00</span>'));
@@ -288,7 +288,7 @@ function assertOrder(html, markers) {
       assert.ok(settled.body.includes('Drive Time $4.50'));
       assert.ok(settled.body.includes('Self Load $20.00'));
       assert.ok(settled.body.includes('Detention $25.24'));
-      assert.ok(settled.body.includes('Driver Pay $79.74'));
+      assert.ok(settled.body.includes('Contractor Pay $79.74'));
       assert.ok(!settled.body.includes('Drive Time $15.00'));
       assert.ok(!settled.body.includes('Drive Time $15.00 ×'));
       const settledInvoice = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/invoices' });
@@ -313,13 +313,13 @@ function assertOrder(html, markers) {
       assert.strictEqual(Number(row.drive_time_amount).toFixed(2), '15.00');
       const detail = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: `/loads/${row.id}` });
       assert.ok(detail.body.includes('<strong>Total Load Pay (invoiced)</strong> $115.00'));
-      assert.ok(detail.body.includes('<strong>Driver Pay</strong> $95.00'));
+      assert.ok(detail.body.includes('<strong>Contractor Pay</strong> $95.00'));
       assert.ok(detail.body.includes('Drive Time $15.00'));
       assert.ok(detail.body.includes('Drive Time, Self Load, and Detention are added in full.'));
-      assert.ok(!detail.body.includes('Driver Pay</strong> $84.50'));
+      assert.ok(!detail.body.includes('Contractor Pay</strong> $84.50'));
 
       const pending = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/settlements' });
-      assert.ok(pending.body.includes('Driver Pay $95.00'));
+      assert.ok(pending.body.includes('Contractor Pay $95.00'));
       const approved = await request(srv.port, auth, {
         method: 'POST',
         path: '/settlements/approve-week',
@@ -330,9 +330,9 @@ function assertOrder(html, markers) {
       const settled = { body: (await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/settlements' })).body
         + (await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/invoices' })).body };
       assert.ok(settled.body.includes('Drive Time $4.50'));
-      assert.ok(settled.body.includes('Driver Pay $79.74'));
+      assert.ok(settled.body.includes('Contractor Pay $79.74'));
       assert.ok(settled.body.includes('Drive Time $15.00'));
-      assert.ok(settled.body.includes('Driver Pay $95.00'));
+      assert.ok(settled.body.includes('Contractor Pay $95.00'));
       // Item 5: invoices are per customer + work week, so the two loads (weeks of Nov 2 and Nov 9)
       // are on two weekly invoices with $15.00 Travel Time each (previously one $30.00 project total).
       assert.strictEqual(settled.body.split('<span>Travel Time</span><span>$15.00</span>').length - 1, 2);

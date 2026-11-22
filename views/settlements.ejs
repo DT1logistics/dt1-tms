@@ -1,11 +1,11 @@
 <%- include('partials/open', { title: 'Settlements', user: user, active: 'settlements' }) %>
 <h1>Settlements</h1>
-<% if (saved === 'week') { %><div class="all-clear">Weekly driver settlement finalized. Those loads are now Settled and locked, and the driver can see that week's pay.</div><% } %>
+<% if (saved === 'week') { %><div class="all-clear">Weekly contractor settlement finalized. Those loads are now Settled and locked, and the contractor can see that week's pay.</div><% } %>
 <% if (saved === 'reopened') { %><div class="all-clear">Weekly settlement reopened. Those loads are Approved for Settlement again and can be edited until you re-finalize the week.</div><% } %>
 <% if (typeof error !== 'undefined' && error === 'reopen-reason') { %><div class="error">Enter a reason to reopen a finalized weekly settlement.</div><% } %>
 <% if (user.role === 'admin' && typeof payChangeNotices !== 'undefined' && payChangeNotices && payChangeNotices.length) { %>
   <% payChangeNotices.forEach(function (change) { %>
-    <div class="reject-note pay-change-note"><strong><%= change.driverName %></strong> (week of <%= change.weekRange %>): Driver pay changed from <%= usd(change.from) %> to <%= usd(change.to) %> after reopen.</div>
+    <div class="reject-note pay-change-note"><strong><%= change.driverName %></strong> (week of <%= change.weekRange %>): Contractor pay changed from <%= usd(change.from) %> to <%= usd(change.to) %> after reopen.</div>
   <% }) %>
 <% } %>
 <% if (saved === 'finalize-all' && typeof finalizeAllResult !== 'undefined' && finalizeAllResult) { %>
@@ -17,7 +17,7 @@
   </div>
   <% if (fa.skipped && fa.skipped.length) { %>
     <div class="reject-note finalize-all-warning">
-      <strong><%= fa.skipped.length %> driver<%= fa.skipped.length === 1 ? '' : 's' %> skipped</strong> — they still have unfinished loads that week (not yet Approved for Settlement):
+      <strong><%= fa.skipped.length %> contractor<%= fa.skipped.length === 1 ? '' : 's' %> skipped</strong> — they still have unfinished loads that week (not yet Approved for Settlement):
       <ul>
         <% fa.skipped.forEach(function (row) { %>
           <li>
@@ -26,12 +26,12 @@
           </li>
         <% }) %>
       </ul>
-      Those drivers were not finalized. Use the per-driver Finalize button after those loads are Approved for Settlement.
+      Those contractors were not finalized. Use the per-contractor Finalize button after those loads are Approved for Settlement.
     </div>
   <% } %>
   <% if (user.role === 'admin' && fa.payChanges && fa.payChanges.length) { %>
     <% fa.payChanges.forEach(function (change) { %>
-      <div class="reject-note pay-change-note"><strong><%= change.driverName %></strong> (week of <%= change.weekRange %>): Driver pay changed from <%= usd(change.from) %> to <%= usd(change.to) %> after reopen.</div>
+      <div class="reject-note pay-change-note"><strong><%= change.driverName %></strong> (week of <%= change.weekRange %>): Contractor pay changed from <%= usd(change.from) %> to <%= usd(change.to) %> after reopen.</div>
     <% }) %>
   <% } %>
   <% if (fa.already && fa.already.length) { %>
@@ -39,8 +39,8 @@
   <% } %>
 <% } %>
 <% if (user.role === 'admin') { %>
-  <p class="muted">Loads Approved for Settlement are grouped by driver and Monday–Sunday work week (by Load Date). Review each week, download the PDF, then Finalize it for payroll, or use Finalize All to finalize every active driver for that week in one action. Drivers with no loads that week get a finalized settlement of No loads – $0.00. Drivers who still have unfinished loads (not yet Approved for Settlement) are skipped. A finalized week is locked: its loads can no longer be edited, rejected, or deleted, and the driver sees that week's pay. Customer billing is on <a href="/invoices">Invoices</a>.</p>
-  <p class="muted">On percentage loads, driver pay is the driver's profile pay percentage of Qty × Rate and of the drive-time fee. Flat/daily-rate loads include the full drive-time fee. Self load and detention are added in full. Fuel surcharge is never included in driver pay. Finalize All includes only active drivers (role driver, and status is not inactive).</p>
+  <p class="muted">Loads Approved for Settlement are grouped by contractor and Monday–Sunday work week (by Load Date). Review each week, download the PDF, then Finalize it for payroll, or use Finalize All to finalize every active contractor for that week in one action. Contractors with no loads that week get a finalized settlement of No loads – $0.00. Contractors who still have unfinished loads (not yet Approved for Settlement) are skipped. A finalized week is locked: its loads can no longer be edited, rejected, or deleted, and the contractor sees that week's pay. Customer billing is on <a href="/invoices">Invoices</a>.</p>
+  <p class="muted">On percentage loads, contractor pay is the contractor's profile pay percentage of Qty × Rate and of the drive-time fee. Flat/daily-rate loads include the full drive-time fee. Self load and detention are added in full. Fuel surcharge is never included in contractor pay. Finalize All includes only active contractors (status is not inactive).</p>
   <h2>Ready to Finalize</h2>
   <% const weekBuckets = typeof pendingWeekBuckets !== 'undefined' && pendingWeekBuckets && pendingWeekBuckets.length ? pendingWeekBuckets : []; %>
   <% if (weekBuckets.length) { %>
@@ -63,7 +63,7 @@
                 <% if (alreadyCount) { %> · <%= alreadyCount %> already finalized<% } %>
               </div>
             </div>
-            <form method="POST" action="/settlements/finalize-all" onsubmit="return confirm('Finalize all active drivers for the week of <%= range %>?\n\n<%= readyCount + noLoadCount %> will be finalized<%= noLoadCount ? ' (including ' + noLoadCount + ' with no loads at $0.00)' : '' %>.<%= skipCount ? ' ' + skipCount + ' will be skipped because they still have unfinished loads.' : '' %> Already-finalized settlements will be left unchanged.');">
+            <form method="POST" action="/settlements/finalize-all" onsubmit="return confirm('Finalize all active contractors for the week of <%= range %>?\n\n<%= readyCount + noLoadCount %> will be finalized<%= noLoadCount ? ' (including ' + noLoadCount + ' with no loads at $0.00)' : '' %>.<%= skipCount ? ' ' + skipCount + ' will be skipped because they still have unfinished loads.' : '' %> Already-finalized settlements will be left unchanged.');">
               <input type="hidden" name="week_start" value="<%= bucket.week.start %>">
               <button type="submit">Finalize All</button>
             </form>
@@ -72,7 +72,7 @@
         <% bucket.groups.forEach(function (group) { %>
           <% const cardRange = group.week && group.week.range && group.week.start ? group.week.range : ''; %>
           <div class="card settlement-card settlement-pending">
-            <h3><%= cardRange ? 'Driver Settlement - Week of ' + cardRange : 'Driver Settlement - Undated' %></h3>
+            <h3><%= cardRange ? 'Contractor Settlement - Week of ' + cardRange : 'Contractor Settlement - Undated' %></h3>
             <div><strong><%= group.driver %></strong><% if (group.percentage != null) { %> · Pay <%= group.percentage %><% } %></div>
             <div class="settlement-meta">
               <%= group.loads.length %> load<%= group.loads.length === 1 ? '' : 's' %>
@@ -80,10 +80,10 @@
               · <%= group.reopenedSettlement ? 'Reopened (pending re-finalize)' : 'Not finalized' %>
             </div>
             <% if (group.reopenedSettlement) { %>
-              <div class="muted">Reopened by <%= group.reopenedSettlement.reopened_by_name || 'Admin' %><% if (group.reopenedSettlement.reopened_at) { %> on <%= auditStamp(group.reopenedSettlement.reopened_at) %><% } %><% if (group.reopenedSettlement.reopened_reason) { %> — <%= group.reopenedSettlement.reopened_reason %><% } %> (prior Driver Pay <%= usd(group.reopenedSettlement.prior_driver_pay || 0) %>).</div>
+              <div class="muted">Reopened by <%= group.reopenedSettlement.reopened_by_name || 'Admin' %><% if (group.reopenedSettlement.reopened_at) { %> on <%= auditStamp(group.reopenedSettlement.reopened_at) %><% } %><% if (group.reopenedSettlement.reopened_reason) { %> — <%= group.reopenedSettlement.reopened_reason %><% } %> (prior Contractor Pay <%= usd(group.reopenedSettlement.prior_driver_pay || 0) %>).</div>
             <% } %>
             <div class="settlement-amounts">
-              <div class="pay-line admin-driver-pay">Driver Pay <%= usd(group.total) %></div>
+              <div class="pay-line admin-driver-pay">Contractor Pay <%= usd(group.total) %></div>
               <div class="total-load-pay-line">Total Load Pay (invoiced) <%= usd(group.totalLoadPay) %></div>
             </div>
             <div class="muted">Base <%= usd(group.base) %> · Drive Time <%= usd(group.drive) %> · Self Load <%= usd(group.self) %> · Detention <%= usd(group.detention) %></div>
@@ -91,7 +91,7 @@
             <% if (group.driverId && group.week.start) { %>
               <div class="settlement-actions">
                 <a class="btn btn-secondary" href="/settlements/pdf?kind=pending&amp;driver_id=<%= group.driverId %>&amp;week_start=<%= group.week.start %>">Download PDF (draft)</a>
-                <form method="POST" action="/settlements/approve-week" onsubmit="return confirm('Finalize <%= String(group.driver).replace(/[\\'\r\n]/g, '') %>\'s settlement for the week of <%= cardRange %>?\n\nFinalized settlements are locked: these loads can no longer be edited, rejected, or deleted, and the driver will see this week\'s pay.');">
+                <form method="POST" action="/settlements/approve-week" onsubmit="return confirm('Finalize <%= String(group.driver).replace(/[\\'\r\n]/g, '') %>\'s settlement for the week of <%= cardRange %>?\n\nFinalized settlements are locked: these loads can no longer be edited, rejected, or deleted, and the contractor will see this week\'s pay.');">
                   <input type="hidden" name="driver_id" value="<%= group.driverId %>">
                   <input type="hidden" name="week_start" value="<%= group.week.start %>">
                   <button type="submit">Finalize Weekly Settlement</button>
@@ -105,13 +105,13 @@
   <% } else { %>
     <p>No loads Approved for Settlement are waiting to be finalized.</p>
   <% } %>
-  <form class="card finalize-all-week-form" method="POST" action="/settlements/finalize-all" onsubmit="return confirm('Finalize all active drivers for that work week (Monday–Sunday)?\n\nDrivers with unfinished loads (not yet Approved for Settlement) will be skipped. Drivers with no loads will be finalized at $0.00. Already-finalized settlements will be left unchanged.');">
+  <form class="card finalize-all-week-form" method="POST" action="/settlements/finalize-all" onsubmit="return confirm('Finalize all active contractors for that work week (Monday–Sunday)?\n\nContractors with unfinished loads (not yet Approved for Settlement) will be skipped. Contractors with no loads will be finalized at $0.00. Already-finalized settlements will be left unchanged.');">
     <label for="finalize_all_week_start">Finalize All for a work week</label>
     <div class="finalize-all-week-row">
       <input type="date" id="finalize_all_week_start" name="week_start" required>
       <button type="submit">Finalize All</button>
     </div>
-    <p class="muted">Pick any date in the week. It is finalized as Monday–Sunday. Use this when a week has no loads waiting, so active drivers with no loads still get a $0.00 settlement.</p>
+    <p class="muted">Pick any date in the week. It is finalized as Monday–Sunday. Use this when a week has no loads waiting, so active contractors with no loads still get a $0.00 settlement.</p>
   </form>
 <% } else { %>
   <p class="muted">Your pay for each work week (Monday–Sunday) appears here once the weekly settlement is finalized for payroll. On percentage loads, the Drive Time line is your pay percentage of the drive-time fee. Flat/daily-rate loads include the full drive-time fee. Self load and detention are added in full. Fuel surcharge is not included.</p>
@@ -121,14 +121,14 @@
 <% if (approvedWeeks && approvedWeeks.length) { %>
   <% approvedWeeks.forEach(function (group) { %>
     <div class="card settlement-card settlement-final">
-      <h3>Driver Settlement - Week of <%= group.range %></h3>
+      <h3>Contractor Settlement - Week of <%= group.range %></h3>
       <% if (user.role === 'admin') { %>
         <div><strong><%= group.driver_name %></strong><% if (group.pay_percentage != null) { %> · Pay <%= group.pay_percentage %><% } %></div>
       <% } %>
       <% if (!group.loads.length) { %>
         <div class="settlement-meta">No loads – $0.00 · Finalized</div>
         <div class="settlement-amounts">
-          <div class="pay-line">Driver Pay <%= usd(0) %></div>
+          <div class="pay-line">Contractor Pay <%= usd(0) %></div>
         </div>
       <% } else { %>
         <div class="settlement-meta">
@@ -137,13 +137,13 @@
           · Finalized
         </div>
         <div class="settlement-amounts">
-          <div class="pay-line">Driver Pay <%= usd(group.total) %></div>
+          <div class="pay-line">Contractor Pay <%= usd(group.total) %></div>
           <% if (user.role === 'admin') { %><div class="total-load-pay-line">Total Load Pay (invoiced) <%= usd(group.totalLoadPay) %></div><% } %>
         </div>
         <div class="muted">Base <%= usd(group.base) %> · Drive Time <%= usd(group.drive) %> · Self Load <%= usd(group.self) %> · Detention <%= usd(group.detention) %></div>
       <% } %>
       <% if (user.role === 'admin' && group.prior_driver_pay != null && roundMoney(group.total) !== roundMoney(group.prior_driver_pay)) { %>
-        <div class="reject-note pay-change-note">Driver pay changed from <%= usd(group.prior_driver_pay) %> to <%= usd(group.total) %> after reopen.</div>
+        <div class="reject-note pay-change-note">Contractor pay changed from <%= usd(group.prior_driver_pay) %> to <%= usd(group.total) %> after reopen.</div>
       <% } %>
       <% if (group.approved_by_name) { %>
         <div class="muted">Finalized by <%= group.approved_by_name %><% if (group.approved_at) { %> on <%= auditStamp(group.approved_at) %><% } %></div>

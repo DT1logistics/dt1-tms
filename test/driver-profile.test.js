@@ -217,7 +217,7 @@ async function main() {
       })
     });
     assert.strictEqual(quiet.status, 200, quiet.body.slice(0, 800));
-    assert.ok(quiet.body.includes('Driver Created'));
+    assert.ok(quiet.body.includes('Contractor Created'));
     assert.ok(quiet.body.includes('quiet.driver@example.com'));
     const quietTemp = (quiet.body.match(/<div class="temp">([^<]+)<\/div>/) || [])[1];
     assert.ok(quietTemp && quietTemp.length >= 8);
@@ -280,7 +280,7 @@ async function main() {
       })
     });
     assert.strictEqual(welcomed.status, 200, welcomed.body.slice(0, 800));
-    assert.ok(welcomed.body.includes('Driver Created'));
+    assert.ok(welcomed.body.includes('Contractor Created'));
     const welcomedTemp = (welcomed.body.match(/<div class="temp">([^<]+)<\/div>/) || [])[1];
     assert.ok(welcomedTemp && welcomed.body.includes(`Temporary password:</strong> ${welcomedTemp}`));
     const welcomedEmail = statusBlock(welcomed.body, 'Welcome Email Sent:', 'Welcome Text (SMS) Status:');

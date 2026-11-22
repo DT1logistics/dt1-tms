@@ -34,7 +34,7 @@ const h = require('./helpers/server');
 
     await check('the project form saves Driver Load Pay and Total Load Pay', async () => {
       const edit = await h.request(srv.port, { Cookie: h.cookieHeader(admin) }, { path: `/projects/${ids.projectId}/edit` });
-      assert.ok(edit.body.includes('Driver Load Pay ($)'));
+      assert.ok(edit.body.includes('Contractor Load Pay ($)'));
       assert.ok(edit.body.includes('name="default_total_load_pay"'));
       const res = await h.request(srv.port, ids.auth, { method: 'POST', path: `/projects/${ids.projectId}`, body: h.form({
         customer_id: ids.customerId, project_name: 'Virginia Beach', default_rate: '210', default_driver_pay_type: 'flat',

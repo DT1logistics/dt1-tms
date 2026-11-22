@@ -228,7 +228,7 @@ function writeDb(dataDir, fn) {
       const detail = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: `/loads/${row.id}` });
       assert.ok(detail.body.includes('Detention'));
       assert.ok(detail.body.includes('$25.24'));
-      assert.ok(detail.body.includes('Driver Pay'));
+      assert.ok(detail.body.includes('Contractor Pay'));
       assert.ok(detail.body.includes('$55.24'));
       assert.ok(detail.body.includes('Total Load Pay (invoiced)'));
       assert.ok(detail.body.includes('$100.00'));
@@ -239,7 +239,7 @@ function writeDb(dataDir, fn) {
       // Item 5: approved loads leave the main Loads screen; they are listed under ?view=approved.
       const list = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/loads?view=approved' });
       assert.ok(list.body.includes('Detention: $25.24'));
-      assert.ok(list.body.includes('Driver Pay: $55.24'));
+      assert.ok(list.body.includes('Contractor Pay: $55.24'));
     });
 
     await check('load total includes drive time and excludes detention when self load is off', async () => {
@@ -312,9 +312,9 @@ function writeDb(dataDir, fn) {
       const invoicesPage = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: '/invoices' });
       const page = { status: Math.max(settlementsPage.status, invoicesPage.status), body: settlementsPage.body + invoicesPage.body };
       assert.strictEqual(page.status, 200);
-      assert.ok(page.body.includes('Driver Pay $55.24'), page.body.slice(page.body.indexOf('Driver Pay'), 80));
+      assert.ok(page.body.includes('Contractor Pay $55.24'), page.body.slice(page.body.indexOf('Contractor Pay'), 80));
       assert.ok(page.body.includes('Detention $25.24'));
-      assert.ok(!page.body.includes('Driver Pay $80.48'));
+      assert.ok(!page.body.includes('Contractor Pay $80.48'));
       assert.ok(page.body.includes('>Detention</th>'));
       assert.ok(page.body.includes('<span>Detention</span><span>$0.00</span>'));
       assert.ok(page.body.includes('<span>TOTAL</span><span>$100.00</span>'));
@@ -400,7 +400,7 @@ function writeDb(dataDir, fn) {
 
       const detail = await request(srv.port, { Cookie: cookieHeader(admin) }, { path: `/loads/${row.id}` });
       assert.ok(detail.body.includes('<strong>Total Load Pay (invoiced)</strong> $100.00'));
-      assert.ok(detail.body.includes('<strong>Driver Pay</strong> $55.24'));
+      assert.ok(detail.body.includes('<strong>Contractor Pay</strong> $55.24'));
       assert.ok(detail.body.includes('billed to the customer'));
       assert.ok(detail.body.includes('$15.51'));
       assert.ok(!detail.body.includes('$115.51'));
@@ -418,9 +418,9 @@ function writeDb(dataDir, fn) {
       assert.ok(page.body.includes('<span>TOTAL</span><span>$240.59</span>'), page.body.slice(page.body.indexOf('TOTAL'), 80));
       assert.ok(!page.body.includes('$28.97'));
       assert.ok(!page.body.includes('$244.48'));
-      assert.ok(page.body.includes('Driver Pay $55.24'));
-      assert.ok(page.body.includes('Driver Pay $110.48'));
-      assert.ok(!page.body.includes('Driver Pay $125.99'));
+      assert.ok(page.body.includes('Contractor Pay $55.24'));
+      assert.ok(page.body.includes('Contractor Pay $110.48'));
+      assert.ok(!page.body.includes('Contractor Pay $125.99'));
     });
 
     await check('a missing or negative shipper detention amount is rejected and unchecking clears it', async () => {

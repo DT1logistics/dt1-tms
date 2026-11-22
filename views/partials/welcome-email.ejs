@@ -1,7 +1,7 @@
 <div class="card welcome-email">
   <h2>Welcome Email &amp; Text</h2>
   <% if (welcome.generatedNewPassword) { %>
-    <p class="muted">A new temporary password was created because the previous one was no longer on file. The driver will be asked to set their own password at sign-in.</p>
+    <p class="muted">A new temporary password was created because the previous one was no longer on file. The contractor will be asked to set their own password at sign-in.</p>
   <% } %>
   <p class="muted">To</p>
   <p><strong><%= welcome.to %></strong></p>
@@ -25,7 +25,7 @@
   <div class="<%= welcome.smsSent ? 'all-clear' : 'card' %>">
     <strong>Welcome Text (SMS) Status:</strong>
     <%= welcome.smsStatus || (welcome.smsSent ? 'Sent' : 'Not configured') %>
-    <% if (!welcome.smsSent) { %> Use Open Text Message to text <%= welcome.phone || 'the driver' %> directly.<% } %>
+    <% if (!welcome.smsSent) { %> Use Open Text Message to text <%= welcome.phone || 'the contractor' %> directly.<% } %>
   </div>
   <textarea id="welcome-source" readonly><%= welcome.copyText %></textarea>
   <textarea id="welcome-sms-source" readonly><%= welcome.smsText %></textarea>

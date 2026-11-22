@@ -1,4 +1,4 @@
-// Item 2 (11/15/2026): on every admin screen that shows load pay, Driver Pay comes first and
+// Item 2 (11/15/2026): on every admin screen that shows load pay, Contractor Pay comes first and
 // "Total Load Pay (invoiced)" is under it, at every status. Drivers' screens are unchanged and
 // never show the admin total. Also checks that the inline page scripts still parse. Run: npm test
 const assert = require('assert');
@@ -57,29 +57,29 @@ function assertScriptsParse(html, label) {
       assert.strictEqual(res.status, 302, ticket + ' ' + res.body.slice(0, 200));
     }
 
-    await check('admin Loads list: Driver Pay above Total Load Pay (invoiced) at every status', async () => {
+    await check('admin Loads list: Contractor Pay above Total Load Pay (invoiced) at every status', async () => {
       // Item 5: approved loads are listed under ?view=approved instead of the main Loads screen.
       const page = { body: (await adminGet('/loads')).body + (await adminGet('/loads?view=approved')).body };
       ['PAY-DRAFT', 'PAY-SUB', 'PAY-APP'].forEach((ticket) => {
         const start = page.body.indexOf(`<strong>${ticket}</strong>`);
         assert.ok(start !== -1, ticket);
         const card = page.body.slice(start, page.body.indexOf('</p>', start));
-        assertBefore(card, 'Driver Pay: $60.00', 'Total Load Pay (invoiced): $200.00', ticket);
+        assertBefore(card, 'Contractor Pay: $60.00', 'Total Load Pay (invoiced): $200.00', ticket);
         assert.ok(!card.includes('Load Total:'), ticket + ' still says Load Total');
       });
     });
 
-    await check('admin review page: Driver Pay above Total Load Pay (invoiced), summary and live edit totals', async () => {
+    await check('admin review page: Contractor Pay above Total Load Pay (invoiced), summary and live edit totals', async () => {
       for (const ticket of ['PAY-DRAFT', 'PAY-SUB', 'PAY-APP']) {
         const page = await adminGet(`/loads/${loadId(ticket)}`);
-        assertBefore(page.body, '<strong>Driver Pay</strong> $60.00', '<strong>Total Load Pay (invoiced)</strong> $200.00', ticket);
+        assertBefore(page.body, '<strong>Contractor Pay</strong> $60.00', '<strong>Total Load Pay (invoiced)</strong> $200.00', ticket);
         assertBefore(page.body, 'id="review_driver_pay"', 'id="review_load_total"', ticket + ' edit panel');
         assert.match(page.body, /data-pay-pct="30"/);
         assertScriptsParse(page.body, `/loads/${loadId(ticket)}`);
       }
     });
 
-    await check('admin load form: live Driver Pay above Total Load Pay (invoiced)', async () => {
+    await check('admin load form: live Contractor Pay above Total Load Pay (invoiced)', async () => {
       for (const p of ['/loads/new', `/loads/${loadId('PAY-DRAFT')}/edit`]) {
         const page = await adminGet(p);
         assertBefore(page.body, 'id="driver_pay_total"', 'id="load_total"', p);
@@ -92,12 +92,12 @@ function assertScriptsParse(html, label) {
       assert.ok(js.body.includes('DT1LoadPay'));
     });
 
-    await check('Settlements: pending driver week shows Total Load Pay under Driver Pay; invoice shows Driver Pay', async () => {
+    await check('Settlements: pending driver week shows Total Load Pay under Contractor Pay; invoice shows Contractor Pay', async () => {
       // Item 5: the weekly invoice moved from /settlements to /invoices.
       const page = { body: (await adminGet('/settlements')).body + (await adminGet('/invoices')).body };
-      assertBefore(page.body, 'Driver Pay $60.00', 'Total Load Pay (invoiced) $200.00', 'pending week');
-      assertBefore(page.body, 'Driver Pay (not billed)', '<span>Hauling</span>', 'invoice totals');
-      assert.match(page.body, /<th class="num"[^>]*>Driver Pay<\/th>\s*<th class="num">Price<\/th>/);
+      assertBefore(page.body, 'Contractor Pay $60.00', 'Total Load Pay (invoiced) $200.00', 'pending week');
+      assertBefore(page.body, 'Contractor Pay (not billed)', '<span>Hauling</span>', 'invoice totals');
+      assert.match(page.body, /<th class="num"[^>]*>Contractor Pay<\/th>\s*<th class="num">Price<\/th>/);
     });
 
     await check('driver screens are unchanged: Load Total, no admin total line', async () => {

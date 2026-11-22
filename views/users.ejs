@@ -1,6 +1,6 @@
 <%- include('partials/open', { title: 'Users', user: user, active: 'users' }) %>
 <h1>Users</h1>
-<p class="muted">Set a temporary password for any admin or driver. They must choose a new password the next time they sign in, before they can use the app. The temporary password is shown once here and is stored only as a hash.</p>
+<p class="muted">Set a temporary password for any admin or contractor. They must choose a new password the next time they sign in, before they can use the app. The temporary password is shown once here and is stored only as a hash.</p>
 <% if (typeof error !== 'undefined' && error) { %><div class="error"><%= error %></div><% } %>
 <% if (notice) { %>
   <div class="card">

@@ -13,9 +13,9 @@
             <p class="weekly-receipt-totals"><strong>Fuel</strong> <%= usd(week.totals.fuel) %> · <strong>Expense</strong> <%= usd(week.totals.expense) %> · <strong>Total</strong> <%= usd(week.totals.total) %></p>
             <div class="weekly-receipt-grid">
               <div>
-                <h4>By driver</h4>
+                <h4>By contractor</h4>
                 <table>
-                  <thead><tr><th>Driver</th><th>Fuel</th><th>Expense</th><th>Total</th></tr></thead>
+                  <thead><tr><th>Contractor</th><th>Fuel</th><th>Expense</th><th>Total</th></tr></thead>
                   <tbody>
                     <% week.drivers.forEach(function (row) { %>
                       <tr>
