@@ -465,7 +465,7 @@ function assertNoLegacyStatus(html, where) {
       const page = await request(srv.port, adminCookie, { path: rejected.headers.location });
       assert.strictEqual(page.status, 200, page.body.slice(0, 300));
       assertHasBadge(page.body, 'rejected', LABELS.rejected);
-      assert.ok(page.body.includes('Load sent back to the driver as Draft.'));
+      assert.ok(page.body.includes('Load sent back to the contractor as Draft.'));
       assert.ok(!page.body.includes('>Approve for Settlement</button>'));
       assertNoLegacyStatus(page.body, 'reject flash');
     });

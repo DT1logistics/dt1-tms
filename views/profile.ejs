@@ -56,11 +56,11 @@
     <label for="zip">Zip</label>
     <input id="zip" type="text" name="zip" value="<%= profile.zip || '' %>" autocomplete="postal-code" inputmode="numeric">
     <% if (profile.role === 'driver') { %>
-      <label for="pay_percentage">Driver Pay (Pay %)</label>
+      <label for="pay_percentage">Contractor Pay (Pay %)</label>
       <input id="pay_percentage" type="text" value="<%= profile.pay_percentage != null && profile.pay_percentage !== '' ? profile.pay_percentage + '%' : 'Not set' %>" disabled>
       <label for="hire_date">Hire Date</label>
       <input id="hire_date" type="text" value="<%= profile.hire_date || 'Not set' %>" disabled>
-      <p class="field-help">Only an admin can change driver pay and hire date.</p>
+      <p class="field-help">Only an admin can change contractor pay and hire date.</p>
     <% } %>
     <button class="save-pill" type="submit">Save Changes</button>
   </form>

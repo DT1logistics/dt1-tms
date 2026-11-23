@@ -14,16 +14,16 @@
       <p class="muted">Display name is Shipper - Project. A typed prefix such as "Synagro - Hunters Pad" is kept once.</p>
       <label>Default Rate ($)</label>
       <input data-money="1" type="number" step="0.01" name="default_rate" required value="<%= project.default_rate != null ? project.default_rate : '' %>">
-      <label>Default Driver Pay Basis</label>
+      <label>Default Contractor Pay Basis</label>
       <select name="default_driver_pay_type" id="default_driver_pay_type">
         <option value="percentage" <%= project.default_driver_pay_type === 'flat' ? '' : 'selected' %>>Percentage of Load (%)</option>
         <option value="flat" <%= project.default_driver_pay_type === 'flat' ? 'selected' : '' %>>Flat / Daily Rate ($)</option>
       </select>
-      <label>Driver Load Pay ($) <span class="muted">flat / daily rate paid to the driver</span></label>
+      <label>Contractor Load Pay ($) <span class="muted">flat / daily rate paid to the contractor</span></label>
       <input data-money="1" type="number" step="0.01" name="default_driver_flat_rate" value="<%= project.default_driver_flat_rate != null ? Number(project.default_driver_flat_rate).toFixed(2) : '0.00' %>">
       <label>Total Load Pay ($) <span class="muted">flat amount the customer pays DT1 per load</span></label>
       <input data-money="1" type="number" step="0.01" min="0" name="default_total_load_pay" placeholder="Blank = Qty × Rate" value="<%= project.default_total_load_pay != null && String(project.default_total_load_pay).trim() !== '' ? Number(project.default_total_load_pay).toFixed(2) : '' %>">
-      <p class="muted">Both are fixed amounts, not percentages. New loads for this project start with this driver pay basis, Driver Load Pay, and Total Load Pay; an admin can change them on each load. When Total Load Pay is set it is what gets invoiced for the load (no separate fuel surcharge). Leave it blank to invoice Qty × Rate. Existing loads are not changed.</p>
+      <p class="muted">Both are fixed amounts, not percentages. New loads for this project start with this contractor pay basis, Contractor Load Pay, and Total Load Pay; an admin can change them on each load. When Total Load Pay is set it is what gets invoiced for the load (no separate fuel surcharge). Leave it blank to invoice Qty × Rate. Existing loads are not changed.</p>
       <label>Invoice billing quantity</label>
       <select name="invoice_billing_mode" id="invoice_billing_mode">
         <option value="actual" <%= project.invoice_billing_mode === 'flat_qty_1' ? '' : 'selected' %>>Actual quantity (tons or hours on the load)</option>

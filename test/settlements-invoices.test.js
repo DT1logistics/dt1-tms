@@ -61,14 +61,14 @@ function assertBefore(text, first, second, label) {
       assert.strictEqual(detail.status, 200);
     });
 
-    await check('Settlements: one card per driver + Mon-Sun week, Driver Pay first then Total Load Pay', async () => {
+    await check('Settlements: one card per driver + Mon-Sun week, Contractor Pay first then Total Load Pay', async () => {
       const page = await aGet('/settlements');
       assert.strictEqual(page.status, 200);
-      assert.ok(page.body.includes('Driver Settlement - Week of November 9 - November 15'));
-      assert.ok(page.body.includes('Driver Settlement - Week of November 16 - November 22'));
+      assert.ok(page.body.includes('Contractor Settlement - Week of November 9 - November 15'));
+      assert.ok(page.body.includes('Contractor Settlement - Week of November 16 - November 22'));
       assert.strictEqual(page.body.split('Finalize Weekly Settlement</button>').length - 1, 3, 'Dana wk1, Olly wk1, Dana wk2');
       // Dana week 1: 30% of 200 + 30% of 200 = $120.00; Total Load Pay 200 + 300 = $500.00
-      assertBefore(page.body, 'Driver Pay $120.00', 'Total Load Pay (invoiced) $500.00', 'Dana week 1');
+      assertBefore(page.body, 'Contractor Pay $120.00', 'Total Load Pay (invoiced) $500.00', 'Dana week 1');
       assert.ok(!page.body.includes('Weekly Shipper Invoices'), 'invoices moved to their own screen');
       const nav = await aGet('/');
       assert.ok(nav.body.includes('href="/invoices">Invoices</a>'));
@@ -84,7 +84,7 @@ function assertBefore(text, first, second, label) {
       // Week 1: 200 + 300 (Total Load Pay) + 200 (Olly) = $700.00. Week 2: $200.00.
       assert.ok(page.body.includes('<span>TOTAL</span><span>$700.00</span>'));
       assert.ok(page.body.includes('<span>TOTAL</span><span>$200.00</span>'));
-      assertBefore(page.body, 'Driver Pay (not billed)', '<span>Hauling</span>', 'invoice totals');
+      assertBefore(page.body, 'Contractor Pay (not billed)', '<span>Hauling</span>', 'invoice totals');
       assert.strictEqual(page.body.split('>Not invoiced</span>').length - 1, 2);
       assert.ok(page.body.includes('Generate Invoice'));
     });
@@ -144,7 +144,7 @@ function assertBefore(text, first, second, label) {
       assert.strictEqual(pending.status, 200);
       assert.strictEqual(pending.headers['content-type'], 'application/pdf');
       assert.ok(pending.body.startsWith('%PDF-1.4'));
-      assert.ok(pending.body.includes('(Driver: Dana Driver) Tj'));
+      assert.ok(pending.body.includes('(Contractor: Dana Driver) Tj'));
       assert.ok(pending.body.includes('NOT FINALIZED'));
       assert.ok(pending.body.includes('($120.00) Tj'));
       assert.ok(!pending.body.includes('Total Load Pay'), 'driver settlement PDF has no customer amounts');
@@ -155,7 +155,7 @@ function assertBefore(text, first, second, label) {
       assert.ok(invoice.body.includes('DT1-2026-4012'));
       assert.ok(invoice.body.includes('(Project: North Pit) Tj'));
       assert.ok(invoice.body.includes('750.00') || invoice.body.includes('($750.00)'));
-      assert.ok(!invoice.body.includes('Driver Pay'), 'customer invoice PDF does not show driver pay');
+      assert.ok(!invoice.body.includes('Contractor Pay'), 'customer invoice PDF does not show driver pay');
       assert.ok(!invoice.body.includes('Dana Driver'), 'customer invoice PDF does not show driver names');
       assert.strictEqual((await aGet(`/invoices/pdf?customer_id=${ids.customerId}&week_start=2026-11-09`)).status, 404, 'project_id required');
       assert.strictEqual((await aGet(`/invoices/pdf?customer_id=${ids.customerId}&project_id=${ids.projectId}&week_start=2026-11-10`)).status, 404, 'not a Monday');
@@ -165,10 +165,10 @@ function assertBefore(text, first, second, label) {
     await check('drivers see no pay before the week is finalized, and never invoices', async () => {
       const loads = await dGet('/loads');
       assert.ok(loads.body.includes('W1-A'));
-      assert.ok(!loads.body.includes('Driver Pay'), 'no driver pay on the Loads screen before finalize');
+      assert.ok(!loads.body.includes('Contractor Pay'), 'no driver pay on the Loads screen before finalize');
       const detail = await dGet(`/loads/${subId}`);
       const visible = detail.body.replace(/<script[\s\S]*?<\/script>/g, '');
-      assert.ok(!visible.includes('Driver Pay'), 'no driver pay on the load before finalize');
+      assert.ok(!visible.includes('Contractor Pay'), 'no driver pay on the load before finalize');
       const settlements = await dGet('/settlements');
       assert.ok(settlements.body.includes('No finalized weekly settlements yet.'));
       assert.ok(!settlements.body.includes('$60.00'));
@@ -188,17 +188,17 @@ function assertBefore(text, first, second, label) {
       assert.ok(h.readRows(dataDir, "SELECT action FROM audit_log WHERE action = 'Finalized weekly settlement'").length === 1);
       assert.strictEqual(h.readRows(dataDir, "SELECT COUNT(*) AS n FROM audit_log WHERE action = 'Settled' AND entity_type = 'load'")[0].n, 2);
       const settlements = await dGet('/settlements');
-      assert.ok(settlements.body.includes('Driver Settlement - Week of November 9 - November 15'));
+      assert.ok(settlements.body.includes('Contractor Settlement - Week of November 9 - November 15'));
       // 30% of 200 + 30% of 200 = $120.00 (Total Load Pay does not change driver pay)
-      assert.ok(settlements.body.includes('Driver Pay $120.00'));
+      assert.ok(settlements.body.includes('Contractor Pay $120.00'));
       assert.ok(!settlements.body.includes('Total Load Pay'), 'drivers never see Total Load Pay');
       assert.ok(!settlements.body.includes('November 16 - November 22'), 'week 2 not finalized');
       assert.ok(!settlements.body.includes('W1-OTHER'), 'not another driver');
       const detail = await dGet(`/loads/${subId}`);
-      assert.ok(detail.body.replace(/<script[\s\S]*?<\/script>/g, '').includes('<strong>Driver Pay</strong> $60.00'));
+      assert.ok(detail.body.replace(/<script[\s\S]*?<\/script>/g, '').includes('<strong>Contractor Pay</strong> $60.00'));
       const pdf = await dGet(`/settlements/pdf?driver_id=${otherId}&week_start=2026-11-09`);
       assert.strictEqual(pdf.status, 200);
-      assert.ok(pdf.body.includes('(Driver: Dana Driver) Tj'), 'driver_id is ignored for drivers: always their own');
+      assert.ok(pdf.body.includes('(Contractor: Dana Driver) Tj'), 'driver_id is ignored for drivers: always their own');
       assert.ok(pdf.body.includes('Status: Finalized'));
       const week2 = await dGet('/settlements/pdf?week_start=2026-11-16');
       assert.strictEqual(week2.status, 404);

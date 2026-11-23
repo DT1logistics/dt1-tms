@@ -216,7 +216,7 @@ function pdfText(buffer) {
     assert.ok(text.includes('P.O. Box 1415'));
     assert.ok(text.includes('Des Moines, IA 50305-1415'));
     assert.ok(!text.includes('Dana Driver'), 'driver name leaked');
-    assert.ok(!text.includes('Driver Pay'), 'driver pay leaked');
+    assert.ok(!text.includes('Contractor Pay'), 'driver pay leaked');
     assert.ok(!text.includes('2026-0001'), 'load number leaked');
     assert.ok(!text.includes('99.99'), 'driver pay amount leaked');
   });
@@ -404,7 +404,7 @@ function pdfText(buffer) {
       assert.ok(text.includes('Haul to Gloucester'));
       assert.ok(text.includes('Phoenix Capital Group'));
       assert.ok(!text.includes('Dana Driver'));
-      assert.ok(!text.includes('Driver Pay'));
+      assert.ok(!text.includes('Contractor Pay'));
       assert.ok(!text.includes('2026-0001'));
       const first = text.indexOf('Ticket #: 273698');
       const second = text.indexOf('Ticket #: 273718');

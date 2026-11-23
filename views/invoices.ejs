@@ -68,11 +68,11 @@
   <% } %>
 <% } else { %>
   <p class="muted">
-    Loads Approved for Settlement, grouped by project and Monday–Sunday work week (by Load Date). One official invoice is generated per project per week, combining every driver's approved loads for that project.
+    Loads Approved for Settlement, grouped by project and Monday–Sunday work week (by Load Date). One official invoice is generated per project per week, combining every contractor's approved loads for that project.
     Amounts update when an admin edits an approved load. Generate Invoice assigns the official number, marks the project week Invoiced, and builds a PDF in Logan's invoice layout. Mark Paid when payment arrives. Undo Invoiced keeps the same invoice number for a later regenerate.
     Latest EIA surcharge: <%= money(surchargePercent) %>%<% if (fuelRate) { %> (effective <%= fuelRate.effective_date %>)<% } else { %> (no fuel rate saved yet)<% } %>.
     Fuel surcharge is taken from each load (the weekly diesel rate Logan enters on Tuesday, and the load's Includes Fuel Surcharge flag).
-    Loads with a Total Load Pay are billed that amount with no fuel surcharge. Detention here is billed to the customer and is not driver pay.
+    Loads with a Total Load Pay are billed that amount with no fuel surcharge. Detention here is billed to the customer and is not contractor pay.
   </p>
   <p class="load-filters">
     <a href="/invoices" class="<%= !statusFilter ? 'filter-on' : '' %>">All</a>
@@ -95,7 +95,7 @@
         <% if (invoice.legacyWeekMark) { %><span class="muted"> · Status carried over from the earlier customer-week mark</span><% } %>
       </p>
       <% if (invoice.needsResending) { %>
-        <div class="reject-note">Needs re-sending: a finalized driver week on this invoice was reopened. Regenerate the invoice to send an updated copy under the same invoice number<% if (invoice.number) { %> (<%= invoice.number %>)<% } %>.</div>
+        <div class="reject-note">Needs re-sending: a finalized contractor week on this invoice was reopened. Regenerate the invoice to send an updated copy under the same invoice number<% if (invoice.number) { %> (<%= invoice.number %>)<% } %>.</div>
       <% } %>
       <% if (invoice.changedSinceInvoiced) { %>
         <div class="reject-note">The total changed after this invoice was marked Invoiced (was <%= usd(invoice.mark.invoiced_amount) %>, now <%= usd(invoice.totals.total) %>). Generate the invoice again to send a corrected PDF under the same invoice number.</div>
@@ -120,12 +120,12 @@
             <tr>
               <th>Date</th>
               <th>Ticket #</th>
-              <th>Driver</th>
+              <th>Contractor</th>
               <th>Origin</th>
               <th>Destination</th>
               <th class="num">Qty</th>
               <th class="num">Rate</th>
-              <th class="num" title="Paid to the driver. Not billed on the invoice.">Driver Pay</th>
+              <th class="num" title="Paid to the contractor. Not billed on the invoice.">Contractor Pay</th>
               <th class="num">Price</th>
               <th class="num">Fuel Surcharge</th>
               <th class="num">Self Load</th>
@@ -157,7 +157,7 @@
         <div class="muted project-subtotal">Project total <%= usd(invoice.totals.total) %></div>
       <% const t = invoice.totals; %>
       <div class="totals">
-        <div class="muted driver-pay-total" title="Paid to drivers. Not part of the invoice total."><span>Driver Pay (not billed)</span><span><%= usd(t.driverPay) %></span></div>
+        <div class="muted driver-pay-total" title="Paid to contractors. Not part of the invoice total."><span>Contractor Pay (not billed)</span><span><%= usd(t.driverPay) %></span></div>
         <div><span>Hauling</span><span><%= usd(t.hauling) %></span></div>
         <div><span>Fuel Surcharge<% const pcts = t.fscPercents || []; %><% if (pcts.length === 1) { %> (<%= Number(pcts[0]).toFixed(2) %>%)<% } else if (pcts.length > 1) { %> (weekly rates: <%= pcts.map(function (x) { return Number(x).toFixed(2) + '%'; }).join(', ') %>)<% } %><% if (t.fscPendingCount) { %> · <%= t.fscPendingCount %> load<%= t.fscPendingCount === 1 ? '' : 's' %> rate pending<% } %></span><span><%= usd(t.fuelSurcharge) %></span></div>
         <div><span>Travel Time</span><span><%= usd(t.travelTime) %></span></div>

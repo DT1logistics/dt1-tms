@@ -55,7 +55,7 @@ const h = require('./helpers/server');
       assert.ok(audit.some((a) => a.action === 'Rejected load' && a.detail === 'Ticket photo is blurry'));
       assert.ok(audit.some((a) => a.action === 'Rejected' && a.detail === 'Sent back to draft: Ticket photo is blurry'));
       const flash = await h.request(srv.port, { Cookie: h.cookieHeader(admin) }, { path: res.headers.location });
-      assert.ok(flash.body.includes('It was sent back to the driver as Draft.'));
+      assert.ok(flash.body.includes('It was sent back to the contractor as Draft.'));
       // The driver sees it in Drafts with the reason and can fix it.
       const driverPage = await h.request(srv.port, { Cookie: h.cookieHeader(driver) }, { path: `/loads/${id}/edit` });
       assert.strictEqual(driverPage.status, 200);

@@ -1,15 +1,15 @@
-<%- include('partials/open', { title: 'Drivers', user: user, active: 'drivers' }) %>
-<h1>Drivers</h1>
-<p class="muted">Active drivers are listed below. Select a driver to open their profile.</p>
+<%- include('partials/open', { title: 'Contractors', user: user, active: 'drivers' }) %>
+<h1>Contractors</h1>
+<p class="muted">Active contractors are listed below. Select a contractor to open their profile.</p>
 <% if (complianceFilter === 'attention') { %>
-  <p class="muted">Showing drivers with a CDL or medical card that is out of compliance or expiring soon. <a href="/drivers">Show all drivers</a></p>
+  <p class="muted">Showing contractors with a CDL or medical card that is out of compliance or expiring soon. <a href="/drivers">Show all contractors</a></p>
 <% } %>
-<a href="/drivers/new" class="btn">+ Add New Driver</a>
+<a href="/drivers/new" class="btn">+ Add New Contractor</a>
 
 <div class="card" id="notification-settings">
   <p>SMTP Email: <span class="badge <%= notifications && notifications.email ? 'green' : 'yellow' %>"><%= notifications && notifications.email ? 'Connected' : 'Not configured' %></span>
   Twilio SMS: <span class="badge <%= notifications && notifications.sms ? 'green' : 'yellow' %>"><%= notifications && notifications.sms ? 'Connected' : 'Not configured' %></span></p>
-  <p class="muted">Welcome messages, activation, and password resets are on each driver's profile.</p>
+  <p class="muted">Welcome messages, activation, and password resets are on each contractor's profile.</p>
 </div>
 
 <% const activeDrivers = drivers.filter(function (d) { return (d.status || 'active') !== 'inactive'; }); %>
@@ -26,29 +26,29 @@
     </div>
     <div class="driver-list-side">
       <span class="badge <%= d.compliance ? d.compliance.level : 'green' %>"><%= d.compliance ? d.compliance.label : 'Compliant' %></span>
-      <span class="open-label">Open Driver Profile →</span>
+      <span class="open-label">Open Contractor Profile →</span>
     </div>
   </a>
 <% } %>
 
-<h2>Active Drivers (<%= activeDrivers.length %>)</h2>
+<h2>Active Contractors (<%= activeDrivers.length %>)</h2>
 <% if (activeDrivers.length) { %>
   <div class="driver-list">
     <% activeDrivers.forEach(driverRow); %>
   </div>
 <% } else { %>
-  <p>No active drivers.</p>
+  <p>No active contractors.</p>
 <% } %>
 
 <% if (complianceFilter !== 'attention') { %>
 <details class="inactive-drivers" id="inactive-drivers">
-  <summary>Inactive Drivers (<%= inactiveDrivers.length %>)</summary>
+  <summary>Inactive Contractors (<%= inactiveDrivers.length %>)</summary>
   <% if (inactiveDrivers.length) { %>
     <div class="driver-list">
       <% inactiveDrivers.forEach(driverRow); %>
     </div>
   <% } else { %>
-    <p>No inactive drivers.</p>
+    <p>No inactive contractors.</p>
   <% } %>
 </details>
 <% } %>
